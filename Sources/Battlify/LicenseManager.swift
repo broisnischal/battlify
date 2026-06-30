@@ -2,8 +2,10 @@ import Foundation
 import Combine
 import BattlifyKit
 
-/// Manages trial + activation state for the GUI. Stores the license key and the
-/// first-run date in UserDefaults and derives the current entitlement.
+/// Licensing à la Mac Mouse Fix:
+///  - **Use-based 30-day trial**: a free day is only counted on days you actually
+///    use Battlify (not calendar days), so the trial isn't "wasted" while idle.
+///  - **$2.99 one-time** license verified via Gumroad (Apple Pay at checkout).
 @MainActor
 final class LicenseManager: ObservableObject {
     enum State: Equatable {
@@ -12,78 +14,115 @@ final class LicenseManager: ObservableObject {
         case expired
     }
 
-    @Published private(set) var state: State = .trial(daysLeft: 0)
+    @Published private(set) var state: State = .trial(daysLeft: 30)
     @Published var enteredKey: String = ""
     @Published private(set) var lastError: String?
+    @Published private(set) var verifying = false
 
-    /// Whether premium controls are unlocked (active trial or valid license).
+    /// Premium controls unlocked (active trial or valid license).
     var isPro: Bool {
-        switch state {
-        case .licensed, .trial: return true
-        case .expired: return false
-        }
+        switch state { case .licensed, .trial: return true; case .expired: return false }
     }
-
-    /// True only when a valid license is installed (not merely on trial).
     var isLicensed: Bool {
-        if case .licensed = state { return true }
-        return false
+        if case .licensed = state { return true }; return false
     }
 
+    let trialDays = 30
     private let defaults = UserDefaults.standard
-    private let trialDays = 14
     private enum Keys {
-        static let key = "license.key"
-        static let firstRun = "license.firstRun"
+        static let licenseKey = "license.gumroadKey"
+        static let licenseEmail = "license.email"
+        static let usedDays = "trial.usedDays"   // [String] yyyy-MM-dd
     }
 
-    init() { refresh() }
+    private var dayTimer: Timer?
+
+    init() {
+        recordUsageToday()
+        refresh()
+        // Count each new day of use while the app keeps running.
+        let t = Timer(timeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.recordUsageToday(); self?.refresh() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        dayTimer = t
+    }
+
+    // MARK: - Trial accounting
+
+    private func today() -> String {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
+    }
+
+    private func recordUsageToday() {
+        var days = Set(defaults.stringArray(forKey: Keys.usedDays) ?? [])
+        days.insert(today())
+        defaults.set(Array(days), forKey: Keys.usedDays)
+    }
+
+    var daysUsed: Int { (defaults.stringArray(forKey: Keys.usedDays) ?? []).count }
+
+    // MARK: - State
 
     func refresh() {
-        // Valid stored license wins.
-        if let key = defaults.string(forKey: Keys.key),
-           let info = try? License.verify(key) {
-            state = .licensed(name: info.name.isEmpty ? info.email : info.name)
+        if defaults.string(forKey: Keys.licenseKey) != nil {
+            let name = defaults.string(forKey: Keys.licenseEmail) ?? "this Mac"
+            state = .licensed(name: name)
             return
         }
-        // Otherwise, compute trial from first run.
-        let firstRun: Date
-        if let stored = defaults.object(forKey: Keys.firstRun) as? Date {
-            firstRun = stored
-        } else {
-            firstRun = Date()
-            defaults.set(firstRun, forKey: Keys.firstRun)
-        }
-        let elapsed = Calendar.current.dateComponents([.day], from: firstRun, to: Date()).day ?? 0
-        let left = trialDays - elapsed
+        let left = max(0, trialDays - daysUsed)
         state = left > 0 ? .trial(daysLeft: left) : .expired
     }
 
-    /// Validate and store the entered key.
+    // MARK: - Activation (Gumroad)
+
     func activate() {
         let key = enteredKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { lastError = "Paste your license key first."; return }
-        do {
-            let info = try License.verify(key)
-            defaults.set(key, forKey: Keys.key)
-            enteredKey = ""
-            lastError = nil
-            state = .licensed(name: info.name.isEmpty ? info.email : info.name)
-        } catch {
-            lastError = (error as? LicenseError)?.description ?? "\(error)"
+        guard !verifying else { return }
+        verifying = true
+        lastError = nil
+
+        Task.detached {
+            do {
+                let result = try await Gumroad.verify(licenseKey: key)
+                await MainActor.run {
+                    self.verifying = false
+                    if result.isEntitled {
+                        self.defaults.set(key, forKey: Keys.licenseKey)
+                        self.defaults.set(result.email ?? "Licensed", forKey: Keys.licenseEmail)
+                        self.enteredKey = ""
+                        self.state = .licensed(name: result.email ?? "Licensed")
+                    } else if result.refunded || result.disputed {
+                        self.lastError = "This purchase was refunded or charged back."
+                    } else {
+                        self.lastError = "That license key isn't valid for Battlify."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.verifying = false
+                    self.lastError = (error as? GumroadError)?.description ?? "Couldn't verify the key."
+                }
+            }
         }
     }
 
     func deactivate() {
-        defaults.removeObject(forKey: Keys.key)
+        defaults.removeObject(forKey: Keys.licenseKey)
+        defaults.removeObject(forKey: Keys.licenseEmail)
         refresh()
     }
 
     var statusText: String {
         switch state {
-        case .licensed(let name): return "Licensed to \(name)"
-        case .trial(let d): return "Trial — \(d) day\(d == 1 ? "" : "s") left"
-        case .expired: return "Trial expired"
+        case .licensed(let name): return "Licensed · \(name)"
+        case .trial(let d): return "Trial — \(d) free day\(d == 1 ? "" : "s") left"
+        case .expired: return "Trial ended"
         }
     }
 }

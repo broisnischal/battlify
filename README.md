@@ -1,134 +1,110 @@
+<div align="center">
+
+<!-- Replace with Markdown/Media/AppIcon.png once you've made the icon -->
+<img src="Markdown/Media/AppIcon.png" width="180" height="auto" alt="Battlify">
+
 # Battlify
 
-A native menu-bar **battery saver and health guardian** for Apple Silicon Macs.
-Battlify monitors your battery, limits charging to protect long-term health,
-pauses charging when it gets too hot, optimizes sleep/idle power, charts usage
-history, and surfaces what's actually draining your battery.
+**Make macOS stop wrecking your battery.**
 
-> macOS 14+ (built & tested on macOS 26 "Tahoe"), Apple Silicon only.
+Charge limiting · heat-aware charging · one-tap save modes · deep sleep savings · battery-health insights — all from your menu bar.
+
+<a href="https://battlify.gumroad.com/l/battlify"><b>Download</b></a> ·
+<a href="https://github.com/broisnischal/battlify/releases"><b>Releases</b></a> ·
+<a href="https://github.com/broisnischal/battlify/issues"><b>Feedback</b></a>
+
+![Platform](https://img.shields.io/badge/macOS-14%2B-blue)
+![Arch](https://img.shields.io/badge/Apple%20Silicon-arm64-black)
+![Price](https://img.shields.io/badge/price-%242.99-green)
+![License](https://img.shields.io/badge/license-Battlify%20License-lightgrey)
+
+<!-- Replace with a real screenshot -->
+<img src="Markdown/Media/Screenshot.png" width="320" height="auto" alt="Battlify menu">
+
+</div>
+
+## Why Battlify
+
+macOS keeps your battery topped up at 100% and lets it run hot while docked — the
+two fastest ways to wear a battery out. Battlify gives you the controls Apple
+doesn't, in a clean menu-bar app built for Apple Silicon.
 
 ## Features
 
-### One-tap Save Modes
-Pick a profile and Battlify applies the whole bundle at once:
+- 🔋 **Charge limiting** — cap charging (50–100%) to cut time at high charge.
+  Handles both Apple-Silicon SMC schemes (legacy `CH0B/CH0C` and Tahoe `CHTE`).
+- 🔥 **Heat-aware charging** — automatically pause charging when the battery gets
+  too warm, with a clear reason shown in the menu.
+- ⚡ **One-tap Save Modes** — *Off / Normal / Super Saver* apply a whole bundle of
+  settings at once.
+- 😴 **Super Save when lid closed** — closing the lid maximizes battery (Low Power
+  Mode, sleep wake-ups off, radios off) and opening it restores your state.
+- 💤 **Sleep & Idle controls** — Power Nap, wake-for-network, TCP keep-alive — the
+  settings that silently wake your Mac while it's closed.
+- 🖥️ **Lid / clamshell sensor** with a docked-mode health warning.
+- 📊 **Usage history** charts and a **Battery Health** card with actionable tips.
+- 🚀 **Launch at Login** + **in-app auto-update**.
 
-| Mode | Charge limit | Pause when hot | Low Power Mode | Sleep wake-ups | Wi-Fi/BT on lid close |
-|------|:---:|:---:|:---:|:---:|:---:|
-| **Off** | — | — | off | default | no |
-| **Normal** | 80% | 35 °C | off | Power Nap off | no (Find My stays on) |
-| **Super Saver** | 80% | 33 °C | on | all off | both off |
+## Pricing
 
-### Charge limiting
-- Cap charging at a chosen level (50–100%) to reduce time at high charge — the
-  #1 controllable cause of battery wear.
-- Handles both Apple-Silicon charging schemes automatically: legacy
-  `CH0B`/`CH0C` and the macOS 26 "Tahoe" `CHTE` key.
-- Hysteresis avoids rapid charge on/off toggling at the threshold.
+**Free for 30 days.** Your free days are only used up when you *actually use*
+Battlify — so you get the most out of them, without any stress.
 
-### Heat-aware charging
-- Automatically pauses charging when the battery exceeds a temperature you set
-  (30–45 °C). Heat + charging is the biggest accelerant of battery aging.
-- The menu tells you *why* charging paused — too hot 🌡️ vs holding the limit ⏸️.
+**$2.99 to own.** One-time payment (+ taxes). No subscriptions, no add-ons. The
+checkout is quick and you can pay with **Apple Pay**. Buy in-app, or
+[here](https://battlify.gumroad.com/l/battlify).
 
-### Battery health
-- Health %, condition (Normal / Service Recommended), and cycle count.
-- **State-aware tips** that adapt to your situation (warm battery, sitting at
-  100% on AC, limit disabled, etc.).
+## Install
 
-### Sleep & idle power
-- Turn off **Wi-Fi** and/or **Bluetooth** when you close the lid; restore on wake.
-- Toggle the system sleep behaviors that silently drain battery while closed:
-  **Power Nap**, **wake for network access**, and **TCP keep-alive**.
+1. Download the latest `Battlify.dmg` from [Releases](https://github.com/broisnischal/battlify/releases)
+   and drag **Battlify** to Applications.
+2. Launch it — it lives in your menu bar (no Dock icon).
+3. Click **Install Helper…** in the menu (one password prompt) to enable charge
+   limiting, heat-aware charging, and the sleep controls. The helper safely
+   re-enables charging if it ever stops.
 
-### Power & processes
-- Toggle **Low Power Mode**.
-- See the **top energy-using processes** and suspend/resume them (SIGSTOP/SIGCONT).
+> Battlify checks for updates automatically and offers a one-click download.
 
-### Usage history
-- Battery % and temperature charted over 6h / 24h / 7d (Swift Charts), sampled
-  every 5 minutes — even while logged out (the daemon records it).
+## Build from source
 
-## Architecture
-
-```
-Battlify.app (runs as you)           battlify-helper (runs as root, LaunchDaemon)
-├─ menu bar UI (SwiftUI)             ├─ enforces charge limit + heat-aware (SMC)
-├─ battery monitoring (IOKit)        ├─ toggles Low Power Mode & sleep settings (pmset)
-├─ lid automation (CoreWLAN, BT)     ├─ records history
-├─ Details & History windows         └─ control socket  /var/run/battlify.sock
-└─ talks to helper ───────────────►
-```
-
-Writing SMC keys and toggling power settings require root, so those run in a
-small privileged daemon. The GUI talks to it over a local Unix socket and never
-touches privileged APIs directly. **Safety:** the daemon re-enables charging on
-exit/crash (and when uninstalled), so the Mac is never left unable to charge.
-
-```
-Sources/
-├── CSMC/              C SMC read/write layer
-├── BattlifyKit/       shared: SMC, ChargeController, Config, Control, Modes, History
-├── Battlify/          menu-bar GUI + Details/History windows
-└── battlify-helper/   root daemon: enforcement loop + control socket
-```
-
-## Build & run (development)
+Requires the Swift toolchain (Xcode or Command Line Tools), macOS 14+, Apple Silicon.
 
 ```bash
 swift build
-swift run Battlify          # menu-bar app
+swift run Battlify                 # run the menu-bar app
+sudo ./scripts/install-helper.sh   # install the root helper daemon
+
+./scripts/package-app.sh 0.2.0     # build Battlify.app
+./scripts/make-dmg.sh 0.2.0        # build the DMG
 ```
 
-Charge limiting, heat-aware charging, Low Power Mode, and the sleep toggles need
-the root daemon:
+See [`DISTRIBUTION.md`](DISTRIBUTION.md) for signing, notarization, the GitHub
+Actions release pipeline, Gumroad setup, and the auto-update feed.
+
+## Contributing & releases
+
+This repo uses [Changesets](https://github.com/changesets/changesets):
 
 ```bash
-sudo ./scripts/install-helper.sh     # builds + installs the LaunchDaemon
+npm install
+npm run changeset      # describe your change (patch/minor/major)
 ```
 
-Helper CLI (handy for testing):
+Commit the generated `.changeset/*.md`. Merging the auto-opened "Version Packages"
+PR bumps the version + `CHANGELOG.md`; tagging that version triggers a release.
 
-```bash
-./.build/debug/battlify-helper dump          # SMC diagnostics (no root)
-sudo ./.build/debug/battlify-helper disable  # stop charging
-sudo ./.build/debug/battlify-helper enable   # resume
-sudo ./.build/debug/battlify-helper limit 80 # set + enable 80% limit
-```
+## License
 
-## Package a distributable app
+Battlify is **source-available** under the [Battlify License](LICENSE) — do almost
+anything with the source, with protections against malicious or rip-off
+redistributions of the *app*. It's based on the
+[Mac Mouse Fix License](https://github.com/noah-nuebling/mac-mouse-fix) by Noah
+Nuebling.
 
-```bash
-./scripts/package-app.sh 0.1.0       # -> dist/Battlify.app + dist/Battlify-0.1.0.zip
-```
+## Acknowledgements
 
-The bundle includes the helper + installer, so users can click **Install
-Helper…** in the app instead of using the command line.
-
-## Install via Homebrew
-
-After publishing `Battlify-<version>.zip` to a GitHub release and filling in the
-`url`/`sha256` in `Casks/battlify.rb`:
-
-```bash
-brew install --cask ./Casks/battlify.rb     # local
-# or, once tapped:
-brew install --cask battlify
-```
-
-## Uninstall
-
-```bash
-sudo ./scripts/uninstall-helper.sh   # removes daemon, re-enables charging
-```
-
-## Notes & limitations
-
-- **Bluetooth toggle** uses a private IOBluetooth symbol — it works but could
-  break in a future macOS update.
-- **Lid close on battery** sleeps the Mac; radios are toggled in the brief
-  pre-sleep window. Keeping things running *while* the lid stays closed isn't
-  possible unless the Mac is kept awake (power + external display).
-- **Personal Hotspot / Internet Sharing** toggling is intentionally omitted —
-  macOS exposes no reliable API for it.
-- Not sandboxed / not for the Mac App Store (charge limiting needs SMC + a root
-  helper, which the sandbox forbids).
+- Licensing/trial/monetization model inspired by
+  [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix).
+- SMC charge-control keys referenced from
+  [charlie0129/batt](https://github.com/charlie0129/batt) and
+  [actuallymentor/battery](https://github.com/actuallymentor/battery).

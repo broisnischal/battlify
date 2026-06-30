@@ -3,6 +3,8 @@ dist/
 *.xcodeproj
 .DS_Store
 .swiftpm/
+node_modules/
+package-lock.json
 
 # Secrets — never commit. Use .env.example as the template.
 .env
