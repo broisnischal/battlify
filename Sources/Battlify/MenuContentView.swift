@@ -248,9 +248,20 @@ struct MenuContentView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Sleep & Idle")
 
-            switchRow("Turn off Wi-Fi on lid close", $automation.wifiOffOnLidClose)
-            switchRow("Turn off Bluetooth on lid close", $automation.bluetoothOffOnLidClose)
-            switchRow("Restore Wi-Fi/Bluetooth on wake", $automation.restoreOnWake)
+            // Headline lid automation.
+            switchRowWithHint(
+                "Super Save when lid closed",
+                hint: "Maximizes battery while closed, restores when you open it.",
+                $automation.superSaveOnLidClose)
+
+            // Manual radio controls only matter when Super Save isn't driving them.
+            Group {
+                switchRow("Turn off Wi-Fi on lid close", $automation.wifiOffOnLidClose)
+                switchRow("Turn off Bluetooth on lid close", $automation.bluetoothOffOnLidClose)
+                switchRow("Restore Wi-Fi/Bluetooth on wake", $automation.restoreOnWake)
+            }
+            .disabled(automation.superSaveOnLidClose)
+            .opacity(automation.superSaveOnLidClose ? 0.45 : 1)
 
             if chargeLimit.daemonAvailable {
                 ForEach(PowerToggle.allCases, id: \.self) { toggle in
