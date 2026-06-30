@@ -62,46 +62,24 @@ export NOTARY_KEY_ID=...  NOTARY_ISSUER_ID=...  NOTARY_KEY_PATH=~/AuthKey_XXXX.p
 ## 4. Selling it (payments + licensing)
 
 You don't sell through GitHub. Host the notarized DMG behind a storefront and
-gate the app with a **license key**:
+gate the app with a **license key**. Battlify uses **Gumroad** (one-time $2.99,
+Apple Pay at checkout) with online license verification — already built:
 
-| Option | Notes |
-|--------|-------|
-| **Paddle** / **Lemon Squeezy** | Merchant of record — they handle VAT/sales tax worldwide and can issue & verify license keys. Easiest for a solo paid Mac app. |
-| **Gumroad** | Simple, has license keys via API. Takes a cut. |
-| **Stripe** | Lowest fees, most control, but you handle tax + build your own key server. |
+- `Sources/BattlifyKit/Gumroad.swift` — verifies keys via Gumroad's license API
+  (handles refunds/chargebacks).
+- `LicenseManager` / `LicenseView` — **use-based 30-day trial** (free days are only
+  spent on days the app is actually used), activation window, control gating.
 
-**License enforcement approach (recommended): offline signature checks.**
-- Generate an Ed25519 keypair. Keep the private key secret (on your storefront's
-  license server / webhook).
-- Each purchase mints a license = signed payload (email, expiry, etc.).
-- Embed only the **public key** in the app; verify the signature locally. No
-  phone-home required, hard to forge, works offline.
-- Add a grace/trial period and a "Enter license" window.
+**Setup:**
+1. Create a Gumroad product, set price **$2.99**, and enable **"Generate license
+   keys"** (Settings → check *"Generate a unique license key per sale"*).
+2. Set your product permalink in two places:
+   - `Gumroad.productPermalink` in `Sources/BattlifyKit/Gumroad.swift`
+   - `buyURL` in `Sources/Battlify/LicenseView.swift`
+3. Rebuild + release. Buyers paste the key Gumroad emails them into the app's
+   Activate window; the app verifies it online and unlocks.
 
-**This is already built.** Battlify ships with offline Ed25519 licensing:
-- `Sources/BattlifyKit/License.swift` — verifies tokens against an embedded public key.
-- `LicenseManager` / `LicenseView` — 14-day trial, activation window, control gating.
-- `licensetool` — the seller-side key generator + signer (not bundled in the app).
-
-**Minting keys & licenses:**
-
-```bash
-swift run licensetool genkey
-# → prints a PRIVATE key (keep secret) and a PUBLIC key.
-#   Paste the PUBLIC key into License.publicKeyBase64 and REBUILD.
-#   ⚠️ The key currently embedded is a TEST key — regenerate yours privately.
-
-# Mint a license (your storefront webhook runs this with the private key):
-swift run licensetool sign --priv <PRIVATE_B64> --email buyer@x.com --name "Buyer" --days 365
-# → a license token the buyer pastes into Battlify's Activate window.
-#   Omit --days for a perpetual license.
-
-swift run licensetool verify --token <TOKEN>   # sanity-check a token
-```
-
-**Wiring to a storefront:** point Paddle/Lemon Squeezy's "license generation"
-webhook at a tiny endpoint that runs the equivalent of `sign` and returns the
-token to the buyer (email + license page). Keep the private key only on that server.
+Apple Pay needs no code — it's offered automatically in Gumroad's checkout.
 
 ## 5. Homebrew note
 

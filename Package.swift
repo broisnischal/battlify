@@ -8,8 +8,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "Battlify", targets: ["Battlify"]),
-        .executable(name: "battlify-helper", targets: ["battlify-helper"]),
-        .executable(name: "licensetool", targets: ["licensetool"])
+        .executable(name: "battlify-helper", targets: ["battlify-helper"])
     ],
     targets: [
         // Low-level SMC access (C). Requires root to *write*.
@@ -40,12 +39,6 @@ let package = Package(
             name: "battlify-helper",
             dependencies: ["BattlifyKit"],
             path: "Sources/battlify-helper"
-        ),
-        // Seller-side license key generator/signer (not shipped in the app).
-        .executableTarget(
-            name: "licensetool",
-            dependencies: ["BattlifyKit"],
-            path: "Sources/licensetool"
         )
     ]
 )
