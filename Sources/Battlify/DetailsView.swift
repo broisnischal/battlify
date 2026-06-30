@@ -7,6 +7,7 @@ struct DetailsView: View {
     @EnvironmentObject private var battery: BatteryStore
     @EnvironmentObject private var processes: ProcessMonitor
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
+    @EnvironmentObject private var automation: AutomationStore
 
     var body: some View {
         let snap = battery.snapshot
@@ -14,13 +15,41 @@ struct DetailsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 statsCard(snap)
+                systemCard
                 healthCard(snap)
                 energyCard
             }
             .padding(20)
         }
         .scrollIndicators(.hidden)
-        .frame(width: 380, height: 560)
+        .frame(width: 380, height: 600)
+    }
+
+    // MARK: - System (lid sensor)
+
+    private var systemCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("System")
+                .font(.title3.weight(.semibold))
+
+            VStack(spacing: 0) {
+                statRow("Lid", automation.isLidClosed ? "Closed" : "Open")
+                Divider()
+                statRow("Clamshell mode", automation.isClamshellMode ? "Active" : "Off")
+                Divider()
+                statRow("External displays", "\(automation.externalDisplayCount)")
+            }
+            .padding(.vertical, 4)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+
+            if automation.isClamshellMode {
+                Label("In clamshell (docked) mode the battery tends to sit at 100% and run hot — the two biggest causes of wear. Keep a charge limit and heat-pause enabled.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     // MARK: - Health & tips

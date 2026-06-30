@@ -16,6 +16,7 @@ struct BattlifyApp: App {
     @StateObject private var automation = AutomationStore()
     @StateObject private var processes = ProcessMonitor()
     @StateObject private var license = LicenseManager()
+    @StateObject private var startup = StartupManager()
 
     var body: some Scene {
         MenuBarExtra {
@@ -25,6 +26,7 @@ struct BattlifyApp: App {
                 .environmentObject(automation)
                 .environmentObject(processes)
                 .environmentObject(license)
+                .environmentObject(startup)
         } label: {
             // Menu bar label: battery glyph + percentage.
             let snap = battery.snapshot
@@ -39,6 +41,7 @@ struct BattlifyApp: App {
                 .environmentObject(battery)
                 .environmentObject(processes)
                 .environmentObject(chargeLimit)
+                .environmentObject(automation)
         }
         .windowResizability(.contentSize)
 

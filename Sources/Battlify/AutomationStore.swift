@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 import BattlifyKit
 
 /// User preferences + behavior for lid-close radio automation. These run as the
@@ -16,8 +17,18 @@ final class AutomationStore: ObservableObject {
         didSet { defaults.set(restoreOnWake, forKey: Keys.restore) }
     }
 
+    /// Live lid sensor (clamshell) state, polled while the Mac is awake.
+    @Published private(set) var isLidClosed = false
+    /// Number of external displays currently attached.
+    @Published private(set) var externalDisplayCount = 0
+
+    /// "Clamshell mode": lid shut but the Mac is awake — i.e. docked to an
+    /// external display on power. A prime battery-aging scenario.
+    var isClamshellMode: Bool { isLidClosed }
+
     private let defaults = UserDefaults.standard
     private let lid = LidMonitor()
+    private var lidPollTimer: Timer?
 
     // Radio states captured at sleep, to restore on wake.
     private var wifiWasOn = false
@@ -43,6 +54,19 @@ final class AutomationStore: ObservableObject {
             MainActor.assumeIsolated { self?.handleWake() }
         }
         lid.start()
+
+        pollLidState()
+        let t = Timer(timeInterval: 4, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pollLidState() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        lidPollTimer = t
+    }
+
+    private func pollLidState() {
+        isLidClosed = LidMonitor.isClamshellClosed()
+        // NSScreen import via AppKit; count displays beyond the built-in.
+        externalDisplayCount = max(0, NSScreen.screens.count - (isLidClosed ? 0 : 1))
     }
 
     /// Apply the lid-radio parts of a save mode's profile.

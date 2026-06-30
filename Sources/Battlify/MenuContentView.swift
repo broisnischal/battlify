@@ -7,6 +7,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
     @EnvironmentObject private var automation: AutomationStore
     @EnvironmentObject private var license: LicenseManager
+    @EnvironmentObject private var startup: StartupManager
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var contentHeight: CGFloat = 360
@@ -34,6 +35,8 @@ struct MenuContentView: View {
                 }
                 .disabled(!license.isPro)
                 .opacity(license.isPro ? 1 : 0.45)
+                Divider()
+                generalSection
                 Divider()
                 footer
             }
@@ -276,6 +279,41 @@ struct MenuContentView: View {
             } else {
                 Text("Low Power Mode needs the helper.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - General (login item + lid sensor)
+
+    @ViewBuilder
+    private var generalSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("General")
+
+            switchRow("Launch at login", Binding(
+                get: { startup.launchAtLogin },
+                set: { startup.setLaunchAtLogin($0) }
+            ))
+            if startup.requiresApproval {
+                hintLabel("Approve Battlify in System Settings › General › Login Items.",
+                          systemImage: "exclamationmark.triangle.fill")
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: automation.isLidClosed
+                      ? "macbook.and.iphone" : "macbook")
+                    .foregroundStyle(automation.isLidClosed ? .orange : .secondary)
+                Text("Lid").foregroundStyle(.secondary)
+                Spacer()
+                Text(automation.isLidClosed ? "Closed · clamshell" : "Open")
+                    .fontWeight(.medium)
+                    .foregroundStyle(automation.isLidClosed ? .orange : .primary)
+            }
+            .font(.callout)
+
+            if automation.isLidClosed {
+                hintLabel("Docked & closed runs hot at 100% — keep a charge limit + heat pause on.",
+                          systemImage: "thermometer.high")
             }
         }
     }
