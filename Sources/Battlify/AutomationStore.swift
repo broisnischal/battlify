@@ -75,7 +75,8 @@ final class AutomationStore: ObservableObject {
         lid.start()
 
         pollLidState()
-        let t = Timer(timeInterval: 4, repeats: true) { [weak self] _ in
+        // Lid state changes are rare and reads are cheap — poll slowly to save CPU.
+        let t = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollLidState() }
         }
         RunLoop.main.add(t, forMode: .common)

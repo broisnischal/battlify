@@ -11,7 +11,9 @@ struct MenuContentView: View {
     @EnvironmentObject private var updater: UpdaterManager
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
-    @State private var contentHeight: CGFloat = 360
+    // Start near the typical full height so the popover doesn't visibly grow on
+    // first open (the measured height then fine-tunes it).
+    @State private var contentHeight: CGFloat = 600
 
     private let popoverWidth: CGFloat = 300
 

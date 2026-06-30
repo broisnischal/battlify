@@ -51,6 +51,12 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>   <string>14.0</string>
     <key>LSUIElement</key>              <true/>
     <key>NSHumanReadableCopyright</key> <string>Battlify</string>
+    <!-- Required: Battlify toggles Bluetooth power on lid close. Without this
+         usage string macOS kills the app (TCC) when it touches Bluetooth. -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Battlify turns Bluetooth off when you close the lid and back on when you reopen it, to save battery.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>Battlify turns Bluetooth off when you close the lid and back on when you reopen it, to save battery.</string>
 </dict>
 </plist>
 PLIST

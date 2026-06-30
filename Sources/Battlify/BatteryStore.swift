@@ -33,7 +33,9 @@ final class BatteryStore: ObservableObject {
     }
 
     private func startPolling() {
-        let t = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
+        // IOPS notifications handle instant %/charging changes; this slow timer
+        // is just a fallback for values without notifications (temp, cycles).
+        let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
         RunLoop.main.add(t, forMode: .common)
