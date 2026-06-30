@@ -11,6 +11,10 @@
   handed back to macOS when disabled or on exit.
 - **Lid-closed drain history** — records charge at lid close vs reopen and shows the
   drop and %/hour in Battery History.
+- **Quick Actions** — dim/brighten the display, turn the display off, and sleep the
+  Mac from the menu. (Fan control omitted — locked & unsafe on Apple Silicon.)
+- **UI refresh** — a charge gauge in the header marking where your limit sits,
+  rounded numerals, icon-led section headers, and a cohesive battery-green accent.
 
 ### Patch Changes
 
