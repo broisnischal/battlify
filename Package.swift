@@ -31,7 +31,12 @@ let package = Package(
                 // Wi-Fi power control.
                 .linkedFramework("CoreWLAN"),
                 // Bluetooth power control (private IOBluetoothPreference* symbols).
-                .linkedFramework("IOBluetooth")
+                .linkedFramework("IOBluetooth"),
+                // Display brightness control (private DisplayServices framework).
+                .unsafeFlags([
+                    "-F", "/System/Library/PrivateFrameworks",
+                    "-framework", "DisplayServices"
+                ])
             ]
         ),
         // The privileged daemon/CLI (runs as root) that enforces the charge limit.

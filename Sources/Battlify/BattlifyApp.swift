@@ -18,6 +18,7 @@ struct BattlifyApp: App {
     @StateObject private var license = LicenseManager()
     @StateObject private var startup = StartupManager()
     @StateObject private var updater = UpdaterManager()
+    @StateObject private var actions = SystemActions()
 
     var body: some Scene {
         MenuBarExtra {
@@ -29,6 +30,7 @@ struct BattlifyApp: App {
                 .environmentObject(license)
                 .environmentObject(startup)
                 .environmentObject(updater)
+                .environmentObject(actions)
         } label: {
             // Menu bar label: battery glyph + percentage.
             let snap = battery.snapshot

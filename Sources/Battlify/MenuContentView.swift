@@ -9,6 +9,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var license: LicenseManager
     @EnvironmentObject private var startup: StartupManager
     @EnvironmentObject private var updater: UpdaterManager
+    @EnvironmentObject private var actions: SystemActions
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near the typical full height so the popover doesn't visibly grow on
@@ -39,6 +40,8 @@ struct MenuContentView: View {
                 }
                 .disabled(!license.isPro)
                 .opacity(license.isPro ? 1 : 0.45)
+                Divider()
+                quickActionsSection
                 Divider()
                 generalSection
                 Divider()
@@ -341,6 +344,41 @@ struct MenuContentView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    // MARK: - Quick actions
+
+    @ViewBuilder
+    private var quickActionsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Quick Actions")
+            HStack(spacing: 8) {
+                actionButton(actions.dimmed ? "Brighten" : "Dim",
+                             systemImage: actions.dimmed ? "sun.max" : "sun.min") {
+                    actions.toggleDim()
+                }
+                actionButton("Display Off", systemImage: "moon") {
+                    actions.turnDisplayOff()
+                }
+                actionButton("Sleep", systemImage: "powersleep") {
+                    actions.sleepNow()
+                }
+            }
+        }
+    }
+
+    private func actionButton(_ title: String, systemImage: String,
+                              _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage).font(.system(size: 15))
+                Text(title).font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - General (login item + lid sensor)
