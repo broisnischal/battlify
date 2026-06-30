@@ -1,5 +1,5 @@
 import SwiftUI
-import BattPieKit
+import BattlifyKit
 
 /// Detached window with battery health stats and the top energy-using processes.
 /// Moved out of the menu to keep the dropdown uncluttered.

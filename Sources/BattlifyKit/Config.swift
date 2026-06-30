@@ -3,7 +3,7 @@ import Foundation
 /// Persistent settings shared between the GUI (writer) and the root daemon (reader).
 /// Stored as JSON at a system-wide path so the root daemon can read it regardless
 /// of which user is logged in.
-public struct BattPieConfig: Codable, Equatable, Sendable {
+public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// Whether charge limiting is active.
     public var chargeLimitEnabled: Bool
     /// Upper charge threshold (%). Charging stops at/above this.
@@ -32,7 +32,7 @@ public struct BattPieConfig: Codable, Equatable, Sendable {
         self.mode = mode
     }
 
-    public static let `default` = BattPieConfig()
+    public static let `default` = BattlifyConfig()
 
     // Version-tolerant decoding: missing keys fall back to defaults so configs
     // written by older versions keep loading.
@@ -47,12 +47,12 @@ public struct BattPieConfig: Codable, Equatable, Sendable {
     }
 }
 
-public enum BattPiePaths {
+public enum BattlifyPaths {
     /// System-wide config directory, readable by root daemon and writable by
     /// the GUI (the installer makes it group/everyone-writable, or the GUI
     /// writes via the helper). Kept under /Library for daemon visibility.
     public static let configDirectory =
-        URL(fileURLWithPath: "/Library/Application Support/BattPie", isDirectory: true)
+        URL(fileURLWithPath: "/Library/Application Support/Battlify", isDirectory: true)
 
     public static let configFile =
         configDirectory.appendingPathComponent("config.json")
@@ -65,7 +65,7 @@ public enum BattPiePaths {
     /// (e.g. when the root daemon isn't installed).
     public static var userConfigDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BattPie", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Battlify", isDirectory: true)
     }
 
     public static var userHistoryFile: URL {
@@ -74,18 +74,18 @@ public enum BattPiePaths {
 }
 
 public enum ConfigStore {
-    public static func load() -> BattPieConfig {
-        guard let data = try? Data(contentsOf: BattPiePaths.configFile),
-              let cfg = try? JSONDecoder().decode(BattPieConfig.self, from: data)
+    public static func load() -> BattlifyConfig {
+        guard let data = try? Data(contentsOf: BattlifyPaths.configFile),
+              let cfg = try? JSONDecoder().decode(BattlifyConfig.self, from: data)
         else { return .default }
         return cfg
     }
 
     /// Write the config. Throws if the directory isn't writable by this process.
-    public static func save(_ config: BattPieConfig) throws {
+    public static func save(_ config: BattlifyConfig) throws {
         try FileManager.default.createDirectory(
-            at: BattPiePaths.configDirectory, withIntermediateDirectories: true)
+            at: BattlifyPaths.configDirectory, withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(config)
-        try data.write(to: BattPiePaths.configFile, options: .atomic)
+        try data.write(to: BattlifyPaths.configFile, options: .atomic)
     }
 }

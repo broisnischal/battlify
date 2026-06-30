@@ -1,5 +1,5 @@
 import SwiftUI
-import BattPieKit
+import BattlifyKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -9,12 +9,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct BattPieApp: App {
+struct BattlifyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var battery = BatteryStore()
     @StateObject private var chargeLimit = ChargeLimitStore()
     @StateObject private var automation = AutomationStore()
     @StateObject private var processes = ProcessMonitor()
+    @StateObject private var license = LicenseManager()
 
     var body: some Scene {
         MenuBarExtra {
@@ -23,6 +24,7 @@ struct BattPieApp: App {
                 .environmentObject(chargeLimit)
                 .environmentObject(automation)
                 .environmentObject(processes)
+                .environmentObject(license)
         } label: {
             // Menu bar label: battery glyph + percentage.
             let snap = battery.snapshot
@@ -43,6 +45,13 @@ struct BattPieApp: App {
         // Detached window for the history charts.
         Window("Battery History", id: "history") {
             HistoryView()
+        }
+        .windowResizability(.contentSize)
+
+        // License / activation window.
+        Window("Activate Battlify", id: "license") {
+            LicenseView()
+                .environmentObject(license)
         }
         .windowResizability(.contentSize)
     }

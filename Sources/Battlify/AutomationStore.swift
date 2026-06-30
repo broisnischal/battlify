@@ -1,6 +1,6 @@
 import Foundation
 import Combine
-import BattPieKit
+import BattlifyKit
 
 /// User preferences + behavior for lid-close radio automation. These run as the
 /// user, so they live in UserDefaults (not the root config).

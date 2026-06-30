@@ -1,5 +1,5 @@
 import Foundation
-import BattPieKit
+import BattlifyKit
 
 /// The enforcement loop plus the control server.
 ///
@@ -220,9 +220,9 @@ final class Daemon: @unchecked Sendable {
     }
 
     private func log(_ m: String) {
-        FileHandle.standardError.write(Data("battpie-helper: \(m)\n".utf8))
+        FileHandle.standardError.write(Data("battlify-helper: \(m)\n".utf8))
     }
     private func err(_ m: String) {
-        FileHandle.standardError.write(Data("battpie-helper: error: \(m)\n".utf8))
+        FileHandle.standardError.write(Data("battlify-helper: error: \(m)\n".utf8))
     }
 }

@@ -30,7 +30,7 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
 
 public enum ControlRequest: Codable, Sendable {
     case getStatus
-    case setConfig(BattPieConfig)
+    case setConfig(BattlifyConfig)
     case setLowPowerMode(Bool)
     case setPowerToggle(PowerToggle, Bool)
     case applyMode(SaveMode)
@@ -38,7 +38,7 @@ public enum ControlRequest: Codable, Sendable {
 
 public struct ControlResponse: Codable, Sendable {
     public var ok: Bool
-    public var config: BattPieConfig
+    public var config: BattlifyConfig
     public var batteryPercent: Int
     public var chargingEnabled: Bool
     public var schemeDescription: String
@@ -49,7 +49,7 @@ public struct ControlResponse: Codable, Sendable {
     public var pauseReason: String?
     public var message: String?
 
-    public init(ok: Bool, config: BattPieConfig, batteryPercent: Int,
+    public init(ok: Bool, config: BattlifyConfig, batteryPercent: Int,
                 chargingEnabled: Bool, schemeDescription: String,
                 lowPowerModeEnabled: Bool = false,
                 powerToggles: [String: Bool] = [:],
@@ -70,7 +70,7 @@ public struct ControlResponse: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         ok = try c.decodeIfPresent(Bool.self, forKey: .ok) ?? false
-        config = try c.decodeIfPresent(BattPieConfig.self, forKey: .config) ?? .default
+        config = try c.decodeIfPresent(BattlifyConfig.self, forKey: .config) ?? .default
         batteryPercent = try c.decodeIfPresent(Int.self, forKey: .batteryPercent) ?? 0
         chargingEnabled = try c.decodeIfPresent(Bool.self, forKey: .chargingEnabled) ?? false
         schemeDescription = try c.decodeIfPresent(String.self, forKey: .schemeDescription) ?? ""
@@ -82,7 +82,7 @@ public struct ControlResponse: Codable, Sendable {
 }
 
 public enum ControlSocket {
-    public static let path = "/var/run/battpie.sock"
+    public static let path = "/var/run/battlify.sock"
 }
 
 public enum ControlError: Error, CustomStringConvertible {
@@ -92,7 +92,7 @@ public enum ControlError: Error, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .notConnected: return "BattPie helper is not running"
+        case .notConnected: return "Battlify helper is not running"
         case .ioError(let s): return "Control I/O error: \(s)"
         case .decodeError: return "Could not decode helper response"
         }

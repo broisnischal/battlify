@@ -1,6 +1,6 @@
 import Foundation
 import Combine
-import BattPieKit
+import BattlifyKit
 
 /// GUI-side history: records samples to the user's history file while the app runs,
 /// and loads merged samples (system daemon file + user file) for charting.
@@ -43,8 +43,8 @@ final class HistoryViewModel: ObservableObject {
         let since = Date().addingTimeInterval(-range.interval)
         Task.detached {
             // Merge daemon-written and user-written samples.
-            var merged = HistoryStore.load(since: since, from: BattPiePaths.historyFile)
-            merged += HistoryStore.load(since: since, from: BattPiePaths.userHistoryFile)
+            var merged = HistoryStore.load(since: since, from: BattlifyPaths.historyFile)
+            merged += HistoryStore.load(since: since, from: BattlifyPaths.userHistoryFile)
             merged.sort { $0.t < $1.t }
             await MainActor.run { self.samples = merged }
         }
@@ -55,8 +55,8 @@ final class HistoryViewModel: ObservableObject {
         let sample = BatterySample(t: Date(), pct: snap.percentage,
                                    charging: snap.isCharging, temp: snap.temperature)
         Task.detached {
-            HistoryStore.append(sample, to: BattPiePaths.userHistoryFile)
-            HistoryStore.trim(at: BattPiePaths.userHistoryFile)
+            HistoryStore.append(sample, to: BattlifyPaths.userHistoryFile)
+            HistoryStore.trim(at: BattlifyPaths.userHistoryFile)
         }
     }
 }

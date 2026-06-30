@@ -1,6 +1,6 @@
 import SwiftUI
 import Charts
-import BattPieKit
+import BattlifyKit
 
 struct HistoryView: View {
     @StateObject private var model = HistoryViewModel()
@@ -25,7 +25,7 @@ struct HistoryView: View {
                 ContentUnavailableView(
                     "No history yet",
                     systemImage: "chart.xyaxis.line",
-                    description: Text("Samples are recorded every 5 minutes while BattPie runs.")
+                    description: Text("Samples are recorded every 5 minutes while Battlify runs.")
                 )
                 .frame(maxWidth: .infinity, minHeight: 220)
             } else {

@@ -33,7 +33,7 @@ public enum HistoryStore {
 
     /// Append one sample. Best-effort; failures are ignored (history is non-critical).
     public static func append(_ sample: BatterySample,
-                              to url: URL = BattPiePaths.historyFile) {
+                              to url: URL = BattlifyPaths.historyFile) {
         guard let data = try? encoder.encode(sample) else { return }
         var line = data
         line.append(0x0A)
@@ -52,7 +52,7 @@ public enum HistoryStore {
 
     /// Load samples newer than `since`. Reads the whole file and filters.
     public static func load(since: Date = .distantPast,
-                            from url: URL = BattPiePaths.historyFile) -> [BatterySample] {
+                            from url: URL = BattlifyPaths.historyFile) -> [BatterySample] {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         var out: [BatterySample] = []
         for line in text.split(separator: "\n") {
@@ -64,7 +64,7 @@ public enum HistoryStore {
     }
 
     /// Trim the file to the most recent `keep` samples, to bound growth.
-    public static func trim(keep: Int = 4000, at url: URL = BattPiePaths.historyFile) {
+    public static func trim(keep: Int = 4000, at url: URL = BattlifyPaths.historyFile) {
         let all = load(from: url)
         guard all.count > keep else { return }
         let recent = all.suffix(keep)

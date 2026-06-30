@@ -1,6 +1,6 @@
 import Foundation
 import Combine
-import BattPieKit
+import BattlifyKit
 
 /// GUI-side state for charge limiting. Talks to the root daemon over the control
 /// socket. All socket I/O happens off the main thread; published state is updated
@@ -27,7 +27,7 @@ final class ChargeLimitStore: ObservableObject {
     @Published var maxChargeTempC = 35.0
 
     /// Full config last seen from the daemon, so edits preserve unrelated fields.
-    private var currentConfig = BattPieConfig.default
+    private var currentConfig = BattlifyConfig.default
     private var refreshTimer: Timer?
 
     init() {

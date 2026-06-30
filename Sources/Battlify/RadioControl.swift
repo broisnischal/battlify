@@ -24,7 +24,7 @@ enum RadioControl {
             try iface.setPower(on)
             return true
         } catch {
-            NSLog("BattPie: Wi-Fi setPower(\(on)) failed: \(error)")
+            NSLog("Battlify: Wi-Fi setPower(\(on)) failed: \(error)")
             return false
         }
     }

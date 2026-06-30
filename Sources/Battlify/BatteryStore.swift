@@ -1,7 +1,7 @@
 import Foundation
 import IOKit.ps
 import Combine
-import BattPieKit
+import BattlifyKit
 
 /// Observable wrapper around `BatteryMonitor`. Updates immediately on power-source
 /// changes (via an IOKit run-loop source) and on a slow timer as a fallback for

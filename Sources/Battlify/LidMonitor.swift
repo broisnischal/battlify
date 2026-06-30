@@ -33,7 +33,7 @@ final class LidMonitor {
         }, &notifier)
 
         guard rootPort != 0, let port else {
-            NSLog("BattPie: IORegisterForSystemPower failed")
+            NSLog("Battlify: IORegisterForSystemPower failed")
             return
         }
         notifyPort = port

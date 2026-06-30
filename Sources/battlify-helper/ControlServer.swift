@@ -1,5 +1,5 @@
 import Foundation
-import BattPieKit
+import BattlifyKit
 
 /// Unix-domain-socket server the daemon runs so the GUI can query status and push
 /// config changes. Each connection carries one newline-delimited JSON request and

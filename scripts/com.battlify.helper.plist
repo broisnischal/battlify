@@ -4,11 +4,11 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.battpie.helper</string>
+    <string>com.battlify.helper</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/battpie-helper</string>
+        <string>/usr/local/bin/battlify-helper</string>
         <string>daemon</string>
     </array>
 
@@ -20,9 +20,9 @@
 
     <!-- Logs for diagnostics. -->
     <key>StandardErrorPath</key>
-    <string>/var/log/battpie-helper.log</string>
+    <string>/var/log/battlify-helper.log</string>
     <key>StandardOutPath</key>
-    <string>/var/log/battpie-helper.log</string>
+    <string>/var/log/battlify-helper.log</string>
 
     <key>ProcessType</key>
     <string>Background</string>

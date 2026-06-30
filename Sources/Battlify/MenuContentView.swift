@@ -1,11 +1,12 @@
 import SwiftUI
 import AppKit
-import BattPieKit
+import BattlifyKit
 
 struct MenuContentView: View {
     @EnvironmentObject private var battery: BatteryStore
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
     @EnvironmentObject private var automation: AutomationStore
+    @EnvironmentObject private var license: LicenseManager
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var contentHeight: CGFloat = 360
@@ -21,13 +22,18 @@ struct MenuContentView: View {
             VStack(alignment: .leading, spacing: 14) {
                 header(snap)
                 Divider()
-                modeSection
-                Divider()
-                chargeLimitSection
-                Divider()
-                sleepSection
-                Divider()
-                powerSection
+                if !license.isLicensed { licenseBanner; Divider() }
+                Group {
+                    modeSection
+                    Divider()
+                    chargeLimitSection
+                    Divider()
+                    sleepSection
+                    Divider()
+                    powerSection
+                }
+                .disabled(!license.isPro)
+                .opacity(license.isPro ? 1 : 0.45)
                 Divider()
                 footer
             }
@@ -43,6 +49,31 @@ struct MenuContentView: View {
     private var maxPopoverHeight: CGFloat {
         let usable = NSScreen.main?.visibleFrame.height ?? 800
         return max(360, usable - 24)
+    }
+
+    // MARK: - License banner
+
+    @ViewBuilder
+    private var licenseBanner: some View {
+        let expired = !license.isPro
+        HStack(spacing: 10) {
+            Image(systemName: expired ? "lock.fill" : "sparkles")
+                .foregroundStyle(expired ? .orange : .green)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(expired ? "Trial ended — controls locked" : license.statusText)
+                    .font(.callout.weight(.medium))
+                Text(expired ? "Activate to keep using Battlify."
+                             : "Activate any time to unlock permanently.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button("Activate") { openDetached("license") }
+                .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background((expired ? Color.orange : Color.green).opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Header

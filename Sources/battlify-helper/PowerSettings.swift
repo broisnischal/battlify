@@ -1,5 +1,5 @@
 import Foundation
-import BattPieKit
+import BattlifyKit
 
 /// Reads and writes system sleep/idle power settings via `pmset`. Writing needs
 /// root (the daemon has it). These persist system-wide, so they don't need

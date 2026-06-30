@@ -1,7 +1,7 @@
 import Foundation
-import BattPieKit
+import BattlifyKit
 
-// battpie-helper: the privileged component. Writing SMC keys requires root, so
+// battlify-helper: the privileged component. Writing SMC keys requires root, so
 // this binary is meant to be run as root (via sudo for testing, or as a
 // LaunchDaemon in production). The GUI never writes SMC directly.
 
@@ -75,7 +75,7 @@ case "limit":
     // config, but the CLI is handy for testing.
     requireRoot()
     guard let n = args.dropFirst().first.flatMap({ Int($0) }), (20...100).contains(n) else {
-        FileHandle.standardError.write(Data("usage: battpie-helper limit <20-100>\n".utf8))
+        FileHandle.standardError.write(Data("usage: battlify-helper limit <20-100>\n".utf8))
         exit(64)
     }
     var cfg = ConfigStore.load()
@@ -90,7 +90,7 @@ case "daemon":
 
 default:
     print("""
-    battpie-helper — privileged battery control
+    battlify-helper — privileged battery control
 
     Commands:
       dump            Show SMC/charge diagnostics (no root needed)

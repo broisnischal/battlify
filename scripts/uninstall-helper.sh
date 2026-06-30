@@ -1,10 +1,10 @@
 #!/bin/bash
-# Removes the BattPie privileged helper LaunchDaemon.
+# Removes the Battlify privileged helper LaunchDaemon.
 # Run with sudo:  sudo ./scripts/uninstall-helper.sh
 set -euo pipefail
 
-PLIST_DST="/Library/LaunchDaemons/com.battpie.helper.plist"
-BIN_DST="/usr/local/bin/battpie-helper"
+PLIST_DST="/Library/LaunchDaemons/com.battlify.helper.plist"
+BIN_DST="/usr/local/bin/battlify-helper"
 
 if [[ "$EUID" -ne 0 ]]; then
     echo "error: must run as root (use sudo)." >&2
@@ -20,6 +20,6 @@ launchctl bootout system "$PLIST_DST" 2>/dev/null || true
 echo "==> Removing files"
 rm -f "$PLIST_DST"
 rm -f "$BIN_DST"
-rm -f /var/run/battpie.sock
+rm -f /var/run/battlify.sock
 
-echo "==> Done. (Config left in /Library/Application Support/BattPie)"
+echo "==> Done. (Config left in /Library/Application Support/Battlify)"
