@@ -27,6 +27,8 @@ final class Daemon: @unchecked Sendable {
     private var lastPauseReason: String?
     // °C below maxChargeTempC at which heat-paused charging may resume.
     private let heatResumeMargin = 2.0
+    // Last MagSafe LED we set, so we only write the SMC on change.
+    private var lastLed: MagSafeLED?
 
     init() {
         charge = ChargeController(smc: smc)
@@ -132,6 +134,7 @@ final class Daemon: @unchecked Sendable {
             lowPowerModeEnabled: LowPowerMode.isEnabled(),
             powerToggles: PowerSettings.readToggles(),
             pauseReason: lastPauseReason,
+            magSafeSupported: charge.isMagSafeSupported,
             message: message
         )
     }
@@ -140,7 +143,8 @@ final class Daemon: @unchecked Sendable {
         ControlResponse(ok: false, config: .default, batteryPercent: 0,
                         chargingEnabled: false, schemeDescription: "n/a",
                         lowPowerModeEnabled: false, powerToggles: [:],
-                        pauseReason: nil, message: "daemon unavailable")
+                        pauseReason: nil, magSafeSupported: false,
+                        message: "daemon unavailable")
     }
 
     // MARK: - Enforcement (caller holds lock)
@@ -179,6 +183,32 @@ final class Daemon: @unchecked Sendable {
 
         lastPauseReason = desired ? nil : reason
         ensure(enabled: desired)
+        updateMagSafeLED(cfg, snap, charging: desired)
+    }
+
+    /// Drive the MagSafe LED from charge status: orange while charging, green when
+    /// holding at the limit, system when unplugged. Only writes the SMC on change.
+    private func updateMagSafeLED(_ cfg: BattlifyConfig, _ snap: BatterySnapshot, charging desired: Bool) {
+        guard charge.isMagSafeSupported else { return }
+
+        guard cfg.magSafeLedEnabled else {
+            // Hand control back to macOS once, then leave it alone.
+            if let last = lastLed, last != .system {
+                try? charge.setMagSafeLED(.system)
+                lastLed = .system
+            }
+            return
+        }
+
+        let target: MagSafeLED
+        if !snap.isPluggedIn { target = .system }
+        else if desired { target = .orange }
+        else { target = .green }
+
+        if lastLed != target {
+            try? charge.setMagSafeLED(target)
+            lastLed = target
+        }
     }
 
     private func recordHistoryIfDue(_ snap: BatterySnapshot) {
@@ -206,11 +236,14 @@ final class Daemon: @unchecked Sendable {
     // MARK: - Signals & logging
 
     private func installSignalHandlers() {
-        // Re-enable charging on exit so we never strand the machine.
+        // Re-enable charging and hand the MagSafe LED back to macOS on exit so we
+        // never strand the machine.
         let cleanup: @convention(c) (Int32) -> Void = { _ in
             let smc = SMC()
             if (try? smc.open()) != nil {
-                try? ChargeController(smc: smc).enableCharging()
+                let c = ChargeController(smc: smc)
+                try? c.enableCharging()
+                if c.isMagSafeSupported { try? c.setMagSafeLED(.system) }
                 smc.close()
             }
             exit(0)

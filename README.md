@@ -35,6 +35,8 @@ doesn't, in a clean menu-bar app built for Apple Silicon.
   Handles both Apple-Silicon SMC schemes (legacy `CH0B/CH0C` and Tahoe `CHTE`).
 - 🔥 **Heat-aware charging** — automatically pause charging when the battery gets
   too warm, with a clear reason shown in the menu.
+- 💡 **MagSafe LED status** — drive the MagSafe LED from charge state (orange while
+  charging, green when holding at your limit), on Macs that have one.
 - ⚡ **One-tap Save Modes** — *Off / Normal / Super Saver* apply a whole bundle of
   settings at once.
 - 😴 **Super Save when lid closed** — closing the lid maximizes battery (Low Power
@@ -58,10 +60,22 @@ checkout is quick and you can pay with **Apple Pay**. Buy in-app, or
 
 1. Download the latest `Battlify.dmg` from [Releases](https://github.com/broisnischal/battlify/releases)
    and drag **Battlify** to Applications.
-2. Launch it — it lives in your menu bar (no Dock icon).
-3. Click **Install Helper…** in the menu (one password prompt) to enable charge
-   limiting, heat-aware charging, and the sleep controls. The helper safely
+2. If macOS says it's "damaged" (it isn't — that's just Gatekeeper on an
+   unsigned/un-notarized build), clear the quarantine flag:
+   ```bash
+   sudo xattr -r -d com.apple.quarantine /Applications/Battlify.app
+   ```
+   (Not needed once the app is notarized.)
+3. Launch it — it lives in your menu bar (no Dock icon).
+4. Click **Install Helper…** in the menu (one password prompt). The helper is a
+   LaunchDaemon, so it **auto-starts at every boot** and keeps running; it safely
    re-enables charging if it ever stops.
+
+### Recommended: turn off macOS's own charge management
+For Battlify's charge limit to behave predictably, disable Apple's:
+- **System Settings → Battery → Battery Health → ⓘ → turn off "Optimized Battery
+  Charging".**
+- On **macOS 26.4+**, also turn off the built-in **Charge Limit** there.
 
 > Battlify checks for updates automatically and offers a one-click download.
 

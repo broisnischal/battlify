@@ -223,6 +223,17 @@ struct MenuContentView: View {
                     .controlSize(.small)
                 }
 
+                // MagSafe LED reflects charge status (only if the Mac has one).
+                if chargeLimit.magSafeSupported {
+                    switchRowWithHint(
+                        "MagSafe LED shows status",
+                        hint: "Orange while charging, green when holding the limit.",
+                        Binding(
+                            get: { chargeLimit.magSafeLedEnabled },
+                            set: { chargeLimit.magSafeLedEnabled = $0; chargeLimit.apply() }
+                        ))
+                }
+
                 // Why charging is paused, if it is.
                 if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
                     if reason == "heat" {

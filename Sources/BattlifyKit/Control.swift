@@ -47,13 +47,16 @@ public struct ControlResponse: Codable, Sendable {
     public var powerToggles: [String: Bool]
     /// Why charging is currently paused, if it is: "limit", "heat", or nil.
     public var pauseReason: String?
+    /// Whether this Mac has a controllable MagSafe charge LED.
+    public var magSafeSupported: Bool
     public var message: String?
 
     public init(ok: Bool, config: BattlifyConfig, batteryPercent: Int,
                 chargingEnabled: Bool, schemeDescription: String,
                 lowPowerModeEnabled: Bool = false,
                 powerToggles: [String: Bool] = [:],
-                pauseReason: String? = nil, message: String? = nil) {
+                pauseReason: String? = nil, magSafeSupported: Bool = false,
+                message: String? = nil) {
         self.ok = ok
         self.config = config
         self.batteryPercent = batteryPercent
@@ -62,6 +65,7 @@ public struct ControlResponse: Codable, Sendable {
         self.lowPowerModeEnabled = lowPowerModeEnabled
         self.powerToggles = powerToggles
         self.pauseReason = pauseReason
+        self.magSafeSupported = magSafeSupported
         self.message = message
     }
 
@@ -77,6 +81,7 @@ public struct ControlResponse: Codable, Sendable {
         lowPowerModeEnabled = try c.decodeIfPresent(Bool.self, forKey: .lowPowerModeEnabled) ?? false
         powerToggles = try c.decodeIfPresent([String: Bool].self, forKey: .powerToggles) ?? [:]
         pauseReason = try c.decodeIfPresent(String.self, forKey: .pauseReason)
+        magSafeSupported = try c.decodeIfPresent(Bool.self, forKey: .magSafeSupported) ?? false
         message = try c.decodeIfPresent(String.self, forKey: .message)
     }
 }

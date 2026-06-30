@@ -1,5 +1,13 @@
 import Foundation
 
+/// MagSafe / charge-status LED states (SMC key ACLC).
+public enum MagSafeLED: UInt8, Sendable {
+    case system = 0x00   // macOS controls it (default)
+    case off    = 0x01
+    case green  = 0x03   // charged / holding at limit
+    case orange = 0x04   // charging
+}
+
 /// Controls whether the battery is allowed to charge, abstracting over the two
 /// SMC schemes Apple Silicon uses:
 ///   - Pre-Tahoe: 1-byte keys CH0B + CH0C (0x00 = charge, 0x02 = stop)
@@ -11,9 +19,19 @@ public final class ChargeController {
     private let ch0b = "CH0B"
     private let ch0c = "CH0C"
     private let chte = "CHTE"
+    private let aclc = "ACLC"   // MagSafe LED
 
     public init(smc: SMC) {
         self.smc = smc
+    }
+
+    // MARK: - MagSafe LED
+
+    /// Whether this Mac has a controllable MagSafe charge LED.
+    public var isMagSafeSupported: Bool { smc.keyExists(aclc) }
+
+    public func setMagSafeLED(_ state: MagSafeLED) throws {
+        try smc.write(aclc, [state.rawValue])
     }
 
     /// True when this Mac uses the legacy CH0B/CH0C charging scheme.
