@@ -1,6 +1,7 @@
 import Foundation
 import IOKit.ps
 import Combine
+import AppKit
 import BattlifyKit
 
 /// Observable wrapper around `BatteryMonitor`. Updates immediately on power-source
@@ -17,6 +18,11 @@ final class BatteryStore: ObservableObject {
         refresh()
         startPolling()
         startPowerSourceNotifications()
+        // Refresh right after the Mac wakes so the menu isn't stale.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
     }
 
     // No deinit cleanup: this store is owned by the App for the process lifetime,

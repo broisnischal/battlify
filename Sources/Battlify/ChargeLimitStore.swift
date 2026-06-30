@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 import BattlifyKit
 
 /// GUI-side state for charge limiting. Talks to the root daemon over the control
@@ -37,6 +38,14 @@ final class ChargeLimitStore: ObservableObject {
         }
         RunLoop.main.add(t, forMode: .common)
         refreshTimer = t
+        // After wake, the daemon may have changed things (deep-save restore);
+        // re-sync promptly instead of waiting for the next poll.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.refresh() }
+            }
+        }
     }
 
     /// Pull current status from the daemon.

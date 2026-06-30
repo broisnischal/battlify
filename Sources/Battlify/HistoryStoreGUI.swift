@@ -7,6 +7,7 @@ import BattlifyKit
 @MainActor
 final class HistoryViewModel: ObservableObject {
     @Published private(set) var samples: [BatterySample] = []
+    @Published private(set) var lidSessions: [LidSession] = []
     @Published var range: HistoryRange = .day
 
     enum HistoryRange: String, CaseIterable, Identifiable {
@@ -46,7 +47,11 @@ final class HistoryViewModel: ObservableObject {
             var merged = HistoryStore.load(since: since, from: BattlifyPaths.historyFile)
             merged += HistoryStore.load(since: since, from: BattlifyPaths.userHistoryFile)
             merged.sort { $0.t < $1.t }
-            await MainActor.run { self.samples = merged }
+            let sessions = LidSessionStore.recent(limit: 30).filter { $0.closedAt >= since }
+            await MainActor.run {
+                self.samples = merged
+                self.lidSessions = sessions
+            }
         }
     }
 

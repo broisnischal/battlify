@@ -32,6 +32,9 @@ final class AutomationStore: ObservableObject {
     /// external display on power. A prime battery-aging scenario.
     var isClamshellMode: Bool { isLidClosed }
 
+    /// Most recent completed lid-closed session (for quick display).
+    @Published private(set) var lastLidSession: LidSession?
+
     private let defaults = UserDefaults.standard
     private let lid = LidMonitor()
     private var lidPollTimer: Timer?
@@ -49,6 +52,9 @@ final class AutomationStore: ObservableObject {
         static let bt = "automation.bluetoothOffOnLidClose"
         static let restore = "automation.restoreOnWake"
         static let superSave = "automation.superSaveOnLidClose"
+        // Pending lid session (persisted so it survives the sleep).
+        static let pendingCloseAt = "lidsession.closedAt"
+        static let pendingCloseCharge = "lidsession.closeCharge"
     }
 
     init() {
@@ -57,6 +63,7 @@ final class AutomationStore: ObservableObject {
         // Default restore-on-wake to true on first run.
         restoreOnWake = defaults.object(forKey: Keys.restore) as? Bool ?? true
         superSaveOnLidClose = defaults.bool(forKey: Keys.superSave)
+        lastLidSession = LidSessionStore.recent(limit: 1).first
 
         lid.onWillSleep = { [weak self] clamshellClosed in
             // LidMonitor callback arrives on the main run loop.
@@ -91,6 +98,10 @@ final class AutomationStore: ObservableObject {
     private func handleLidClose(_ clamshellClosed: Bool) {
         guard clamshellClosed else { return } // ignore non-lid sleeps
 
+        // Record the charge at close so we can measure the drop on wake.
+        defaults.set(Date(), forKey: Keys.pendingCloseAt)
+        defaults.set(BatteryMonitor.read().percentage, forKey: Keys.pendingCloseCharge)
+
         if superSaveOnLidClose {
             enterDeepSave()
         } else {
@@ -106,13 +117,57 @@ final class AutomationStore: ObservableObject {
     }
 
     private func handleWake() {
+        pollLidState()        // reflect "lid open" immediately
+        completeLidSession()
+
         if deepSaveActive {
-            exitDeepSave()
-            return
+            // Restore Low Power Mode + sleep settings immediately; radios with retry.
+            _ = try? ControlClient.send(.applyMode(savedMode ?? .off))
+            savedMode = nil
+            deepSaveActive = false
+            restoreRadios()
+        } else if restoreOnWake {
+            restoreRadios()
         }
-        guard restoreOnWake else { return }
-        if wifiOffOnLidClose && wifiWasOn { RadioControl.setWiFi(true) }
-        if bluetoothOffOnLidClose && bluetoothWasOn { RadioControl.setBluetooth(true) }
+    }
+
+    /// Finalize the lid-closed session started at the last lid close.
+    private func completeLidSession() {
+        guard let closedAt = defaults.object(forKey: Keys.pendingCloseAt) as? Date else { return }
+        let closeCharge = defaults.integer(forKey: Keys.pendingCloseCharge)
+        defaults.removeObject(forKey: Keys.pendingCloseAt)
+        defaults.removeObject(forKey: Keys.pendingCloseCharge)
+
+        let openCharge = BatteryMonitor.read().percentage
+        let session = LidSession(closedAt: closedAt, closeCharge: closeCharge,
+                                 openedAt: Date(), openCharge: openCharge)
+        // Skip blips shorter than a minute.
+        guard session.duration >= 60 else { return }
+        LidSessionStore.append(session)
+        lastLidSession = session
+    }
+
+    /// Bring radios back. macOS can be slow to ready the Wi-Fi/Bluetooth hardware
+    /// right after wake, so we wait briefly and retry until it sticks.
+    private func restoreRadios() {
+        let wantWifi = wifiWasOn
+        let wantBT = bluetoothWasOn
+        guard wantWifi || wantBT else { return }
+
+        func attempt(_ n: Int) {
+            if wantWifi && !RadioControl.isWiFiOn { RadioControl.setWiFi(true) }
+            if wantBT && !RadioControl.isBluetoothOn { RadioControl.setBluetooth(true) }
+            let wifiOK = !wantWifi || RadioControl.isWiFiOn
+            let btOK = !wantBT || RadioControl.isBluetoothOn
+            if (!wifiOK || !btOK) && n < 6 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { attempt(n + 1) }
+            } else {
+                self.wifiWasOn = false
+                self.bluetoothWasOn = false
+            }
+        }
+        // Give the hardware a moment after wake before the first try.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { attempt(0) }
     }
 
     // MARK: - Deep save (sleepwatcher-style)
@@ -136,17 +191,5 @@ final class AutomationStore: ObservableObject {
         _ = try? ControlClient.send(.setPowerToggle(.wakeOnNetwork, false))
         _ = try? ControlClient.send(.setPowerToggle(.tcpKeepAlive, false))
         deepSaveActive = true
-    }
-
-    /// Restore the pre-close state when the lid opens again.
-    private func exitDeepSave() {
-        // Re-apply the previous save mode (resets Low Power Mode + sleep wake-ups
-        // to that profile). Falls back to Off if we never captured one.
-        _ = try? ControlClient.send(.applyMode(savedMode ?? .off))
-        savedMode = nil
-        deepSaveActive = false
-
-        if wifiWasOn { RadioControl.setWiFi(true) }
-        if bluetoothWasOn { RadioControl.setBluetooth(true) }
     }
 }
