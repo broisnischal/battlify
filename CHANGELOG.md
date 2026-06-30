@@ -1,5 +1,24 @@
 # battlify
 
+## 0.4.0
+
+### Minor Changes
+
+- **Discharge to limit (hold-in-range)** — when plugged in above the limit, run off
+  battery (force-discharge via the adapter SMC key, CHIE on Tahoe) until it drops
+  back to the limit. Adapter is always restored when not sailing down and on exit.
+- **MagSafe LED status** — orange while charging, green when holding at the limit;
+  handed back to macOS when disabled or on exit.
+- **Lid-closed drain history** — records charge at lid close vs reopen and shows the
+  drop and %/hour in Battery History.
+
+### Patch Changes
+
+- Fix crash on lid reopen (added `NSBluetoothAlwaysUsageDescription`) and big CPU
+  cuts: process polling only while the Details window is open; slower background
+  pollers; reliable Wi-Fi/Bluetooth restore-on-wake; faster post-wake refresh.
+- Install docs: quarantine-flag fix, disable macOS Optimized Battery Charging.
+
 ## 0.3.1
 
 ### Patch Changes
