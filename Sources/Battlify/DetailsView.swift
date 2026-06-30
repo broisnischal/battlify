@@ -19,6 +19,7 @@ struct DetailsView: View {
             }
             .padding(20)
         }
+        .scrollIndicators(.hidden)
         .frame(width: 380, height: 560)
     }
 

@@ -42,6 +42,7 @@ struct MenuContentView: View {
                 Color.clear.preference(key: ContentHeightKey.self, value: g.size.height)
             })
         }
+        .scrollIndicators(.hidden)
         .frame(width: popoverWidth, height: min(contentHeight, maxPopoverHeight))
         .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
     }

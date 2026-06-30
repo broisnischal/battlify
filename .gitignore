@@ -3,3 +3,9 @@ dist/
 *.xcodeproj
 .DS_Store
 .swiftpm/
+
+# Secrets — never commit. Use .env.example as the template.
+.env
+*.p12
+*.p8
+AuthKey_*.p8
