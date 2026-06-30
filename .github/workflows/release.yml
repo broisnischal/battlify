@@ -1,7 +1,9 @@
 name: Release
 
-# Builds, signs, notarizes, and publishes a Battlify DMG when you push a tag
-# like v0.1.0 (or run the workflow manually).
+# Builds Battlify on every tag push (v0.1.0…) or manual run.
+# - With Apple secrets set: Developer-ID signed + notarized DMG.
+# - Without them: an unsigned build (fine for testing the pipeline; end users
+#   would see a Gatekeeper warning).
 on:
   push:
     tags: ["v*"]
@@ -10,18 +12,16 @@ on:
       version:
         description: "Version (e.g. 0.1.0)"
         required: true
+        default: "0.1.0"
 
 permissions:
   contents: write   # needed to create the GitHub Release
 
 jobs:
   release:
-    runs-on: macos-15   # Apple Silicon runner with current Xcode
+    runs-on: macos-15   # Apple Silicon runner
     steps:
       - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.app
 
       - name: Derive version
         id: ver
@@ -33,6 +33,7 @@ jobs:
           fi
 
       - name: Import Developer ID certificate
+        if: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 != '' }}
         env:
           CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 }}
           CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
@@ -42,15 +43,11 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import cert.p12 -k build.keychain -P "$CERT_PASSWORD" \
-            -T /usr/bin/codesign
+          security import cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security list-keychains -d user -s build.keychain login.keychain
-          security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           rm -f cert.p12
-          # Expose the identity name for later steps.
-          IDENT=$(security find-identity -v -p codesigning build.keychain \
-            | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
+          IDENT=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
           echo "CODESIGN_IDENTITY=$IDENT" >> "$GITHUB_ENV"
 
       - name: Build, sign, package
@@ -59,6 +56,7 @@ jobs:
           ./scripts/make-dmg.sh "${{ steps.ver.outputs.version }}"
 
       - name: Notarize & staple
+        if: ${{ secrets.NOTARY_KEY_ID != '' }}
         env:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
@@ -69,11 +67,20 @@ jobs:
           ./scripts/notarize.sh "dist/Battlify-${{ steps.ver.outputs.version }}.dmg"
           rm -f AuthKey.p8
 
+      # Always make the build downloadable from the run summary.
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Battlify-${{ steps.ver.outputs.version }}
+          path: dist/Battlify-${{ steps.ver.outputs.version }}.dmg
+
+      # On a tag push, also attach it to a draft GitHub Release.
       - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           name: "Battlify ${{ steps.ver.outputs.version }}"
           tag_name: ${{ github.ref_name }}
           files: dist/Battlify-${{ steps.ver.outputs.version }}.dmg
-          draft: true        # review before going public
+          draft: true
           generate_release_notes: true
