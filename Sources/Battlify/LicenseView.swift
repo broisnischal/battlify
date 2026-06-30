@@ -28,6 +28,7 @@ struct LicenseView: View {
         }
         .padding(24)
         .frame(width: 440)
+        .tint(.green)
     }
 
     // MARK: - Licensed

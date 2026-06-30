@@ -43,6 +43,7 @@ struct HistoryView: View {
         }
         .scrollIndicators(.hidden)
         .frame(width: 560, height: 540)
+        .tint(.green)
     }
 
     // MARK: - Lid-closed sessions

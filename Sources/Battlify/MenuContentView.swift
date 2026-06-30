@@ -55,6 +55,7 @@ struct MenuContentView: View {
         .scrollIndicators(.hidden)
         .frame(width: popoverWidth, height: min(contentHeight, maxPopoverHeight))
         .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
+        .tint(.green)
     }
 
     private var maxPopoverHeight: CGFloat {
@@ -110,34 +111,70 @@ struct MenuContentView: View {
     // MARK: - Header
 
     private func header(_ snap: BatterySnapshot) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: snap.menuBarSymbol)
-                .font(.largeTitle)
-                .foregroundStyle(headerTint(snap))
-                .frame(width: 36)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("\(snap.percentage)%")
-                    .font(.title.weight(.semibold))
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: snap.menuBarSymbol)
+                    .font(.system(size: 19, weight: .regular))
+                    .foregroundStyle(chargeColor(snap))
+                    .frame(width: 24)
+                (Text("\(snap.percentage)")
+                    .font(.system(size: 32, weight: .semibold, design: .rounded))
+                 + Text("%")
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .foregroundColor(.secondary))
                     .monospacedDigit()
-                Text(statusLine(snap))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(statusLine(snap)).font(.caption)
+                    if let eta = etaLine(snap) {
+                        Text(eta).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .foregroundStyle(.secondary)
             }
-            Spacer()
-            if let eta = etaLine(snap) {
-                Text(eta)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.trailing)
+
+            chargeGauge(snap)
+
+            if chargeLimit.limitEnabled {
+                Text(limitCaption(snap))
+                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
     }
 
-    private func headerTint(_ snap: BatterySnapshot) -> Color {
+    /// Signature element: a charge bar that also marks where the limit sits.
+    private func chargeGauge(_ snap: BatterySnapshot) -> some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let frac = max(0, min(1, CGFloat(snap.percentage) / 100))
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.10)).frame(height: 8)
+                Capsule().fill(chargeColor(snap).gradient)
+                    .frame(width: max(8, w * frac), height: 8)
+                if chargeLimit.limitEnabled {
+                    let x = w * CGFloat(chargeLimit.limit) / 100
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.65))
+                        .frame(width: 2, height: 15)
+                        .position(x: min(max(1, x), w - 1), y: 7.5)
+                }
+            }
+            .frame(height: 15)
+        }
+        .frame(height: 15)
+    }
+
+    private func limitCaption(_ snap: BatterySnapshot) -> String {
+        if !chargeLimit.chargingEnabled { return "Holding at \(chargeLimit.limit)%" }
+        if snap.isCharging { return "Charging to \(chargeLimit.limit)%" }
+        return "Limit \(chargeLimit.limit)%"
+    }
+
+    private func chargeColor(_ snap: BatterySnapshot) -> Color {
         if snap.isCharging || (snap.isPluggedIn && !snap.isFullyCharged) { return .green }
         if snap.percentage <= 20 { return .red }
-        if snap.percentage <= 40 { return .yellow }
-        return .primary
+        if snap.percentage <= 40 { return .orange }
+        return .green
     }
 
     // MARK: - Save mode
@@ -145,7 +182,7 @@ struct MenuContentView: View {
     @ViewBuilder
     private var modeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Save Mode")
+            sectionHeader("Save Mode", "gauge.with.dots.needle.50percent")
             if chargeLimit.daemonAvailable {
                 Picker("", selection: Binding(
                     get: { chargeLimit.mode },
@@ -178,7 +215,7 @@ struct MenuContentView: View {
     @ViewBuilder
     private var chargeLimitSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Charge Limit")
+            sectionHeader("Charge Limit", "bolt.batteryblock.fill")
 
             if chargeLimit.daemonAvailable {
                 switchRow("Limit charging", Binding(
@@ -298,7 +335,7 @@ struct MenuContentView: View {
     @ViewBuilder
     private var sleepSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Sleep & Idle")
+            sectionHeader("Sleep & Idle", "moon.zzz.fill")
 
             // Headline lid automation.
             switchRowWithHint(
@@ -333,7 +370,7 @@ struct MenuContentView: View {
     @ViewBuilder
     private var powerSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Power")
+            sectionHeader("Power", "powerplug.fill")
             if chargeLimit.daemonAvailable {
                 switchRow("Low Power Mode", Binding(
                     get: { chargeLimit.lowPowerMode },
@@ -351,7 +388,7 @@ struct MenuContentView: View {
     @ViewBuilder
     private var quickActionsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Quick Actions")
+            sectionHeader("Quick Actions", "wand.and.rays")
             HStack(spacing: 8) {
                 actionButton(actions.dimmed ? "Brighten" : "Dim",
                              systemImage: actions.dimmed ? "sun.max" : "sun.min") {
@@ -386,7 +423,7 @@ struct MenuContentView: View {
     @ViewBuilder
     private var generalSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("General")
+            sectionHeader("General", "gearshape.fill")
 
             switchRow("Launch at login", Binding(
                 get: { startup.launchAtLogin },
@@ -455,12 +492,17 @@ struct MenuContentView: View {
 
     // MARK: - Reusable bits
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-            .tracking(0.5)
+    private func sectionHeader(_ title: String, _ icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tint)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .tracking(0.6)
+        }
     }
 
     private func switchRow(_ title: String, _ value: Binding<Bool>) -> some View {
@@ -503,8 +545,8 @@ struct MenuContentView: View {
     }
 
     private func etaLine(_ snap: BatterySnapshot) -> String? {
-        if snap.isCharging, let m = snap.timeToFull { return "\(formatMinutes(m))\nto full" }
-        if !snap.isPluggedIn, let m = snap.timeToEmpty { return "\(formatMinutes(m))\nleft" }
+        if snap.isCharging, let m = snap.timeToFull { return "\(formatMinutes(m)) to full" }
+        if !snap.isPluggedIn, let m = snap.timeToEmpty { return "\(formatMinutes(m)) left" }
         return nil
     }
 

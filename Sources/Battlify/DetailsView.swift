@@ -23,6 +23,7 @@ struct DetailsView: View {
         }
         .scrollIndicators(.hidden)
         .frame(width: 380, height: 600)
+        .tint(.green)
         .onAppear { processes.beginObserving() }
         .onDisappear { processes.endObserving() }
     }
