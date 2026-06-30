@@ -20,6 +20,10 @@ permissions:
 jobs:
   release:
     runs-on: macos-15   # Apple Silicon runner
+    # secrets can't be used in step `if:` directly, so surface them as env flags.
+    env:
+      HAS_SIGNING: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 != '' }}
+      HAS_NOTARY: ${{ secrets.NOTARY_KEY_ID != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +37,7 @@ jobs:
           fi
 
       - name: Import Developer ID certificate
-        if: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         env:
           CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 }}
           CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
@@ -56,7 +60,7 @@ jobs:
           ./scripts/make-dmg.sh "${{ steps.ver.outputs.version }}"
 
       - name: Notarize & staple
-        if: ${{ secrets.NOTARY_KEY_ID != '' }}
+        if: ${{ env.HAS_NOTARY == 'true' }}
         env:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
