@@ -17,6 +17,9 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     public var maxChargeTempC: Double
     /// Drive the MagSafe LED from charge status (orange charging, green holding).
     public var magSafeLedEnabled: Bool
+    /// Force-discharge (run off battery while plugged) to bring the level down to
+    /// the limit when you plug in above it.
+    public var dischargeEnabled: Bool
     /// The last-applied save mode.
     public var mode: SaveMode
 
@@ -26,6 +29,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 heatAwareEnabled: Bool = false,
                 maxChargeTempC: Double = 35.0,
                 magSafeLedEnabled: Bool = false,
+                dischargeEnabled: Bool = false,
                 mode: SaveMode = .off) {
         self.chargeLimitEnabled = chargeLimitEnabled
         self.chargeLimit = chargeLimit
@@ -33,6 +37,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.heatAwareEnabled = heatAwareEnabled
         self.maxChargeTempC = maxChargeTempC
         self.magSafeLedEnabled = magSafeLedEnabled
+        self.dischargeEnabled = dischargeEnabled
         self.mode = mode
     }
 
@@ -48,6 +53,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         heatAwareEnabled = try c.decodeIfPresent(Bool.self, forKey: .heatAwareEnabled) ?? false
         maxChargeTempC = try c.decodeIfPresent(Double.self, forKey: .maxChargeTempC) ?? 35.0
         magSafeLedEnabled = try c.decodeIfPresent(Bool.self, forKey: .magSafeLedEnabled) ?? false
+        dischargeEnabled = try c.decodeIfPresent(Bool.self, forKey: .dischargeEnabled) ?? false
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off
     }
 }

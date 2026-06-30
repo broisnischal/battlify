@@ -223,6 +223,20 @@ struct MenuContentView: View {
                     .controlSize(.small)
                 }
 
+                // Force-discharge down to the limit when plugged in above it.
+                if chargeLimit.dischargeSupported {
+                    switchRowWithHint(
+                        "Discharge to limit",
+                        hint: "If you plug in above the limit, run off battery until it drops back down.",
+                        Binding(
+                            get: { chargeLimit.dischargeEnabled },
+                            set: { chargeLimit.dischargeEnabled = $0; chargeLimit.apply() }
+                        ))
+                    if chargeLimit.discharging {
+                        hintLabel("Discharging to reach the limit…", systemImage: "battery.25")
+                    }
+                }
+
                 // MagSafe LED reflects charge status (only if the Mac has one).
                 if chargeLimit.magSafeSupported {
                     switchRowWithHint(

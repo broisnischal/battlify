@@ -135,6 +135,8 @@ final class Daemon: @unchecked Sendable {
             powerToggles: PowerSettings.readToggles(),
             pauseReason: lastPauseReason,
             magSafeSupported: charge.isMagSafeSupported,
+            dischargeSupported: charge.isAdapterControlSupported,
+            discharging: charge.isAdapterControlSupported && !((try? charge.isAdapterEnabled()) ?? true),
             message: message
         )
     }
@@ -144,6 +146,7 @@ final class Daemon: @unchecked Sendable {
                         chargingEnabled: false, schemeDescription: "n/a",
                         lowPowerModeEnabled: false, powerToggles: [:],
                         pauseReason: nil, magSafeSupported: false,
+                        dischargeSupported: false, discharging: false,
                         message: "daemon unavailable")
     }
 
@@ -183,7 +186,27 @@ final class Daemon: @unchecked Sendable {
 
         lastPauseReason = desired ? nil : reason
         ensure(enabled: desired)
+        manageDischarge(cfg, snap)
         updateMagSafeLED(cfg, snap, charging: desired)
+    }
+
+    /// Force-discharge to bring the level down to the limit when plugged in above
+    /// it; otherwise keep the adapter on. Always leaves the adapter enabled when
+    /// not actively sailing down, so the Mac charges normally.
+    private func manageDischarge(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+        guard charge.isAdapterControlSupported else { return }
+
+        let shouldDischarge = cfg.dischargeEnabled
+            && cfg.chargeLimitEnabled
+            && snap.isPluggedIn
+            && snap.percentage > cfg.chargeLimit
+
+        let adapterOn = (try? charge.isAdapterEnabled()) ?? true
+        if shouldDischarge {
+            if adapterOn { try? charge.disableAdapter(); log("discharging to limit") }
+        } else if !adapterOn {
+            try? charge.enableAdapter(); log("adapter restored")
+        }
     }
 
     /// Drive the MagSafe LED from charge status: orange while charging, green when
@@ -243,6 +266,7 @@ final class Daemon: @unchecked Sendable {
             if (try? smc.open()) != nil {
                 let c = ChargeController(smc: smc)
                 try? c.enableCharging()
+                if c.isAdapterControlSupported { try? c.enableAdapter() }  // stop discharging
                 if c.isMagSafeSupported { try? c.setMagSafeLED(.system) }
                 smc.close()
             }

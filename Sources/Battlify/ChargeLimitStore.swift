@@ -28,6 +28,9 @@ final class ChargeLimitStore: ObservableObject {
     @Published var maxChargeTempC = 35.0
     @Published var magSafeLedEnabled = false
     @Published private(set) var magSafeSupported = false
+    @Published var dischargeEnabled = false
+    @Published private(set) var dischargeSupported = false
+    @Published private(set) var discharging = false
 
     /// Full config last seen from the daemon, so edits preserve unrelated fields.
     private var currentConfig = BattlifyConfig.default
@@ -67,6 +70,7 @@ final class ChargeLimitStore: ObservableObject {
         cfg.heatAwareEnabled = heatAwareEnabled
         cfg.maxChargeTempC = maxChargeTempC
         cfg.magSafeLedEnabled = magSafeLedEnabled
+        cfg.dischargeEnabled = dischargeEnabled
         currentConfig = cfg
         Task.detached {
             let result = try? ControlClient.send(.setConfig(cfg))
@@ -124,5 +128,8 @@ final class ChargeLimitStore: ObservableObject {
         maxChargeTempC = r.config.maxChargeTempC
         magSafeLedEnabled = r.config.magSafeLedEnabled
         magSafeSupported = r.magSafeSupported
+        dischargeEnabled = r.config.dischargeEnabled
+        dischargeSupported = r.dischargeSupported
+        discharging = r.discharging
     }
 }

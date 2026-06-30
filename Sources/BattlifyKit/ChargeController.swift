@@ -20,9 +20,46 @@ public final class ChargeController {
     private let ch0c = "CH0C"
     private let chte = "CHTE"
     private let aclc = "ACLC"   // MagSafe LED
+    // Adapter keys (force discharge): legacy CH0I/CH0J, Tahoe CHIE.
+    private let ch0i = "CH0I"
+    private let ch0j = "CH0J"
+    private let chie = "CHIE"
 
     public init(smc: SMC) {
         self.smc = smc
+    }
+
+    // MARK: - Adapter / force discharge
+    //
+    // Disabling the power adapter makes the Mac run off the battery even while
+    // plugged in — i.e. actively discharge. Used to bring the level *down* to the
+    // charge limit when you plug in above it.
+
+    private var adapterKey: String? {
+        if smc.keyExists(ch0i) { return ch0i }
+        if smc.keyExists(ch0j) { return ch0j }
+        if smc.keyExists(chie) { return chie }
+        return nil
+    }
+
+    public var isAdapterControlSupported: Bool { adapterKey != nil }
+
+    /// True when the adapter is supplying power normally (not force-discharging).
+    public func isAdapterEnabled() throws -> Bool {
+        guard let k = adapterKey else { return true }
+        let v = try smc.read(k)
+        return v.bytes.first == 0x00
+    }
+
+    public func enableAdapter() throws {
+        guard let k = adapterKey else { return }
+        try smc.write(k, [0x00])
+    }
+
+    /// Force discharge by cutting the adapter. CHIE (Tahoe) uses 0x08; others 0x01.
+    public func disableAdapter() throws {
+        guard let k = adapterKey else { return }
+        try smc.write(k, [k == chie ? 0x08 : 0x01])
     }
 
     // MARK: - MagSafe LED
