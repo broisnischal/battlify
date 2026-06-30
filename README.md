@@ -97,14 +97,10 @@ PR bumps the version + `CHANGELOG.md`; tagging that version triggers a release.
 
 Battlify is **source-available** under the [Battlify License](LICENSE) — do almost
 anything with the source, with protections against malicious or rip-off
-redistributions of the *app*. It's based on the
-[Mac Mouse Fix License](https://github.com/noah-nuebling/mac-mouse-fix) by Noah
-Nuebling.
+redistributions of the *app*.
 
 ## Acknowledgements
 
-- Licensing/trial/monetization model inspired by
-  [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix).
 - SMC charge-control keys referenced from
   [charlie0129/batt](https://github.com/charlie0129/batt) and
   [actuallymentor/battery](https://github.com/actuallymentor/battery).

@@ -26,8 +26,8 @@ public enum GumroadError: Error, CustomStringConvertible {
     }
 }
 
-/// Verifies Battlify license keys against Gumroad's license API — the same model
-/// Mac Mouse Fix uses. Keys are issued by Gumroad on purchase (Apple Pay etc.).
+/// Verifies Battlify license keys against Gumroad's license API. Keys are issued
+/// by Gumroad on purchase (Apple Pay etc.).
 ///
 ///   POST https://api.gumroad.com/v2/licenses/verify
 ///        product_id / product_permalink, license_key, increment_uses_count

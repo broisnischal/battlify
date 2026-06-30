@@ -2,7 +2,7 @@ import Foundation
 import Combine
 import BattlifyKit
 
-/// Licensing à la Mac Mouse Fix:
+/// Licensing:
 ///  - **Use-based 30-day trial**: a free day is only counted on days you actually
 ///    use Battlify (not calendar days), so the trial isn't "wasted" while idle.
 ///  - **$2.99 one-time** license verified via Gumroad (Apple Pay at checkout).

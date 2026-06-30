@@ -43,7 +43,7 @@ struct LicenseView: View {
         }
     }
 
-    // MARK: - Pricing (Mac Mouse Fix style)
+    // MARK: - Pricing
 
     private var pricingView: some View {
         VStack(alignment: .leading, spacing: 12) {
