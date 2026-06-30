@@ -110,7 +110,33 @@ conflicts with charging. For a paid app, **drop the public cask** (or keep one
 that only fetches a free/trial build). `Casks/battlify.rb` is kept in-repo for
 reference / a future free tier.
 
-## 6. Icons & branding (later)
+## 6. Auto-update
+
+Battlify checks a **public JSON feed** (`appcast.json`) on launch + daily and shows
+an in-app "Update available" banner with a one-click download.
+
+- Feed format: `{ "version": "0.2.0", "url": "https://…/Battlify-0.2.0.dmg", "notes": "…" }`
+- The app reads `UpdaterManager.feedURL` (currently
+  `raw.githubusercontent.com/broisnischal/battlify-releases/main/appcast.json`).
+- The release workflow generates `dist/appcast.json` (via `scripts/make-appcast.sh`)
+  and attaches it to the GitHub Release.
+
+**Hosting (required, because the source repo is private):** create a **public**
+place for the feed + DMGs so users can reach them without auth. Easiest options:
+- A public `battlify-releases` repo: commit `appcast.json` there and upload DMGs
+  to its Releases. Point `feedURL` at its `raw.githubusercontent.com/...` path.
+- GitHub Pages, or your storefront/CDN.
+
+Then per release: build → upload the DMG to the public location → update
+`appcast.json` there with the new version/url.
+
+**Full silent install (future):** for true "download + install + relaunch" with no
+manual drag, integrate **Sparkle** (`sparkle-project/Sparkle`). It needs Apple
+notarization and bundling Sparkle's XPC services into the `.app` — worth doing once
+you're enrolled and notarizing. The current updater is the no-notarization-needed
+stepping stone.
+
+## 7. Icons & branding (later)
 
 Add `Battlify.icns` to the bundle: create an `AppIcon.iconset` (16–1024 px),
 `iconutil -c icns AppIcon.iconset`, drop the `.icns` in `Contents/Resources`, and

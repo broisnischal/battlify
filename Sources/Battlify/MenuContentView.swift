@@ -8,6 +8,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var automation: AutomationStore
     @EnvironmentObject private var license: LicenseManager
     @EnvironmentObject private var startup: StartupManager
+    @EnvironmentObject private var updater: UpdaterManager
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var contentHeight: CGFloat = 360
@@ -23,6 +24,7 @@ struct MenuContentView: View {
             VStack(alignment: .leading, spacing: 14) {
                 header(snap)
                 Divider()
+                if let update = updater.available { updateBanner(update); Divider() }
                 if !license.isLicensed { licenseBanner; Divider() }
                 Group {
                     modeSection
@@ -53,6 +55,26 @@ struct MenuContentView: View {
     private var maxPopoverHeight: CGFloat {
         let usable = NSScreen.main?.visibleFrame.height ?? 800
         return max(360, usable - 24)
+    }
+
+    // MARK: - Update banner
+
+    private func updateBanner(_ update: AppUpdate) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Update available — v\(update.version)")
+                    .font(.callout.weight(.medium))
+                Text("You have v\(updater.currentVersion)")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button("Download") { updater.downloadAvailable() }
+                .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - License banner
@@ -326,6 +348,18 @@ struct MenuContentView: View {
                 hintLabel("Docked & closed runs hot at 100% — keep a charge limit + heat pause on.",
                           systemImage: "thermometer.high")
             }
+
+            HStack {
+                Button(updater.checking ? "Checking…" : "Check for Updates…") {
+                    updater.check(userInitiated: true)
+                }
+                .disabled(updater.checking)
+                Spacer()
+                Text("v\(updater.currentVersion)")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            .font(.callout)
+            .buttonStyle(.borderless)
         }
     }
 

@@ -78,13 +78,22 @@ jobs:
           name: Battlify-${{ steps.ver.outputs.version }}
           path: dist/Battlify-${{ steps.ver.outputs.version }}.dmg
 
-      # On a tag push, also attach it to a draft GitHub Release.
+      # Generate the update feed pointing at this release's DMG asset.
+      - name: Generate appcast
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          DMG_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Battlify-${{ steps.ver.outputs.version }}.dmg"
+          ./scripts/make-appcast.sh "${{ steps.ver.outputs.version }}" "$DMG_URL" "Battlify ${{ steps.ver.outputs.version }}"
+
+      # On a tag push, attach DMG + appcast.json to a draft GitHub Release.
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           name: "Battlify ${{ steps.ver.outputs.version }}"
           tag_name: ${{ github.ref_name }}
-          files: dist/Battlify-${{ steps.ver.outputs.version }}.dmg
+          files: |
+            dist/Battlify-${{ steps.ver.outputs.version }}.dmg
+            dist/appcast.json
           draft: true
           generate_release_notes: true
