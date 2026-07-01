@@ -11,6 +11,8 @@ struct SettingsView: View {
     @EnvironmentObject private var startup: StartupManager
     @EnvironmentObject private var updater: UpdaterManager
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var notifier: NotificationManager
+    @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var selection: Tab = .charging
 
@@ -122,6 +124,8 @@ struct SettingsView: View {
                 Divider()
 
                 VStack(spacing: 0) {
+                    licenseRow
+                    divider
                     linkRow("Send Me an Email", systemImage: "envelope",
                             url: "mailto:nischaldahal01395@gmail.com")
                     divider
@@ -145,6 +149,36 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
+    }
+
+    /// Opens the license window — the one place to activate or, once purchased,
+    /// remove/deactivate the license. Always available so a licensed user can
+    /// still manage it after the trial banner is gone.
+    private var licenseRow: some View {
+        Button {
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: "license")
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: license.isLicensed ? "checkmark.seal.fill" : "key")
+                    .frame(width: 22)
+                    .foregroundStyle(.tint)
+                Text(license.isLicensed ? "Manage License" : "Activate License")
+                    .foregroundStyle(.tint)
+                Spacer()
+                Text(license.statusText)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.tail)
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.callout)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func linkRow(_ title: String, systemImage: String, url: String) -> some View {
@@ -278,8 +312,29 @@ struct SettingsView: View {
                           isOn: $settings.showMenuBarPercentage)
                 divider
                 toggleRow("Color icon by charge state",
-                          "Green while charging, red when low. Off keeps it monochrome.",
+                          "Green while charging, red when low or warm. Off keeps it monochrome.",
                           isOn: $settings.colorMenuBarIcon)
+            }
+
+            card("Notifications") {
+                toggleRow("Notify me about charge events",
+                          "Charge limit reached, charging paused for heat, low battery, and fully charged.",
+                          isOn: Binding(
+                            get: { settings.notificationsEnabled },
+                            set: { on in
+                                settings.notificationsEnabled = on
+                                if on { notifier.requestAuthorization() }
+                            }))
+                if settings.notificationsEnabled {
+                    divider
+                    HStack {
+                        Text("Test").font(.callout)
+                        Spacer()
+                        Button("Send Test Notification") { notifier.sendTest() }
+                            .controlSize(.small)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                }
             }
 
             card("Startup") {

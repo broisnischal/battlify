@@ -31,6 +31,30 @@ final class ChargeLimitStore: ObservableObject {
     /// Mirror of the daemon's config. Edits are pushed via `apply`.
     @Published var limitEnabled = false
     @Published var limit = 80
+    /// Charging resumes once the level drops to `limit - resumeMargin`, so the
+    /// battery cycles within the band [limit - resumeMargin, limit] instead of
+    /// sitting pinned at the limit. `recharge` is the friendly lower bound.
+    @Published var resumeMargin = 5
+    var recharge: Int { limit - resumeMargin }
+    /// GUI toggle: whether the user has opted into a custom recharge range. When
+    /// off the daemon uses a small default hysteresis and the range slider hides.
+    @Published var rangeEnabled: Bool = UserDefaults.standard.bool(forKey: "chargeRange.enabled") {
+        didSet { UserDefaults.standard.set(rangeEnabled, forKey: "chargeRange.enabled") }
+    }
+    /// Default hysteresis when a custom range isn't in use.
+    private let defaultMargin = 5
+
+    /// Turn the recharge range on/off. Enabling seeds a sensible band; disabling
+    /// reverts to the default hysteresis. Persists to the daemon.
+    func setRangeEnabled(_ on: Bool) {
+        rangeEnabled = on
+        if on {
+            if resumeMargin <= defaultMargin { resumeMargin = max(defaultMargin, min(20, limit - 20)) }
+        } else {
+            resumeMargin = defaultMargin
+        }
+        apply()
+    }
     @Published var heatAwareEnabled = false
     @Published var maxChargeTempC = 35.0
     @Published var magSafeLedMode: MagSafeLEDMode = .system
@@ -78,11 +102,12 @@ final class ChargeLimitStore: ObservableObject {
     }
 
     /// Push the current GUI settings to the daemon, preserving fields the menu
-    /// doesn't directly edit (mode, resumeMargin).
+    /// doesn't directly edit (mode).
     func apply() {
         var cfg = currentConfig
         cfg.chargeLimitEnabled = limitEnabled
         cfg.chargeLimit = limit
+        cfg.resumeMargin = resumeMargin
         cfg.heatAwareEnabled = heatAwareEnabled
         cfg.maxChargeTempC = maxChargeTempC
         cfg.magSafeLedMode = magSafeLedMode
@@ -165,6 +190,7 @@ final class ChargeLimitStore: ObservableObject {
         mode = r.config.mode
         limitEnabled = r.config.chargeLimitEnabled
         limit = r.config.chargeLimit
+        resumeMargin = r.config.resumeMargin
         heatAwareEnabled = r.config.heatAwareEnabled
         maxChargeTempC = r.config.maxChargeTempC
         magSafeLedMode = r.config.magSafeLedMode

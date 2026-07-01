@@ -92,7 +92,9 @@ final class Daemon: @unchecked Sendable {
         case .setConfig(let incoming):
             var cfg = incoming
             cfg.chargeLimit = min(100, max(20, cfg.chargeLimit))
-            cfg.resumeMargin = min(20, max(1, cfg.resumeMargin))
+            // Allow a wide recharge band (up to 40%) but never let the recharge
+            // floor (limit - margin) drop below 20% battery.
+            cfg.resumeMargin = max(1, min(cfg.resumeMargin, 40, cfg.chargeLimit - 20))
             do {
                 try ConfigStore.save(cfg)
                 tick() // apply immediately

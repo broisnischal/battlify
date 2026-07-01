@@ -48,6 +48,16 @@ struct MenuContentView: View {
         .scrollIndicators(.hidden)
         .frame(width: popoverWidth, height: min(contentHeight, maxPopoverHeight))
         .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
+        // Solid, native menu material — the default popover material looks washed
+        // out / gradient-y over bright windows and makes small switches hard to read.
+        .background(MenuBackground().ignoresSafeArea())
+        // Re-sync every time the menu opens so it never shows stale state (e.g.
+        // right after activating a license or toggling the limit in another view).
+        .onAppear {
+            battery.refresh()
+            chargeLimit.refresh()
+            license.refresh()
+        }
     }
 
     private var maxPopoverHeight: CGFloat {
@@ -175,11 +185,19 @@ struct MenuContentView: View {
         return "Limit \(chargeLimit.limit)%"
     }
 
-    // Green while charging, red at a critical level on battery, otherwise neutral.
+    // Red when running warm or critically low, green while charging, else neutral.
     private func chargeColor(_ snap: BatterySnapshot) -> Color {
-        if snap.isCharging { return .green }
+        if isWarm(snap) { return .red }
         if snap.percentage <= 20 && !snap.isPluggedIn { return .red }
+        if snap.isCharging { return .green }
         return .primary
+    }
+
+    /// Warm = charging held for heat, or a genuinely hot battery (≥40 °C).
+    private func isWarm(_ snap: BatterySnapshot) -> Bool {
+        if chargeLimit.pauseReason == "heat" { return true }
+        if let t = snap.temperature, t >= 40 { return true }
+        return false
     }
 
     // MARK: - Save mode
@@ -310,12 +328,43 @@ struct MenuContentView: View {
                     Slider(
                         value: Binding(
                             get: { Double(chargeLimit.limit) },
-                            set: { chargeLimit.limit = Int($0) }
+                            set: {
+                                chargeLimit.limit = Int($0)
+                                // Keep the recharge floor valid as the top moves.
+                                chargeLimit.resumeMargin = min(chargeLimit.resumeMargin,
+                                                               max(5, chargeLimit.limit - 20))
+                            }
                         ),
                         in: 50...100, step: 5,
                         onEditingChanged: { if !$0 { chargeLimit.apply() } }
                     )
                     .controlSize(.small)
+
+                    switchRow("Recharge range", Binding(
+                        get: { chargeLimit.rangeEnabled },
+                        set: { chargeLimit.setRangeEnabled($0) }
+                    ))
+
+                    if chargeLimit.rangeEnabled {
+                        HStack {
+                            Text("Recharge at").foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(chargeLimit.recharge)%").fontWeight(.semibold).monospacedDigit()
+                        }
+                        .font(.callout)
+
+                        Slider(
+                            value: Binding(
+                                get: { Double(chargeLimit.recharge) },
+                                set: { chargeLimit.resumeMargin = chargeLimit.limit - Int($0) }
+                            ),
+                            in: Double(max(20, chargeLimit.limit - 40))...Double(chargeLimit.limit - 5),
+                            step: 5,
+                            onEditingChanged: { if !$0 { chargeLimit.apply() } }
+                        )
+                        .controlSize(.small)
+                        .help("Battery drains to this level before charging back up to the limit, instead of sitting pinned at the limit.")
+                    }
 
                     calibrationControl
                 }
@@ -409,22 +458,27 @@ struct MenuContentView: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 14) {
-            Button("Settings…") { openDetached("settings") }
-            Button("Details…") { openDetached("details") }
-            Button("History…") { openDetached("history") }
+        HStack(spacing: 16) {
+            Button("Settings") { openDetached("settings") }
+            Button("Details") { openDetached("details") }
+                .disabled(!license.isPro)
+            Button("History") { openDetached("history") }
+                .disabled(!license.isPro)
             Spacer()
             Button { battery.refresh(); chargeLimit.refresh() } label: {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Refresh")
+            .foregroundStyle(.secondary)
             Button { NSApplication.shared.terminate(nil) } label: {
                 Image(systemName: "power")
             }
-            .help("Quit")
+            .help("Quit Battlify")
+            .foregroundStyle(.secondary)
         }
         .buttonStyle(.borderless)
         .font(.callout)
+        .imageScale(.medium)
     }
 
     private func openDetached(_ id: String) {
@@ -490,4 +544,18 @@ private struct ContentHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
     }
+}
+
+/// The standard macOS menu vibrancy, used behind the popover so it reads as a
+/// solid native menu rather than the default washed-out popover material. The
+/// hosting window is masked to rounded corners, so this fills without square edges.
+private struct MenuBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .menu
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }

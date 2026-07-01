@@ -42,7 +42,7 @@ final class BatteryStore: ObservableObject {
     /// once IOKit reflects it.
     func refreshSoon() {
         refresh()
-        for delay in [1.0, 3.0] {
+        for delay in [0.3, 1.0, 2.5] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.refresh()
             }
@@ -73,7 +73,10 @@ final class BatteryStore: ObservableObject {
         guard let source = IOPSNotificationCreateRunLoopSource({ ctx in
             guard let ctx else { return }
             let store = Unmanaged<BatteryStore>.fromOpaque(ctx).takeUnretainedValue()
-            Task { @MainActor in store.refresh() }
+            // Read now for an instant reaction, then a couple more times: IOKit's
+            // charging/plugged flags can trail the actual plug/unplug by a moment,
+            // so a single read can catch a stale value.
+            Task { @MainActor in store.refreshSoon() }
         }, context)?.takeRetainedValue() else { return }
 
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
