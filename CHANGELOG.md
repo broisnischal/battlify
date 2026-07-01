@@ -1,5 +1,26 @@
 # battlify
 
+## 0.7.0
+
+### Minor Changes
+
+- **Redesigned menu bar dropdown** — decluttered to the day-to-day essentials
+  (battery status, Save Mode, charge limit, quick actions). The wordy per-toggle
+  captions are gone; explanations now live where there's room for them.
+- **New Settings window** — a dedicated window with **Charging**, **Sleep & Power**,
+  and **General** tabs. Everything set-once (heat pause, MagSafe LED, sleep/wake
+  behavior, menu-bar appearance, updates) moved here to keep the menu simple.
+- **Helper management in Settings** — install, reinstall, or uninstall the root
+  helper from the General tab, with live status (installed / not installed).
+- **Optimized Battery Charging guidance** — a one-time nudge under the limit slider
+  plus a Recommended Setup note in Settings, both with an "Open Battery Settings"
+  button, so macOS's own charge management doesn't override your limit.
+- **Slightly dim the display on battery** — a new toggle (Sleep & Power › On Battery)
+  that lowers brightness a little when unplugged to stretch battery life.
+- **Fixed Display Off** — turning the display off now waits briefly so the click
+  that triggered it doesn't immediately wake the screen back up; it stays off until
+  the next key press or trackpad tap.
+
 ## 0.6.1
 
 ### Patch Changes
