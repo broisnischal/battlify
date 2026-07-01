@@ -1,5 +1,20 @@
 # battlify
 
+## 0.8.3
+
+### Patch Changes
+
+- **Fixed another launch/enable crash.** Two more `MainActor.assumeIsolated` calls
+  (the lid sleep/wake callbacks) could trap on macOS 26 when the callback wasn't on
+  the main actor's executor — the same isolation-assertion crash. All such calls now
+  hop safely with `Task { @MainActor }`.
+- **Notifications now guide you instead of doing nothing.** Turning notifications on
+  requests permission if it's undetermined, and if it's denied it opens an alert
+  pointing to System Settings › Notifications rather than silently failing.
+- **Restored the smooth, rounded menu.** Removed a custom background layer that made
+  the popover look flat/square in the production build; it's back to the native
+  translucent rounded style.
+
 ## 0.8.2
 
 ### Patch Changes
