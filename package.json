@@ -1,6 +1,6 @@
 {
   "name": "battlify",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Menu bar battery saver and charge limiter for Apple Silicon Macs",
   "scripts": {

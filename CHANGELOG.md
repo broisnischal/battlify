@@ -1,5 +1,18 @@
 # battlify
 
+## 0.6.1
+
+### Patch Changes
+
+- **Menu-bar display options** — hide the battery percentage (show just the icon)
+  and turn off state coloring to keep the icon monochrome.
+- **Fixed the stale charge indicator** — changing the limit (or pausing,
+  calibrating, etc.) now updates the menu-bar icon and color within seconds instead
+  of waiting for the next poll, so "started charging" shows right away.
+- **Clearer Low Power Mode** — labeled to explain it lowers the ProMotion refresh
+  rate, making it the obvious switch to restore full refresh rate after Super Saver.
+- Added tooltips to the quick actions, the charge gauge, and Low Power Mode.
+
 ## 0.6.0
 
 ### Minor Changes
