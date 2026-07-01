@@ -126,15 +126,14 @@ megabytes (no framework-linked app does), but it also won't sit there draining y
 ### Homebrew (recommended)
 
 ```bash
-brew install --cask --no-quarantine broisnischal/battlify/battlify
+brew tap broisnischal/battlify
+brew install --cask battlify
 ```
 
-That one command taps `broisnischal/battlify`, and installs. Two one-time notes:
-
-- Homebrew asks you to **trust** the tap the first time (answer yes) — its gate for
-  any third-party tap.
-- `--no-quarantine` is only needed until the app is notarized; without it macOS
-  flags the unsigned build as "damaged."
+Homebrew asks you to **trust** the tap the first time (its gate for any
+third-party tap) — accept, or run `brew trust broisnischal/battlify`. The cask
+clears the download quarantine on install, so the app launches straight away even
+though it isn't notarized yet.
 
 Update later with `brew upgrade --cask battlify`.
 

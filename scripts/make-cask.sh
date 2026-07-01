@@ -26,11 +26,15 @@ cask "battlify" do
 
   app "Battlify.app"
 
-  caveats <<~EOS
-    This build isn't notarized yet, so install with --no-quarantine (see below)
-    or it will report as "damaged":
-      brew install --cask --no-quarantine battlify
+  # The app is signed ad-hoc (not notarized yet). Homebrew quarantines downloads
+  # and no longer supports --no-quarantine, so clear the quarantine after install
+  # to let the app launch without a Gatekeeper "damaged" warning.
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Battlify.app"]
+  end
 
+  caveats <<~EOS
     Charge limiting, Low Power Mode, and sleep controls need a small root helper
     (a LaunchDaemon). After first launch, open the Battlify menu-bar item and
     click "Install Helper" — you will be asked for your password once. The helper
