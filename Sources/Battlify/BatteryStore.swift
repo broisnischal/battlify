@@ -27,14 +27,14 @@ final class BatteryStore: ObservableObject {
         // Refresh right after the Mac wakes so the menu isn't stale.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+            Task { @MainActor in self?.refresh() }
         }
         // Re-read when charging is toggled by the daemon (limit change, pause,
         // calibrate, …). The SMC change takes a moment to surface in IOKit, so we
         // poll a couple of times over the next few seconds.
         NotificationCenter.default.addObserver(
             forName: .battlifyChargeStateChanged, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshSoon() }
+            Task { @MainActor in self?.refreshSoon() }
         }
     }
 

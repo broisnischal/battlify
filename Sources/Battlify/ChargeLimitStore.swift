@@ -87,8 +87,8 @@ final class ChargeLimitStore: ObservableObject {
         // re-sync promptly instead of waiting for the next poll.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.refresh() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                Task { @MainActor in self?.refresh() }
             }
         }
     }

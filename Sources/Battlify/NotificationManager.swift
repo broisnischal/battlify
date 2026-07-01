@@ -33,15 +33,16 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         // Capture the current state as the baseline so pre-existing conditions
         // don't fire retroactively.
         evaluate(settings: settings, battery: battery, chargeLimit: chargeLimit)
-        // `objectWillChange` fires *before* the value updates, so `receive(on: .main)`
-        // both hops to the main actor and defers to the next runloop turn (settled values).
+        // `objectWillChange` fires *before* the value updates (on whatever thread
+        // mutates it), so hop onto the main actor with a Task — that both reads the
+        // settled values and is isolation-safe (unlike `assumeIsolated`, which traps
+        // on macOS 26 when the callback isn't on the main actor's executor).
         Publishers.Merge(
             battery.objectWillChange.map { _ in () },
             chargeLimit.objectWillChange.map { _ in () }
         )
-        .receive(on: DispatchQueue.main)
         .sink { [weak self] in
-            MainActor.assumeIsolated { self?.reevaluate() }
+            Task { @MainActor in self?.reevaluate() }
         }
         .store(in: &cancellables)
     }
