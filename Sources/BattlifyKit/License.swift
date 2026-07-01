@@ -48,11 +48,9 @@ public enum License {
     public static let product = "battlify"
 
     /// Embedded Ed25519 PUBLIC key (base64, 32 bytes). The matching PRIVATE key
-    /// stays with your storefront/license server.
-    ///
-    /// ⚠️ This is a TEST key. Before selling, run `licensetool genkey` privately
-    /// and replace this with your own public key (keep the private key secret).
-    public static let publicKeyBase64 = "42k0j4E2jrxdisXosZeXYA2yoOAO+yp0oGEGw9mrda0="
+    /// lives on the storefront/license server (battlify-releases/app) as the
+    /// LICENSE_SIGNING_PRIVATE_KEY env var, which signs licenses after checkout.
+    public static let publicKeyBase64 = "+H12xfer/QAvW5xSQhB0L2rehNFuwm3SpwW3r66Bujc="
 
     public static func verify(_ token: String,
                               now: Date = Date(),
