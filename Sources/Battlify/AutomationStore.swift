@@ -66,11 +66,12 @@ final class AutomationStore: ObservableObject {
         lastLidSession = LidSessionStore.recent(limit: 1).first
 
         lid.onWillSleep = { [weak self] clamshellClosed in
-            // LidMonitor callback arrives on the main run loop.
-            MainActor.assumeIsolated { self?.handleWillSleep(clamshellClosed) }
+            // Hop to the main actor safely. `assumeIsolated` traps on macOS 26 when
+            // the IOKit callback isn't on the main actor's executor.
+            Task { @MainActor in self?.handleWillSleep(clamshellClosed) }
         }
         lid.onDidWake = { [weak self] in
-            MainActor.assumeIsolated { self?.handleWake() }
+            Task { @MainActor in self?.handleWake() }
         }
         lid.start()
 

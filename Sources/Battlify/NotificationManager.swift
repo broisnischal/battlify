@@ -52,6 +52,29 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         evaluate(settings: settings, battery: battery, chargeLimit: chargeLimit)
     }
 
+    /// Called when the user turns notifications on. Requests permission if it's
+    /// undetermined; if it's already denied, points them to System Settings instead
+    /// of silently doing nothing. All hops are via `Task { @MainActor }` so nothing
+    /// runs an isolation assertion on a background queue.
+    func enableRequested() {
+        center.getNotificationSettings { [weak self] settings in
+            let status = settings.authorizationStatus
+            Task { @MainActor in
+                guard let self else { return }
+                switch status {
+                case .notDetermined:
+                    self.center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                        Task { @MainActor in if !granted { self.showDeniedAlert() } }
+                    }
+                case .denied:
+                    self.showDeniedAlert()
+                default:
+                    break   // already authorized
+                }
+            }
+        }
+    }
+
     /// Post an immediate test notification so the user can confirm permission works.
     /// Resolves authorization first (posting before the prompt is answered drops
     /// the notification), and explains how to fix it if permission is off.

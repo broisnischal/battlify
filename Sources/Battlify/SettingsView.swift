@@ -323,7 +323,7 @@ struct SettingsView: View {
                             get: { settings.notificationsEnabled },
                             set: { on in
                                 settings.notificationsEnabled = on
-                                if on { notifier.requestAuthorization() }
+                                if on { notifier.enableRequested() }
                             }))
                 if settings.notificationsEnabled {
                     divider

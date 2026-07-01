@@ -48,9 +48,6 @@ struct MenuContentView: View {
         .scrollIndicators(.hidden)
         .frame(width: popoverWidth, height: min(contentHeight, maxPopoverHeight))
         .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
-        // Solid, native menu material — the default popover material looks washed
-        // out / gradient-y over bright windows and makes small switches hard to read.
-        .background(MenuBackground().ignoresSafeArea())
         // Re-sync every time the menu opens so it never shows stale state (e.g.
         // right after activating a license or toggling the limit in another view).
         .onAppear {
@@ -546,16 +543,3 @@ private struct ContentHeightKey: PreferenceKey {
     }
 }
 
-/// The standard macOS menu vibrancy, used behind the popover so it reads as a
-/// solid native menu rather than the default washed-out popover material. The
-/// hosting window is masked to rounded corners, so this fills without square edges.
-private struct MenuBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .menu
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
-}
