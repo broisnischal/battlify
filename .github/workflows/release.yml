@@ -141,17 +141,17 @@ jobs:
             echo "RELEASES_TOKEN not set — skipping cask update."
             exit 0
           fi
-          FEED_REPO="broisnischal/battlify-releases"
+          TAP_REPO="broisnischal/homebrew-battlify"
           DMG_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Battlify-${VERSION}.dmg"
           DMG_SHA=$(shasum -a 256 "dist/Battlify-${VERSION}.dmg" | awk '{print $1}')
           ./scripts/make-cask.sh "${VERSION}" "${DMG_URL}" "${DMG_SHA}"
           CONTENT=$(base64 < dist/battlify.rb | tr -d '\n')
-          EXISTING=$(gh api "repos/${FEED_REPO}/contents/Casks/battlify.rb" --jq .sha 2>/dev/null || echo "")
+          EXISTING=$(gh api "repos/${TAP_REPO}/contents/Casks/battlify.rb" --jq .sha 2>/dev/null || echo "")
           if [ -n "$EXISTING" ]; then
-            gh api -X PUT "repos/${FEED_REPO}/contents/Casks/battlify.rb" \
+            gh api -X PUT "repos/${TAP_REPO}/contents/Casks/battlify.rb" \
               -f message="cask: battlify ${VERSION}" -f content="$CONTENT" -f sha="$EXISTING"
           else
-            gh api -X PUT "repos/${FEED_REPO}/contents/Casks/battlify.rb" \
+            gh api -X PUT "repos/${TAP_REPO}/contents/Casks/battlify.rb" \
               -f message="cask: battlify ${VERSION}" -f content="$CONTENT"
           fi
           echo "Cask updated to ${VERSION} (sha ${DMG_SHA})."
