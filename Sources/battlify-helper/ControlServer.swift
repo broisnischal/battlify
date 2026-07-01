@@ -64,11 +64,21 @@ final class ControlServer {
 
     private static func handleClient(_ fd: Int32,
                                      handler: (ControlRequest) -> ControlResponse) {
-        guard let reqData = readLine(fd),
-              let req = try? JSONDecoder().decode(ControlRequest.self, from: reqData) else {
-            return
+        guard let reqData = readLine(fd) else { return }
+
+        let resp: ControlResponse
+        if let req = try? JSONDecoder().decode(ControlRequest.self, from: reqData) {
+            resp = handler(req)
+        } else {
+            // Unrecognized request (e.g. a newer GUI talking to an older daemon).
+            // Still reply — with our protocol version — so the client can detect
+            // the skew instead of seeing a silent hang / dropped connection.
+            resp = ControlResponse(
+                ok: false, config: .default, batteryPercent: 0,
+                chargingEnabled: false, schemeDescription: "",
+                message: "unrecognized request")
         }
-        let resp = handler(req)
+
         guard var out = try? JSONEncoder().encode(resp) else { return }
         out.append(0x0A)
         _ = out.withUnsafeBytes { raw -> Int in

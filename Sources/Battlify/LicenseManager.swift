@@ -45,6 +45,7 @@ final class LicenseManager: ObservableObject {
         let t = Timer(timeInterval: 6 * 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.recordUsageToday(); self?.refresh() }
         }
+        t.tolerance = 1800   // day-counting heartbeat; precise timing irrelevant
         RunLoop.main.add(t, forMode: .common)
         dayTimer = t
     }

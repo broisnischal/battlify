@@ -37,6 +37,10 @@ public enum ControlRequest: Codable, Sendable {
     /// Pause charging: minutes > 0 = for that long; 0 = resume now;
     /// -1 = pause indefinitely until resumed.
     case pauseCharging(Int)
+    /// The Mac is about to sleep — cut charging now if configured to.
+    case prepareForSleep
+    /// Start (true) or cancel (false) a one-shot charge-to-100% calibration.
+    case calibrateToFull(Bool)
 }
 
 public struct ControlResponse: Codable, Sendable {
@@ -48,7 +52,8 @@ public struct ControlResponse: Codable, Sendable {
     public var lowPowerModeEnabled: Bool
     /// Current state of each PowerToggle, keyed by its raw pmset key.
     public var powerToggles: [String: Bool]
-    /// Why charging is currently paused, if it is: "limit", "heat", or nil.
+    /// Why charging is currently paused, if it is: "limit", "heat", "paused"
+    /// (a user-scheduled pause), or nil.
     public var pauseReason: String?
     /// Whether this Mac has a controllable MagSafe charge LED.
     public var magSafeSupported: Bool
@@ -57,6 +62,9 @@ public struct ControlResponse: Codable, Sendable {
     /// True while actively force-discharging to reach the limit.
     public var discharging: Bool
     public var message: String?
+    /// Protocol version the responding daemon was built with (see `ControlProtocol`).
+    /// Absent from older daemons, which decode to 0 → treated as outdated.
+    public var daemonProtocolVersion: Int
 
     public init(ok: Bool, config: BattlifyConfig, batteryPercent: Int,
                 chargingEnabled: Bool, schemeDescription: String,
@@ -64,7 +72,8 @@ public struct ControlResponse: Codable, Sendable {
                 powerToggles: [String: Bool] = [:],
                 pauseReason: String? = nil, magSafeSupported: Bool = false,
                 dischargeSupported: Bool = false, discharging: Bool = false,
-                message: String? = nil) {
+                message: String? = nil,
+                daemonProtocolVersion: Int = ControlProtocol.version) {
         self.ok = ok
         self.config = config
         self.batteryPercent = batteryPercent
@@ -77,6 +86,7 @@ public struct ControlResponse: Codable, Sendable {
         self.dischargeSupported = dischargeSupported
         self.discharging = discharging
         self.message = message
+        self.daemonProtocolVersion = daemonProtocolVersion
     }
 
     // Version-tolerant decoding so GUI/daemon version skew doesn't break the
@@ -95,11 +105,24 @@ public struct ControlResponse: Codable, Sendable {
         dischargeSupported = try c.decodeIfPresent(Bool.self, forKey: .dischargeSupported) ?? false
         discharging = try c.decodeIfPresent(Bool.self, forKey: .discharging) ?? false
         message = try c.decodeIfPresent(String.self, forKey: .message)
+        daemonProtocolVersion = try c.decodeIfPresent(Int.self, forKey: .daemonProtocolVersion) ?? 0
     }
 }
 
 public enum ControlSocket {
     public static let path = "/var/run/battlify.sock"
+}
+
+public enum ControlProtocol {
+    /// Bumped whenever the request/response contract gains something the running
+    /// daemon must understand. The GUI compares this to the value the daemon
+    /// reports (`ControlResponse.daemonProtocolVersion`) so it can warn when the
+    /// installed helper is too old — e.g. one that predates `pauseCharging` and
+    /// would silently ignore it.
+    ///   v2: added `pauseCharging`.
+    ///   v3: MagSafe LED mode (Auto/Status/Off) + post-wake settling.
+    ///   v4: prepareForSleep, calibrateToFull, prevent-idle-sleep.
+    public static let version = 4
 }
 
 public enum ControlError: Error, CustomStringConvertible {

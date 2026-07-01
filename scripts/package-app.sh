@@ -13,8 +13,11 @@ BUNDLE_ID="com.battlify.app"
 
 echo "==> Building release binaries (v$VERSION)…"
 cd "$REPO_DIR"
-swift build -c release --product Battlify
-swift build -c release --product battlify-helper
+# Optimize for size (-Osize) and let the linker drop unreachable code
+# (-dead_strip). Smaller text pages → smaller footprint, no behavior change.
+BUILD_FLAGS=(-c release -Xswiftc -Osize -Xlinker -dead_strip)
+swift build "${BUILD_FLAGS[@]}" --product Battlify
+swift build "${BUILD_FLAGS[@]}" --product battlify-helper
 BIN_DIR="$REPO_DIR/.build/release"
 
 echo "==> Assembling $APP"
@@ -33,6 +36,11 @@ cp "$REPO_DIR/scripts/uninstall-helper.sh" "$CONTENTS/Resources/"
 chmod 755 "$CONTENTS/Resources/battlify-helper" \
           "$CONTENTS/Resources/install-helper-bundled.sh" \
           "$CONTENTS/Resources/uninstall-helper.sh"
+
+# Strip local/debug symbols before signing (must precede codesign or it would
+# invalidate the signature). -x keeps external symbols, so nothing breaks.
+strip -x "$CONTENTS/MacOS/Battlify"
+strip -x "$CONTENTS/Resources/battlify-helper"
 
 # Info.plist — LSUIElement makes it a menu-bar-only (agent) app.
 cat > "$CONTENTS/Info.plist" <<PLIST

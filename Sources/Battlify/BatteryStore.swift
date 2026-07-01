@@ -38,6 +38,7 @@ final class BatteryStore: ObservableObject {
         let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        t.tolerance = 15   // this is only a fallback poll; let the OS coalesce it
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }

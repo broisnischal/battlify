@@ -67,7 +67,7 @@ final class AutomationStore: ObservableObject {
 
         lid.onWillSleep = { [weak self] clamshellClosed in
             // LidMonitor callback arrives on the main run loop.
-            MainActor.assumeIsolated { self?.handleLidClose(clamshellClosed) }
+            MainActor.assumeIsolated { self?.handleWillSleep(clamshellClosed) }
         }
         lid.onDidWake = { [weak self] in
             MainActor.assumeIsolated { self?.handleWake() }
@@ -79,6 +79,7 @@ final class AutomationStore: ObservableObject {
         let t = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollLidState() }
         }
+        t.tolerance = 5   // lid state also updates on sleep/wake; slack is fine
         RunLoop.main.add(t, forMode: .common)
         lidPollTimer = t
     }
@@ -94,6 +95,15 @@ final class AutomationStore: ObservableObject {
         wifiOffOnLidClose = profile.wifiOffOnLidClose
         bluetoothOffOnLidClose = profile.bluetoothOffOnLidClose
         restoreOnWake = profile.restoreOnWake
+    }
+
+    /// Runs just before *any* sleep (idle or lid). Fast + synchronous so it
+    /// completes before the system powers down.
+    private func handleWillSleep(_ clamshellClosed: Bool) {
+        // Cut charging before sleep if configured — the daemon decides based on
+        // its own config, so this is a cheap no-op when the option is off.
+        _ = try? ControlClient.send(.prepareForSleep)
+        handleLidClose(clamshellClosed)
     }
 
     private func handleLidClose(_ clamshellClosed: Bool) {

@@ -26,6 +26,7 @@ final class UpdaterManager: ObservableObject {
         let t = Timer(timeInterval: 24 * 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.check(userInitiated: false) }
         }
+        t.tolerance = 3600   // daily check; an hour of slack lets the OS batch it
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }

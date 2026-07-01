@@ -30,6 +30,7 @@ final class ProcessMonitor: ObservableObject {
         let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        t.tolerance = 1   // live view; keep responsive but allow slight coalescing
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }

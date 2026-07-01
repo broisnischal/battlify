@@ -1,4 +1,6 @@
 import Foundation
+import IOKit
+import IOKit.pwr_mgt
 import BattlifyKit
 
 /// The enforcement loop plus the control server.
@@ -29,6 +31,18 @@ final class Daemon: @unchecked Sendable {
     private let heatResumeMargin = 2.0
     // Last MagSafe LED we set, so we only write the SMC on change.
     private var lastLed: MagSafeLED?
+
+    // Post-wake settling: the daemon can't observe wake directly, so a tick loop
+    // gap far larger than the tick interval implies the Mac just slept. During the
+    // settle window we hold charging off and show the LED off, matching `batt`.
+    private var lastTickAt: Date?
+    private var settleUntil: Date?
+    private let tickInterval = 10.0
+    private let wakeGapThreshold = 30.0   // gap implying a sleep occurred
+    private let wakeSettleDuration = 15.0 // how long to settle after wake
+
+    // Held IOPMAssertion preventing idle sleep (0 = none held).
+    private var idleSleepAssertion: IOPMAssertionID = 0
 
     init() {
         charge = ChargeController(smc: smc)
@@ -61,7 +75,7 @@ final class Daemon: @unchecked Sendable {
             lock.lock()
             tick()
             lock.unlock()
-            Thread.sleep(forTimeInterval: 10)
+            Thread.sleep(forTimeInterval: tickInterval)
         }
     }
 
@@ -108,6 +122,25 @@ final class Daemon: @unchecked Sendable {
                 cfg.pauseUntil = Date().addingTimeInterval(Double(minutes) * 60)
             }
             do { try ConfigStore.save(cfg); tick(); return status(ok: true, message: "pause updated") }
+            catch { return status(ok: false, message: "save failed: \(error)") }
+
+        case .prepareForSleep:
+            // Cut charging before sleep so macOS can't top up past the limit while
+            // the daemon is frozen. The SMC inhibit persists through sleep; the
+            // next tick after wake re-evaluates and resumes charging if needed.
+            let cfg = ConfigStore.load()
+            if cfg.disableChargingBeforeSleep && cfg.chargeLimitEnabled {
+                try? charge.disableCharging()
+                lastPauseReason = "sleep"
+                return status(ok: true, message: "charging cut for sleep")
+            }
+            return status(ok: true, message: "no-op")
+
+        case .calibrateToFull(let on):
+            var cfg = ConfigStore.load()
+            cfg.calibrateToFull = on
+            do { try ConfigStore.save(cfg); tick()
+                 return status(ok: true, message: on ? "calibration started" : "calibration cancelled") }
             catch { return status(ok: false, message: "save failed: \(error)") }
         }
     }
@@ -168,15 +201,35 @@ final class Daemon: @unchecked Sendable {
         var cfg = ConfigStore.load()
         let snap = BatteryMonitor.read()
         let level = snap.percentage
+        let now = Date()
 
         recordHistoryIfDue(snap)
 
+        // Detect wake: a tick gap much larger than the interval means we slept.
+        if let last = lastTickAt, now.timeIntervalSince(last) > wakeGapThreshold {
+            settleUntil = now.addingTimeInterval(wakeSettleDuration)
+            log("woke from sleep; settling for \(Int(wakeSettleDuration))s")
+        }
+        lastTickAt = now
+
         // Expired scheduled pause → clear it and persist.
-        if let until = cfg.pauseUntil, Date() >= until {
+        if let until = cfg.pauseUntil, now >= until {
             cfg.pauseUntil = nil
             try? ConfigStore.save(cfg)
         }
         let paused = cfg.pauseUntil != nil
+
+        // One-shot calibration ends the moment the battery reaches full.
+        if cfg.calibrateToFull && (snap.isFullyCharged || level >= 100) {
+            cfg.calibrateToFull = false
+            try? ConfigStore.save(cfg)
+            log("calibration complete (battery full)")
+        }
+
+        // We only actively manage charging when limiting or heat-pausing is on.
+        let managing = cfg.chargeLimitEnabled || cfg.heatAwareEnabled
+        // Settling only holds charging when we'd otherwise be managing it.
+        let settling = managing && (settleUntil.map { now < $0 } ?? false)
 
         let charging = (try? charge.isChargingEnabled()) ?? true
         var desired = true
@@ -185,9 +238,13 @@ final class Daemon: @unchecked Sendable {
         if paused {
             // Scheduled pause overrides everything: just don't charge.
             desired = false; reason = "paused"
+        } else if settling {
+            // Hold charging off briefly after wake before resuming control.
+            desired = false; reason = "settling"
         } else {
-            // Charge-limit constraint, with a hysteresis band.
-            if cfg.chargeLimitEnabled {
+            // Charge-limit constraint, with a hysteresis band. Calibration bypasses
+            // the limit so the battery can reach 100% (heat safety still applies).
+            if cfg.chargeLimitEnabled && !cfg.calibrateToFull {
                 if level >= cfg.chargeLimit {
                     desired = false; reason = "limit"
                 } else if level >= cfg.chargeLimit - cfg.resumeMargin && !charging {
@@ -208,7 +265,28 @@ final class Daemon: @unchecked Sendable {
         lastPauseReason = desired ? nil : reason
         ensure(enabled: desired)
         manageDischarge(cfg, snap)
-        updateMagSafeLED(cfg, snap, charging: desired)
+        updateMagSafeLED(cfg, snap, charging: desired, settling: settling)
+        updateIdleSleepAssertion(cfg, snap)
+    }
+
+    /// Hold an idle-sleep assertion only while it's useful: prevent-idle-sleep on,
+    /// a limit being enforced, and running on wall power (so we never keep the Mac
+    /// awake — and draining — on battery). Released as soon as any of those drop.
+    private func updateIdleSleepAssertion(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+        let want = cfg.preventIdleSleep && cfg.chargeLimitEnabled && snap.isPluggedIn
+        if want && idleSleepAssertion == 0 {
+            var id: IOPMAssertionID = 0
+            let ok = IOPMAssertionCreateWithName(
+                kIOPMAssertPreventUserIdleSystemSleep as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "Battlify: enforcing charge limit" as CFString,
+                &id)
+            if ok == kIOReturnSuccess { idleSleepAssertion = id; log("idle-sleep assertion held") }
+        } else if !want && idleSleepAssertion != 0 {
+            IOPMAssertionRelease(idleSleepAssertion)
+            idleSleepAssertion = 0
+            log("idle-sleep assertion released")
+        }
     }
 
     /// Force-discharge to bring the level down to the limit when plugged in above
@@ -219,6 +297,7 @@ final class Daemon: @unchecked Sendable {
 
         let shouldDischarge = cfg.dischargeEnabled
             && cfg.chargeLimitEnabled
+            && !cfg.calibrateToFull   // calibration is charging up, don't fight it
             && snap.isPluggedIn
             && snap.percentage > cfg.chargeLimit
 
@@ -230,24 +309,33 @@ final class Daemon: @unchecked Sendable {
         }
     }
 
-    /// Drive the MagSafe LED from charge status: orange while charging, green when
-    /// holding at the limit, system when unplugged. Only writes the SMC on change.
-    private func updateMagSafeLED(_ cfg: BattlifyConfig, _ snap: BatterySnapshot, charging desired: Bool) {
+    /// Drive the MagSafe LED per the configured mode:
+    ///   - `.system`: hand control back to macOS.
+    ///   - `.off`: force the LED off.
+    ///   - `.status`: orange charging, green holding at the limit, off while
+    ///     settling after wake, and system when unplugged.
+    /// Only writes the SMC when the actual LED differs from the target.
+    private func updateMagSafeLED(_ cfg: BattlifyConfig, _ snap: BatterySnapshot,
+                                  charging desired: Bool, settling: Bool) {
         guard charge.isMagSafeSupported else { return }
 
-        guard cfg.magSafeLedEnabled else {
+        let target: MagSafeLED
+        switch cfg.magSafeLedMode {
+        case .system:
             // Hand control back to macOS once, then leave it alone.
             if let last = lastLed, last != .system {
                 try? charge.setMagSafeLED(.system)
                 lastLed = .system
             }
             return
+        case .off:
+            target = .off
+        case .status:
+            if settling { target = .off }               // waiting after wake
+            else if !snap.isPluggedIn { target = .system }
+            else if desired { target = .orange }        // charging
+            else { target = .green }                    // holding at the limit
         }
-
-        let target: MagSafeLED
-        if !snap.isPluggedIn { target = .system }
-        else if desired { target = .orange }   // charging
-        else { target = .green }               // paused / holding
 
         // Re-assert if the actual LED drifted (macOS re-manages it) or changed —
         // don't rely on a cache, or a stopped charge won't turn the light green.

@@ -10,6 +10,13 @@ import BattlifyKit
 final class ChargeLimitStore: ObservableObject {
     /// Whether the daemon is reachable (installed + running).
     @Published private(set) var daemonAvailable = false
+    /// Protocol version the running daemon reports (0 = pre-versioning / very old).
+    @Published private(set) var daemonProtocolVersion = 0
+    /// The installed helper is older than this build expects, so newer requests
+    /// (e.g. pause charging) would be silently ignored — it needs reinstalling.
+    var daemonOutdated: Bool {
+        daemonAvailable && daemonProtocolVersion < ControlProtocol.version
+    }
     @Published private(set) var schemeDescription = ""
     @Published private(set) var chargingEnabled = true
     @Published private(set) var lowPowerMode = false
@@ -26,11 +33,15 @@ final class ChargeLimitStore: ObservableObject {
     @Published var limit = 80
     @Published var heatAwareEnabled = false
     @Published var maxChargeTempC = 35.0
-    @Published var magSafeLedEnabled = false
+    @Published var magSafeLedMode: MagSafeLEDMode = .system
     @Published private(set) var magSafeSupported = false
     @Published var dischargeEnabled = false
     @Published private(set) var dischargeSupported = false
     @Published private(set) var discharging = false
+    @Published var disableChargingBeforeSleep = false
+    @Published var preventIdleSleep = false
+    /// One-shot calibration to 100% is in progress (auto-clears when full).
+    @Published private(set) var calibrating = false
     /// When charging is scheduled to resume (nil = not paused).
     @Published private(set) var pauseUntil: Date?
     var isPaused: Bool { pauseUntil != nil }
@@ -45,6 +56,7 @@ final class ChargeLimitStore: ObservableObject {
         let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        t.tolerance = 15   // periodic status sync; exact timing doesn't matter
         RunLoop.main.add(t, forMode: .common)
         refreshTimer = t
         // After wake, the daemon may have changed things (deep-save restore);
@@ -73,8 +85,11 @@ final class ChargeLimitStore: ObservableObject {
         cfg.chargeLimit = limit
         cfg.heatAwareEnabled = heatAwareEnabled
         cfg.maxChargeTempC = maxChargeTempC
-        cfg.magSafeLedEnabled = magSafeLedEnabled
+        cfg.magSafeLedMode = magSafeLedMode
+        cfg.magSafeLedEnabled = (magSafeLedMode == .status) // keep legacy flag in sync
         cfg.dischargeEnabled = dischargeEnabled
+        cfg.disableChargingBeforeSleep = disableChargingBeforeSleep
+        cfg.preventIdleSleep = preventIdleSleep
         currentConfig = cfg
         Task.detached {
             let result = try? ControlClient.send(.setConfig(cfg))
@@ -98,6 +113,17 @@ final class ChargeLimitStore: ObservableObject {
         }
     }
     func resumeCharging() { pauseCharging(minutes: 0) }
+
+    /// Start / cancel a one-shot charge-to-100% calibration.
+    func startCalibration() { setCalibration(true) }
+    func cancelCalibration() { setCalibration(false) }
+    private func setCalibration(_ on: Bool) {
+        calibrating = on // optimistic
+        Task.detached {
+            let result = try? ControlClient.send(.calibrateToFull(on))
+            await self.ingest(result)
+        }
+    }
 
     /// Apply a preset save mode (daemon-controlled parts). Returns immediately;
     /// state refreshes when the daemon replies.
@@ -128,6 +154,7 @@ final class ChargeLimitStore: ObservableObject {
             return
         }
         daemonAvailable = true
+        daemonProtocolVersion = r.daemonProtocolVersion
         currentConfig = r.config
         schemeDescription = r.schemeDescription
         chargingEnabled = r.chargingEnabled
@@ -139,11 +166,14 @@ final class ChargeLimitStore: ObservableObject {
         limit = r.config.chargeLimit
         heatAwareEnabled = r.config.heatAwareEnabled
         maxChargeTempC = r.config.maxChargeTempC
-        magSafeLedEnabled = r.config.magSafeLedEnabled
+        magSafeLedMode = r.config.magSafeLedMode
         magSafeSupported = r.magSafeSupported
         dischargeEnabled = r.config.dischargeEnabled
         dischargeSupported = r.dischargeSupported
         discharging = r.discharging
+        disableChargingBeforeSleep = r.config.disableChargingBeforeSleep
+        preventIdleSleep = r.config.preventIdleSleep
+        calibrating = r.config.calibrateToFull
         pauseUntil = r.config.pauseUntil
     }
 }

@@ -163,13 +163,24 @@ struct MenuContentView: View {
     }
 
     private func limitCaption(_ snap: BatterySnapshot) -> String {
+        if chargeLimit.isPaused { return "Charging paused" }
         if !chargeLimit.chargingEnabled { return "Holding at \(chargeLimit.limit)%" }
         if snap.isCharging { return "Charging to \(chargeLimit.limit)%" }
         return "Limit \(chargeLimit.limit)%"
     }
 
-    // Monochrome by default; a single red only for a genuinely critical level.
+    /// One-line explanation of the current MagSafe LED mode.
+    private var magSafeHint: String {
+        switch chargeLimit.magSafeLedMode {
+        case .system: return "macOS controls the LED."
+        case .status: return "Orange charging · green holding limit · off briefly after wake."
+        case .off:    return "Keeps the MagSafe LED off."
+        }
+    }
+
+    // Green while charging, red at a critical level on battery, otherwise neutral.
     private func chargeColor(_ snap: BatterySnapshot) -> Color {
+        if snap.isCharging { return .green }
         if snap.percentage <= 20 && !snap.isPluggedIn { return .red }
         return .primary
     }
@@ -237,6 +248,32 @@ struct MenuContentView: View {
         }
     }
 
+    // One-shot "charge to 100% once" calibration.
+    @ViewBuilder
+    private var calibrationControl: some View {
+        if chargeLimit.calibrating {
+            HStack(spacing: 8) {
+                Image(systemName: "bolt.badge.clock").foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Charging to 100%").font(.callout)
+                    Text("Limit resumes automatically once full.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                Button("Cancel") { chargeLimit.cancelCalibration() }.controlSize(.small)
+            }
+        } else {
+            Button {
+                chargeLimit.startCalibration()
+            } label: {
+                Label("Charge to 100% once", systemImage: "bolt.badge.clock")
+            }
+            .buttonStyle(.borderless)
+            .font(.callout)
+            .help("Temporarily ignore the limit for a full charge, then revert.")
+        }
+    }
+
     private func pauseCaption() -> String {
         guard let until = chargeLimit.pauseUntil else { return "" }
         if chargeLimit.isPausedIndefinitely { return "Until you resume" }
@@ -254,6 +291,11 @@ struct MenuContentView: View {
 
             if chargeLimit.daemonAvailable {
                 pauseChargingControl
+
+                if chargeLimit.daemonOutdated {
+                    hintLabel("Helper is outdated — pause/resume won't work until you reinstall it.",
+                              systemImage: "exclamationmark.triangle.fill")
+                }
 
                 switchRow("Limit charging", Binding(
                     get: { chargeLimit.limitEnabled },
@@ -277,6 +319,24 @@ struct MenuContentView: View {
                         onEditingChanged: { if !$0 { chargeLimit.apply() } }
                     )
                     .controlSize(.small)
+
+                    calibrationControl
+
+                    // Keep the limit enforced even through sleep.
+                    switchRowWithHint(
+                        "Stop charging before sleep",
+                        hint: "Cuts charging as the Mac sleeps so it can't top up past the limit.",
+                        Binding(
+                            get: { chargeLimit.disableChargingBeforeSleep },
+                            set: { chargeLimit.disableChargingBeforeSleep = $0; chargeLimit.apply() }
+                        ))
+                    switchRowWithHint(
+                        "Prevent idle sleep while plugged in",
+                        hint: "Keeps the Mac awake on power so the limit is always enforced. Uses a little more energy.",
+                        Binding(
+                            get: { chargeLimit.preventIdleSleep },
+                            set: { chargeLimit.preventIdleSleep = $0; chargeLimit.apply() }
+                        ))
                 }
 
                 // Heat-aware charging (independent of the % limit).
@@ -314,15 +374,22 @@ struct MenuContentView: View {
                     }
                 }
 
-                // MagSafe LED reflects charge status (only if the Mac has one).
+                // MagSafe LED control (only if the Mac has a controllable LED).
                 if chargeLimit.magSafeSupported {
-                    switchRowWithHint(
-                        "MagSafe LED shows status",
-                        hint: "Orange while charging, green when holding the limit.",
-                        Binding(
-                            get: { chargeLimit.magSafeLedEnabled },
-                            set: { chargeLimit.magSafeLedEnabled = $0; chargeLimit.apply() }
-                        ))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("MagSafe LED").font(.callout)
+                        Picker("", selection: Binding(
+                            get: { chargeLimit.magSafeLedMode },
+                            set: { chargeLimit.magSafeLedMode = $0; chargeLimit.apply() }
+                        )) {
+                            ForEach(MagSafeLEDMode.allCases) { Text($0.title).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        Text(magSafeHint)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
                 // Why charging is paused (the scheduled-pause case is shown above).
@@ -331,6 +398,8 @@ struct MenuContentView: View {
                         hintLabel("Charging paused — battery is warm", systemImage: "thermometer.high")
                     } else if reason == "limit" {
                         hintLabel("Charging paused to hold limit", systemImage: "pause.circle.fill")
+                    } else if reason == "settling" {
+                        hintLabel("Settling after wake — charging resumes shortly", systemImage: "moon.zzz")
                     }
                 }
             } else {

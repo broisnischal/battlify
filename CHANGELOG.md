@@ -1,5 +1,31 @@
 # battlify
 
+## 0.6.0
+
+### Minor Changes
+
+- **MagSafe LED modes** — Auto (macOS controls it) / Show status (orange charging,
+  green holding the limit) / Off. Adds a post-wake "settling" window where the LED
+  turns off and charging is briefly held before control resumes.
+- **Stop charging before sleep** — cuts charging as the Mac sleeps so macOS can't
+  top the battery past your limit overnight while the daemon is frozen.
+- **Prevent idle sleep while plugged in** — optional power assertion (AC only) that
+  keeps the limit continuously enforced.
+- **Charge to 100% once** — one-tap calibration that temporarily ignores the limit
+  and auto-reverts as soon as the battery is full.
+- **Helper version handshake** — the app now detects and warns when the installed
+  helper is older than it expects, instead of pause/other actions silently failing.
+
+### Patch Changes
+
+- **Battery indicator fixes** — the menu-bar glyph shows the real charge level, the
+  charging bolt appears only while actually charging (not when paused), state color
+  (green charging / red critically low) renders via a non-template image, and the
+  icon updates reliably. Added a tooltip explaining why charging is paused.
+- **Charge pause/resume reliability fixes** and a "settling after wake" status.
+- **Lower energy use** — release builds are size-optimized and symbol-stripped, and
+  all background polling timers now declare tolerance so macOS can coalesce wakeups.
+
 ## 0.5.0
 
 ### Minor Changes

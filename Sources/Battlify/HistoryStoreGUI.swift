@@ -36,6 +36,7 @@ final class HistoryViewModel: ObservableObject {
                 self?.reload()
             }
         }
+        t.tolerance = 60   // 5-min history sampling; a minute of drift is harmless
         RunLoop.main.add(t, forMode: .common)
         recordTimer = t
     }

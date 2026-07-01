@@ -15,17 +15,21 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 echo "==> Building release binary…"
+# Optimize for size + drop unreachable code (no behavior change).
+BUILD_FLAGS="-c release -Xswiftc -Osize -Xlinker -dead_strip"
 # Build as the invoking user so SwiftPM caches land in their home, not root's.
 if [[ -n "${SUDO_USER:-}" ]]; then
-    sudo -u "$SUDO_USER" bash -lc "cd '$REPO_DIR' && swift build -c release --product battlify-helper"
+    sudo -u "$SUDO_USER" bash -lc "cd '$REPO_DIR' && swift build $BUILD_FLAGS --product battlify-helper"
 else
-    (cd "$REPO_DIR" && swift build -c release --product battlify-helper)
+    (cd "$REPO_DIR" && swift build $BUILD_FLAGS --product battlify-helper)
 fi
 BIN_SRC="$REPO_DIR/.build/release/battlify-helper"
 
 echo "==> Installing binary to $BIN_DST"
 install -d /usr/local/bin
 install -m 755 "$BIN_SRC" "$BIN_DST"
+# Strip local/debug symbols to shrink the on-disk + resident size.
+strip -x "$BIN_DST" || true
 
 echo "==> Installing LaunchDaemon to $PLIST_DST"
 install -m 644 "$PLIST_SRC" "$PLIST_DST"
