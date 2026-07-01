@@ -1,0 +1,51 @@
+name: Update appcast feed
+
+# Keeps the in-app update feed (broisnischal/battlify-releases/appcast.json) in
+# sync with the latest *published* release. Runs on publish — not on tag push —
+# so the DMG download URL it points at is actually live (releases start as drafts).
+#
+# Requires a repo secret `RELEASES_TOKEN`: a PAT with contents:write on the
+# battlify-releases repo (the default GITHUB_TOKEN can't push to another repo).
+# Without it the job simply no-ops.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to the feed (e.g. v0.6.1)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update battlify-releases/appcast.json
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "RELEASES_TOKEN not set — skipping feed update."
+            exit 0
+          fi
+
+          VERSION="${TAG#v}"
+          FEED_REPO="broisnischal/battlify-releases"
+          DMG_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Battlify-${VERSION}.dmg"
+          NOTES="Battlify ${VERSION}"
+
+          NEW=$(printf '{"version":"%s","url":"%s","notes":"%s"}' "$VERSION" "$DMG_URL" "$NOTES")
+          echo "New feed: $NEW"
+
+          SHA=$(gh api "repos/${FEED_REPO}/contents/appcast.json" --jq .sha)
+          gh api -X PUT "repos/${FEED_REPO}/contents/appcast.json" \
+            -f message="chore: update appcast to ${VERSION}" \
+            -f content="$(printf '%s' "$NEW" | base64 | tr -d '\n')" \
+            -f sha="$SHA"
+          echo "Feed updated to ${VERSION}."
