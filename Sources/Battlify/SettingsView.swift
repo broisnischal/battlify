@@ -302,16 +302,33 @@ struct SettingsView: View {
             }
 
             card("Updates") {
-                HStack {
-                    Button(updater.checking ? "Checking…" : "Check for Updates…") {
-                        updater.check(userInitiated: true)
+                if let update = updater.available {
+                    HStack(alignment: .center) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Update available — v\(update.version)")
+                                .font(.callout.weight(.medium))
+                            Text("You have v\(updater.currentVersion)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(updater.installing ? "Installing…" : "Update Now") {
+                            updater.installUpdate()
+                        }
+                        .disabled(updater.installing)
                     }
-                    .disabled(updater.checking)
-                    Spacer()
-                    Text("v\(updater.currentVersion)")
-                        .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                } else {
+                    HStack {
+                        Button(updater.checking ? "Checking…" : "Check for Updates…") {
+                            updater.check(userInitiated: true)
+                        }
+                        .disabled(updater.checking)
+                        Spacer()
+                        Text("v\(updater.currentVersion)")
+                            .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 10)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 10)
             }
         }
     }

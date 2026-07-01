@@ -76,8 +76,9 @@ struct MenuContentView: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            Button("Download") { updater.downloadAvailable() }
+            Button(updater.installing ? "Installing…" : "Update") { updater.installUpdate() }
                 .controlSize(.small)
+                .disabled(updater.installing)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
