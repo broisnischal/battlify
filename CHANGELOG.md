@@ -1,5 +1,14 @@
 # battlify
 
+## 0.7.2
+
+### Patch Changes
+
+- **In-app updates now install themselves** — clicking Update downloads the new
+  version, replaces the app in place, and relaunches it automatically, instead of
+  opening the download page for a manual drag-install. Falls back to the download
+  page only if the app lives somewhere it can't update itself.
+
 ## 0.7.1
 
 ### Patch Changes
