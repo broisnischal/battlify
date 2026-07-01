@@ -1,5 +1,13 @@
 # battlify
 
+## 0.7.3
+
+### Patch Changes
+
+- Update the embedded license public key to the production storefront key so
+  license keys issued after checkout activate correctly (previously valid keys
+  failed with "This license key couldn't be verified").
+
 ## 0.7.2
 
 ### Patch Changes
