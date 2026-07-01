@@ -1,5 +1,14 @@
 # battlify
 
+## 0.8.4
+
+### Patch Changes
+
+- Build the released binary on macOS 26 (was macOS 15). A binary built against the
+  macOS 15 SDK silently failed to launch (exited immediately) on macOS 26 due to a
+  Swift concurrency runtime mismatch — even though the same source runs fine when
+  built on macOS 26. No code change; this rebuilds the release on the matching SDK.
+
 ## 0.8.3
 
 ### Patch Changes
