@@ -19,7 +19,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15   # Apple Silicon runner
+    # Build on macOS 26 so the binary links against the macOS 26 SDK. A macOS-15
+    # (SDK 15) build silently fails to launch (exit 1) on macOS 26 — the Swift
+    # concurrency runtime mismatch — so the release must be built on 26.
+    runs-on: macos-26
     # secrets can't be used in step `if:` directly, so surface them as env flags.
     env:
       HAS_SIGNING: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 != '' }}
