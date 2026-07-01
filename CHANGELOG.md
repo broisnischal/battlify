@@ -1,5 +1,24 @@
 # battlify
 
+## 0.5.0
+
+### Minor Changes
+
+- d11b7e0: - **Scheduled charge pause** — pause charging for 1h / 3h / 5h or until you resume;
+  it auto-resumes when the timer runs out. Menu shows the remaining time.
+  - **MagSafe LED fix** — the LED now re-asserts every tick (green when charging is
+    held/paused, orange while charging), so it actually changes when charging stops
+    instead of being reset by macOS.
+  - **Reverted licensing to offline Ed25519** (removed Gumroad) — keys are verified
+    locally against an embedded public key; `licensetool` mints/signs them.
+
+### Patch Changes
+
+- 2945669: Switch to a native, monochrome look — dropped the branded green/accent colors so
+  controls use the standard macOS accent and everything else is grayscale (a single
+  red only for a critically low battery). Added a "Last closed" line in the menu
+  showing when the lid was last shut and how much the battery dropped.
+
 ## 0.4.1
 
 ### Minor Changes
