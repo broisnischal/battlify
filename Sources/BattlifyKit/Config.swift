@@ -20,6 +20,9 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// Force-discharge (run off battery while plugged) to bring the level down to
     /// the limit when you plug in above it.
     public var dischargeEnabled: Bool
+    /// Charging is paused until this time (nil = not paused; distantFuture =
+    /// paused indefinitely until the user resumes).
+    public var pauseUntil: Date?
     /// The last-applied save mode.
     public var mode: SaveMode
 
@@ -30,6 +33,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 maxChargeTempC: Double = 35.0,
                 magSafeLedEnabled: Bool = false,
                 dischargeEnabled: Bool = false,
+                pauseUntil: Date? = nil,
                 mode: SaveMode = .off) {
         self.chargeLimitEnabled = chargeLimitEnabled
         self.chargeLimit = chargeLimit
@@ -38,6 +42,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.maxChargeTempC = maxChargeTempC
         self.magSafeLedEnabled = magSafeLedEnabled
         self.dischargeEnabled = dischargeEnabled
+        self.pauseUntil = pauseUntil
         self.mode = mode
     }
 
@@ -54,6 +59,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         maxChargeTempC = try c.decodeIfPresent(Double.self, forKey: .maxChargeTempC) ?? 35.0
         magSafeLedEnabled = try c.decodeIfPresent(Bool.self, forKey: .magSafeLedEnabled) ?? false
         dischargeEnabled = try c.decodeIfPresent(Bool.self, forKey: .dischargeEnabled) ?? false
+        pauseUntil = try c.decodeIfPresent(Date.self, forKey: .pauseUntil)
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off
     }
 }

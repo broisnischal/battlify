@@ -71,6 +71,13 @@ public final class ChargeController {
         try smc.write(aclc, [state.rawValue])
     }
 
+    /// Current MagSafe LED state (nil if it's a value we don't model, e.g. an
+    /// error-blink state). Used to detect macOS overriding our setting.
+    public func magSafeLED() -> MagSafeLED? {
+        guard let raw = try? smc.read(aclc).bytes.first else { return nil }
+        return MagSafeLED(rawValue: raw)
+    }
+
     /// True when this Mac uses the legacy CH0B/CH0C charging scheme.
     private var usesLegacyKeys: Bool {
         smc.keyExists(ch0b) && smc.keyExists(ch0c)

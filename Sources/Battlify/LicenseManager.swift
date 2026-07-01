@@ -5,7 +5,8 @@ import BattlifyKit
 /// Licensing:
 ///  - **Use-based 30-day trial**: a free day is only counted on days you actually
 ///    use Battlify (not calendar days), so the trial isn't "wasted" while idle.
-///  - **$2.99 one-time** license verified via Gumroad (Apple Pay at checkout).
+///  - **$2.99 one-time** license, verified offline with an embedded Ed25519 public
+///    key — no phone-home, works without a network.
 @MainActor
 final class LicenseManager: ObservableObject {
     enum State: Equatable {
@@ -30,7 +31,7 @@ final class LicenseManager: ObservableObject {
     let trialDays = 30
     private let defaults = UserDefaults.standard
     private enum Keys {
-        static let licenseKey = "license.gumroadKey"
+        static let licenseKey = "license.key"
         static let licenseEmail = "license.email"
         static let usedDays = "trial.usedDays"   // [String] yyyy-MM-dd
     }
@@ -69,46 +70,31 @@ final class LicenseManager: ObservableObject {
     // MARK: - State
 
     func refresh() {
-        if defaults.string(forKey: Keys.licenseKey) != nil {
-            let name = defaults.string(forKey: Keys.licenseEmail) ?? "this Mac"
-            state = .licensed(name: name)
+        // A valid, non-expired stored license wins.
+        if let key = defaults.string(forKey: Keys.licenseKey),
+           let info = try? License.verify(key) {
+            state = .licensed(name: info.name.isEmpty ? info.email : info.name)
             return
         }
         let left = max(0, trialDays - daysUsed)
         state = left > 0 ? .trial(daysLeft: left) : .expired
     }
 
-    // MARK: - Activation (Gumroad)
+    // MARK: - Activation (offline Ed25519)
 
     func activate() {
         let key = enteredKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { lastError = "Paste your license key first."; return }
-        guard !verifying else { return }
-        verifying = true
-        lastError = nil
-
-        Task.detached {
-            do {
-                let result = try await Gumroad.verify(licenseKey: key)
-                await MainActor.run {
-                    self.verifying = false
-                    if result.isEntitled {
-                        self.defaults.set(key, forKey: Keys.licenseKey)
-                        self.defaults.set(result.email ?? "Licensed", forKey: Keys.licenseEmail)
-                        self.enteredKey = ""
-                        self.state = .licensed(name: result.email ?? "Licensed")
-                    } else if result.refunded || result.disputed {
-                        self.lastError = "This purchase was refunded or charged back."
-                    } else {
-                        self.lastError = "That license key isn't valid for Battlify."
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    self.verifying = false
-                    self.lastError = (error as? GumroadError)?.description ?? "Couldn't verify the key."
-                }
-            }
+        do {
+            let info = try License.verify(key)
+            let name = info.name.isEmpty ? info.email : info.name
+            defaults.set(key, forKey: Keys.licenseKey)
+            defaults.set(name, forKey: Keys.licenseEmail)
+            enteredKey = ""
+            lastError = nil
+            state = .licensed(name: name)
+        } catch {
+            lastError = (error as? LicenseError)?.description ?? "That license key isn't valid."
         }
     }
 

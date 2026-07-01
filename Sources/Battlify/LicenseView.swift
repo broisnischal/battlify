@@ -3,8 +3,8 @@ import SwiftUI
 struct LicenseView: View {
     @EnvironmentObject private var license: LicenseManager
 
-    // Your Gumroad product page (Apple Pay supported at checkout).
-    private let buyURL = URL(string: "https://battlify.gumroad.com/l/battlify")!
+    // Your store's checkout page (it mints an Ed25519 license key on purchase).
+    private let buyURL = URL(string: "https://battlify.app/buy")!
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {

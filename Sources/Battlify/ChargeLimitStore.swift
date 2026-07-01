@@ -31,6 +31,10 @@ final class ChargeLimitStore: ObservableObject {
     @Published var dischargeEnabled = false
     @Published private(set) var dischargeSupported = false
     @Published private(set) var discharging = false
+    /// When charging is scheduled to resume (nil = not paused).
+    @Published private(set) var pauseUntil: Date?
+    var isPaused: Bool { pauseUntil != nil }
+    var isPausedIndefinitely: Bool { (pauseUntil ?? .distantPast) > Date().addingTimeInterval(3600 * 24 * 365) }
 
     /// Full config last seen from the daemon, so edits preserve unrelated fields.
     private var currentConfig = BattlifyConfig.default
@@ -86,6 +90,15 @@ final class ChargeLimitStore: ObservableObject {
         }
     }
 
+    /// Pause charging: minutes > 0 = for that long; 0 = resume; -1 = indefinitely.
+    func pauseCharging(minutes: Int) {
+        Task.detached {
+            let result = try? ControlClient.send(.pauseCharging(minutes))
+            await self.ingest(result)
+        }
+    }
+    func resumeCharging() { pauseCharging(minutes: 0) }
+
     /// Apply a preset save mode (daemon-controlled parts). Returns immediately;
     /// state refreshes when the daemon replies.
     func applyMode(_ newMode: SaveMode) {
@@ -131,5 +144,6 @@ final class ChargeLimitStore: ObservableObject {
         dischargeEnabled = r.config.dischargeEnabled
         dischargeSupported = r.dischargeSupported
         discharging = r.discharging
+        pauseUntil = r.config.pauseUntil
     }
 }

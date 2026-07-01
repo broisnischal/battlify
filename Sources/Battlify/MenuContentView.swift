@@ -207,6 +207,44 @@ struct MenuContentView: View {
         chargeLimit.applyMode(mode)
     }
 
+    // MARK: - Pause charging (idle / resume after N hours)
+
+    @ViewBuilder
+    private var pauseChargingControl: some View {
+        if chargeLimit.isPaused {
+            HStack(spacing: 8) {
+                Image(systemName: "pause.circle").foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Charging paused").font(.callout)
+                    Text(pauseCaption()).font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                Button("Resume") { chargeLimit.resumeCharging() }.controlSize(.small)
+            }
+        } else {
+            Menu {
+                Button("Pause 1 hour") { chargeLimit.pauseCharging(minutes: 60) }
+                Button("Pause 3 hours") { chargeLimit.pauseCharging(minutes: 180) }
+                Button("Pause 5 hours") { chargeLimit.pauseCharging(minutes: 300) }
+                Divider()
+                Button("Pause until I resume") { chargeLimit.pauseCharging(minutes: -1) }
+            } label: {
+                Label("Pause charging…", systemImage: "pause.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .font(.callout)
+            .fixedSize()
+        }
+    }
+
+    private func pauseCaption() -> String {
+        guard let until = chargeLimit.pauseUntil else { return "" }
+        if chargeLimit.isPausedIndefinitely { return "Until you resume" }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return "Resumes \(f.localizedString(for: until, relativeTo: Date()))"
+    }
+
     // MARK: - Charge limit
 
     @ViewBuilder
@@ -215,6 +253,8 @@ struct MenuContentView: View {
             sectionHeader("Charge Limit", "bolt.batteryblock.fill")
 
             if chargeLimit.daemonAvailable {
+                pauseChargingControl
+
                 switchRow("Limit charging", Binding(
                     get: { chargeLimit.limitEnabled },
                     set: { chargeLimit.limitEnabled = $0; chargeLimit.apply() }
@@ -285,11 +325,11 @@ struct MenuContentView: View {
                         ))
                 }
 
-                // Why charging is paused, if it is.
+                // Why charging is paused (the scheduled-pause case is shown above).
                 if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
                     if reason == "heat" {
                         hintLabel("Charging paused — battery is warm", systemImage: "thermometer.high")
-                    } else {
+                    } else if reason == "limit" {
                         hintLabel("Charging paused to hold limit", systemImage: "pause.circle.fill")
                     }
                 }

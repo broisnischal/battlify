@@ -97,6 +97,18 @@ final class Daemon: @unchecked Sendable {
 
         case .applyMode(let mode):
             return applyMode(mode)
+
+        case .pauseCharging(let minutes):
+            var cfg = ConfigStore.load()
+            if minutes == 0 {
+                cfg.pauseUntil = nil
+            } else if minutes < 0 {
+                cfg.pauseUntil = Date.distantFuture
+            } else {
+                cfg.pauseUntil = Date().addingTimeInterval(Double(minutes) * 60)
+            }
+            do { try ConfigStore.save(cfg); tick(); return status(ok: true, message: "pause updated") }
+            catch { return status(ok: false, message: "save failed: \(error)") }
         }
     }
 
@@ -153,34 +165,43 @@ final class Daemon: @unchecked Sendable {
     // MARK: - Enforcement (caller holds lock)
 
     private func tick() {
-        let cfg = ConfigStore.load()
+        var cfg = ConfigStore.load()
         let snap = BatteryMonitor.read()
         let level = snap.percentage
 
         recordHistoryIfDue(snap)
 
+        // Expired scheduled pause → clear it and persist.
+        if let until = cfg.pauseUntil, Date() >= until {
+            cfg.pauseUntil = nil
+            try? ConfigStore.save(cfg)
+        }
+        let paused = cfg.pauseUntil != nil
+
         let charging = (try? charge.isChargingEnabled()) ?? true
         var desired = true
         var reason: String? = nil
 
-        // Charge-limit constraint, with a hysteresis band so we don't toggle at
-        // the exact threshold.
-        if cfg.chargeLimitEnabled {
-            if level >= cfg.chargeLimit {
-                desired = false; reason = "limit"
-            } else if level >= cfg.chargeLimit - cfg.resumeMargin && !charging {
-                desired = false; reason = "limit"   // hold paused inside the band
+        if paused {
+            // Scheduled pause overrides everything: just don't charge.
+            desired = false; reason = "paused"
+        } else {
+            // Charge-limit constraint, with a hysteresis band.
+            if cfg.chargeLimitEnabled {
+                if level >= cfg.chargeLimit {
+                    desired = false; reason = "limit"
+                } else if level >= cfg.chargeLimit - cfg.resumeMargin && !charging {
+                    desired = false; reason = "limit"   // hold paused inside the band
+                }
             }
-        }
-
-        // Heat constraint: only matters while we'd otherwise charge. Pause when at
-        // or above the max temp; stay paused (for heat) until it cools past the band.
-        if desired, cfg.heatAwareEnabled, let t = snap.temperature {
-            if t >= cfg.maxChargeTempC {
-                desired = false; reason = "heat"
-            } else if t >= cfg.maxChargeTempC - heatResumeMargin
-                        && !charging && lastPauseReason == "heat" {
-                desired = false; reason = "heat"
+            // Heat constraint (only while we'd otherwise charge).
+            if desired, cfg.heatAwareEnabled, let t = snap.temperature {
+                if t >= cfg.maxChargeTempC {
+                    desired = false; reason = "heat"
+                } else if t >= cfg.maxChargeTempC - heatResumeMargin
+                            && !charging && lastPauseReason == "heat" {
+                    desired = false; reason = "heat"
+                }
             }
         }
 
@@ -225,13 +246,15 @@ final class Daemon: @unchecked Sendable {
 
         let target: MagSafeLED
         if !snap.isPluggedIn { target = .system }
-        else if desired { target = .orange }
-        else { target = .green }
+        else if desired { target = .orange }   // charging
+        else { target = .green }               // paused / holding
 
-        if lastLed != target {
+        // Re-assert if the actual LED drifted (macOS re-manages it) or changed —
+        // don't rely on a cache, or a stopped charge won't turn the light green.
+        if charge.magSafeLED() != target {
             try? charge.setMagSafeLED(target)
-            lastLed = target
         }
+        lastLed = target
     }
 
     private func recordHistoryIfDue(_ snap: BatterySnapshot) {

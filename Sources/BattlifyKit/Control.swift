@@ -34,6 +34,9 @@ public enum ControlRequest: Codable, Sendable {
     case setLowPowerMode(Bool)
     case setPowerToggle(PowerToggle, Bool)
     case applyMode(SaveMode)
+    /// Pause charging: minutes > 0 = for that long; 0 = resume now;
+    /// -1 = pause indefinitely until resumed.
+    case pauseCharging(Int)
 }
 
 public struct ControlResponse: Codable, Sendable {
