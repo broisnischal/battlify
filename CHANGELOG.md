@@ -1,5 +1,21 @@
 # battlify
 
+## 0.5.0
+
+### Minor Changes
+
+- **Scheduled charge pause** — pause charging for 1h / 3h / 5h or until you resume;
+  auto-resumes when the timer runs out, with remaining time shown in the menu.
+- **MagSafe LED fix** — the LED re-asserts each tick (green when held/paused, orange
+  while charging) so it reliably changes when charging stops.
+- **Reverted licensing to offline Ed25519** (removed Gumroad); keys verify locally
+  against an embedded public key, minted by `licensetool`.
+
+### Patch Changes
+
+- Native **monochrome** UI (system accent only; grayscale elsewhere) and a
+  "Last closed" lid readout in the menu.
+
 ## 0.4.1
 
 ### Minor Changes
