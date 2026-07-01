@@ -26,6 +26,7 @@ SECRETS=(
     NOTARY_KEY_ID
     NOTARY_ISSUER_ID
     NOTARY_KEY_P8_BASE64
+    RELEASES_TOKEN
 )
 
 echo "Setting secrets on $REPO …"
