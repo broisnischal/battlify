@@ -42,7 +42,7 @@ struct DetailsView: View {
                 statRow("External displays", "\(automation.externalDisplayCount)")
             }
             .padding(.vertical, 4)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             if automation.isClamshellMode {
                 Label("In clamshell (docked) mode the battery tends to sit at 100% and run hot — the two biggest causes of wear. Keep a charge limit and heat-pause enabled.",
@@ -98,7 +98,7 @@ struct DetailsView: View {
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
     }
@@ -152,7 +152,7 @@ struct DetailsView: View {
                 Divider(); statRow("Charge", "\(snap.percentage)%")
             }
             .padding(.vertical, 4)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
@@ -193,7 +193,7 @@ struct DetailsView: View {
                         energyRow(p)
                     }
                 }
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 Text("Suspend pauses a process (SIGSTOP); resume continues it. Only your own processes can be paused.")
                     .font(.caption)

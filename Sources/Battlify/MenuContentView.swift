@@ -7,10 +7,8 @@ struct MenuContentView: View {
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
     @EnvironmentObject private var automation: AutomationStore
     @EnvironmentObject private var license: LicenseManager
-    @EnvironmentObject private var startup: StartupManager
     @EnvironmentObject private var updater: UpdaterManager
     @EnvironmentObject private var actions: SystemActions
-    @EnvironmentObject private var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near the typical full height so the popover doesn't visibly grow on
@@ -53,7 +51,16 @@ struct MenuContentView: View {
     }
 
     private var maxPopoverHeight: CGFloat {
-        let usable = NSScreen.main?.visibleFrame.height ?? 800
+        // The popover opens on whichever display's menu bar was clicked — i.e. the
+        // screen under the cursor — which isn't necessarily `NSScreen.main` (the
+        // screen holding keyboard focus). On a multi-monitor setup, sizing to the
+        // wrong screen's height clips the popover off the bottom or forces needless
+        // scrolling, so resolve the actual screen first.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        let usable = screen?.visibleFrame.height ?? 800
         return max(360, usable - 24)
     }
 
@@ -74,7 +81,7 @@ struct MenuContentView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - License banner
@@ -98,7 +105,7 @@ struct MenuContentView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - Header
@@ -310,10 +317,6 @@ struct MenuContentView: View {
                     .controlSize(.small)
 
                     calibrationControl
-
-                    if !settings.dismissedOptimizedChargingTip {
-                        optimizedChargingTip
-                    }
                 }
 
                 // Live state: why charging is currently paused. Rare + useful, so
@@ -332,30 +335,6 @@ struct MenuContentView: View {
                 helperMissingView
             }
         }
-    }
-
-    /// One-time nudge to disable macOS's own Optimized Battery Charging, which
-    /// competes with our limit. Shown once, then dismissed for good.
-    private var optimizedChargingTip: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "info.circle").foregroundStyle(.secondary)
-                Text("Turn off macOS **Optimized Battery Charging** so it doesn't override this limit.")
-                    .font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: 8) {
-                Button("Open Battery Settings") { SystemActions.openBatterySettings() }
-                    .controlSize(.small)
-                Spacer()
-                Button("Dismiss") { settings.dismissedOptimizedChargingTip = true }
-                    .controlSize(.small)
-                    .buttonStyle(.borderless)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
@@ -420,7 +399,7 @@ struct MenuContentView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(help)

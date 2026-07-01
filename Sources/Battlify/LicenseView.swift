@@ -54,7 +54,7 @@ struct LicenseView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func pricePoint(icon: String, tint: Color, title: String, body: String) -> some View {

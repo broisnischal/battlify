@@ -55,18 +55,6 @@ final class SystemActions: ObservableObject {
 
     func sleepNow() { run("/usr/bin/pmset", ["sleepnow"]) }
 
-    /// Opens System Settings straight to the Battery pane (where Optimized Battery
-    /// Charging lives). Tries the modern pane id first, then the legacy one.
-    static func openBatterySettings() {
-        let candidates = [
-            "x-apple.systempreferences:com.apple.Battery-Settings.extension",
-            "x-apple.systempreferences:com.apple.preference.battery",
-        ]
-        for s in candidates {
-            if let url = URL(string: s), NSWorkspace.shared.open(url) { return }
-        }
-    }
-
     private func run(_ path: String, _ args: [String]) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)

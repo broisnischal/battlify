@@ -88,7 +88,7 @@ struct SettingsView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(selected ? Color.primary.opacity(0.10) : Color.clear)
             )
             .contentShape(Rectangle())
@@ -107,7 +107,7 @@ struct SettingsView: View {
                         .foregroundStyle(.tint)
                         .frame(width: 76, height: 76)
                         .background(.quaternary.opacity(0.4),
-                                    in: RoundedRectangle(cornerRadius: 18))
+                                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     Text("Battlify")
                         .font(.title2.weight(.semibold))
                     Text("Version \(updater.currentVersion)")
@@ -174,8 +174,6 @@ struct SettingsView: View {
 
     private var chargingTab: some View {
         tab {
-            recommendedSetupCard
-
             if chargeLimit.daemonAvailable {
                 proGate {
                     card("Enforcement") {
@@ -227,23 +225,6 @@ struct SettingsView: View {
             } else {
                 helperCard
             }
-        }
-    }
-
-    /// Always-visible guidance: macOS Optimized Battery Charging fights the limit.
-    private var recommendedSetupCard: some View {
-        card("Recommended Setup") {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("For the charge limit to hold reliably, turn off macOS's own **Optimized Battery Charging** — it manages charging on its own schedule and can override Battlify.")
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("In Battery settings, click the ⓘ next to *Battery Health* and turn off **Optimized Battery Charging**.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Open Battery Settings") { SystemActions.openBatterySettings() }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 10)
         }
     }
 
@@ -360,7 +341,7 @@ struct SettingsView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
             VStack(spacing: 0) { content() }
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
