@@ -37,7 +37,7 @@ for name in "${SECRETS[@]}"; do
         echo "  - $name: empty, skipped"
         continue
     fi
-    printf '%s' "$value" | gh secret set "$name" --repo "$REPO" --body -
+    gh secret set "$name" --repo "$REPO" --body "$value"
     echo "  ✓ $name set"
     set_count=$((set_count + 1))
 done
