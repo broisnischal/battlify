@@ -1,5 +1,19 @@
 # battlify
 
+## 0.8.1
+
+### Patch Changes
+
+- **Fixed the self-updater failing to reopen / relaunch after an update.** The
+  update script now runs fully detached from the app (so quitting to swap the
+  bundle can't kill it mid-update), refreshes Launch Services so the new bundle
+  isn't shadowed by a stale registration, clears quarantine, and retries the
+  relaunch. It also logs each step for diagnosis.
+- **Homebrew install** — `brew tap broisnischal/battlify-releases https://github.com/broisnischal/battlify-releases`
+  then `brew install --cask battlify`. The cask clears the download quarantine on
+  install so the app launches without a Gatekeeper warning, and it tracks each
+  release automatically.
+
 ## 0.8.0
 
 ### Minor Changes
