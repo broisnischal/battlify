@@ -1,5 +1,27 @@
 # battlify
 
+## 0.8.0
+
+### Minor Changes
+
+- **Notifications** — optional macOS alerts for charge events: charge limit
+  reached, charging paused because the battery is warm, low battery, and fully
+  charged. Enable them in Settings › General, with a "Send Test Notification"
+  button to confirm they're working.
+- **Recharge range** — an opt-in band under the charge limit: set a lower
+  "Recharge at" level so the battery drains to it before topping back up to the
+  limit, instead of sitting pinned at the top. Hidden unless you turn it on.
+- **Red warning indicator** — the menu-bar icon and the in-app charge gauge now
+  turn red when the battery is critically low or running warm.
+- **Manage License from About** — a License row in Settings › About to activate
+  or, once purchased, remove the license at any time.
+- **Locked UI when the trial ends** — Details and History are disabled (alongside
+  the charge controls) until the app is activated.
+- **Snappier live updates** — plugging/unplugging the charger updates the menu
+  immediately, re-reading a few times so IOKit's lagging charge flag settles.
+- **Cleaner menu** — solid native popover background, a tidied footer, and the
+  menu re-syncs its state every time it opens.
+
 ## 0.7.3
 
 ### Patch Changes
