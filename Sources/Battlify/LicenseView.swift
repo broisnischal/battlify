@@ -9,11 +9,11 @@ struct LicenseView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 12) {
-                Image(systemName: "bolt.batteryblock.fill")
-                    .font(.largeTitle).foregroundStyle(.green)
+                Image(systemName: "bolt.batteryblock")
+                    .font(.largeTitle).foregroundStyle(.primary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Battlify").font(.title2.weight(.semibold))
-                    Text(license.statusText).font(.callout).foregroundStyle(statusColor)
+                    Text(license.statusText).font(.callout).foregroundStyle(.secondary)
                 }
             }
 
@@ -28,14 +28,13 @@ struct LicenseView: View {
         }
         .padding(24)
         .frame(width: 440)
-        .tint(.green)
     }
 
     // MARK: - Licensed
 
     @ViewBuilder
     private var licensedView: some View {
-        Text("Thanks for buying Battlify — every feature is unlocked. 💚")
+        Text("Thanks for buying Battlify — every feature is unlocked.")
             .font(.callout).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         HStack {
@@ -48,9 +47,9 @@ struct LicenseView: View {
 
     private var pricingView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            pricePoint(icon: "gift.fill", tint: .green, title: "Free for 30 days",
+            pricePoint(icon: "gift", tint: .secondary, title: "Free for 30 days",
                        body: "Your free days are only used up when you actually use Battlify — so you get the most out of them, stress-free.")
-            pricePoint(icon: "checkmark.seal.fill", tint: .blue, title: "$2.99 to own",
+            pricePoint(icon: "checkmark.seal", tint: .secondary, title: "$2.99 to own",
                        body: "One-time payment, no subscriptions. Quick checkout — pay with Apple Pay.")
         }
         .padding(14)
@@ -75,8 +74,8 @@ struct LicenseView: View {
     private var activationView: some View {
         if case .expired = license.state {
             Label("Your 30 free days are up. Buy Battlify to keep using its controls.",
-                  systemImage: "exclamationmark.circle.fill")
-                .font(.callout).foregroundStyle(.orange)
+                  systemImage: "exclamationmark.circle")
+                .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
 
@@ -92,8 +91,8 @@ struct LicenseView: View {
         }
 
         if let err = license.lastError {
-            Label(err, systemImage: "xmark.octagon.fill")
-                .font(.caption).foregroundStyle(.red)
+            Label(err, systemImage: "xmark.octagon")
+                .font(.caption).foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
 
@@ -107,14 +106,6 @@ struct LicenseView: View {
             Button("Activate") { license.activate() }
                 .keyboardShortcut(.defaultAction)
                 .disabled(license.verifying)
-        }
-    }
-
-    private var statusColor: Color {
-        switch license.state {
-        case .licensed: return .green
-        case .trial: return .secondary
-        case .expired: return .orange
         }
     }
 }

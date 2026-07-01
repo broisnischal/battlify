@@ -55,7 +55,6 @@ struct MenuContentView: View {
         .scrollIndicators(.hidden)
         .frame(width: popoverWidth, height: min(contentHeight, maxPopoverHeight))
         .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
-        .tint(.green)
     }
 
     private var maxPopoverHeight: CGFloat {
@@ -67,7 +66,7 @@ struct MenuContentView: View {
 
     private func updateBanner(_ update: AppUpdate) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue)
+            Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Update available — v\(update.version)")
                     .font(.callout.weight(.medium))
@@ -80,7 +79,7 @@ struct MenuContentView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - License banner
@@ -90,7 +89,7 @@ struct MenuContentView: View {
         let expired = !license.isPro
         HStack(spacing: 10) {
             Image(systemName: expired ? "lock.fill" : "sparkles")
-                .foregroundStyle(expired ? .orange : .green)
+                .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(expired ? "Trial ended — controls locked" : license.statusText)
                     .font(.callout.weight(.medium))
@@ -104,8 +103,7 @@ struct MenuContentView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background((expired ? Color.orange : Color.green).opacity(0.12),
-                    in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Header
@@ -149,7 +147,7 @@ struct MenuContentView: View {
             let frac = max(0, min(1, CGFloat(snap.percentage) / 100))
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.primary.opacity(0.10)).frame(height: 8)
-                Capsule().fill(chargeColor(snap).gradient)
+                Capsule().fill(chargeColor(snap))
                     .frame(width: max(8, w * frac), height: 8)
                 if chargeLimit.limitEnabled {
                     let x = w * CGFloat(chargeLimit.limit) / 100
@@ -170,11 +168,10 @@ struct MenuContentView: View {
         return "Limit \(chargeLimit.limit)%"
     }
 
+    // Monochrome by default; a single red only for a genuinely critical level.
     private func chargeColor(_ snap: BatterySnapshot) -> Color {
-        if snap.isCharging || (snap.isPluggedIn && !snap.isFullyCharged) { return .green }
-        if snap.percentage <= 20 { return .red }
-        if snap.percentage <= 40 { return .orange }
-        return .green
+        if snap.percentage <= 20 && !snap.isPluggedIn { return .red }
+        return .primary
     }
 
     // MARK: - Save mode
@@ -304,9 +301,9 @@ struct MenuContentView: View {
 
     @ViewBuilder
     private var helperMissingView: some View {
-        Label("Helper not installed", systemImage: "exclamationmark.triangle.fill")
+        Label("Helper not installed", systemImage: "exclamationmark.triangle")
             .font(.callout)
-            .foregroundStyle(.orange)
+            .foregroundStyle(.secondary)
         Text("Charge limiting, Low Power Mode, and sleep settings need the root helper.")
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -435,16 +432,24 @@ struct MenuContentView: View {
             }
 
             HStack(spacing: 8) {
-                Image(systemName: automation.isLidClosed
-                      ? "macbook.and.iphone" : "macbook")
-                    .foregroundStyle(automation.isLidClosed ? .orange : .secondary)
+                Image(systemName: automation.isLidClosed ? "macbook.and.iphone" : "macbook")
+                    .foregroundStyle(.secondary)
                 Text("Lid").foregroundStyle(.secondary)
                 Spacer()
                 Text(automation.isLidClosed ? "Closed · clamshell" : "Open")
                     .fontWeight(.medium)
-                    .foregroundStyle(automation.isLidClosed ? .orange : .primary)
             }
             .font(.callout)
+
+            if let s = automation.lastLidSession {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock").foregroundStyle(.secondary)
+                    Text("Last closed").foregroundStyle(.secondary)
+                    Spacer()
+                    Text(lastClosedText(s)).fontWeight(.medium).monospacedDigit()
+                }
+                .font(.callout)
+            }
 
             if automation.isLidClosed {
                 hintLabel("Docked & closed runs hot at 100% — keep a charge limit + heat pause on.",
@@ -496,7 +501,7 @@ struct MenuContentView: View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tint)
+                .foregroundStyle(.secondary)
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -553,6 +558,14 @@ struct MenuContentView: View {
     private func formatMinutes(_ minutes: Int) -> String {
         let h = minutes / 60, m = minutes % 60
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+    }
+
+    private func lastClosedText(_ s: LidSession) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        let ago = f.localizedString(for: s.openedAt, relativeTo: Date())
+        let drop = s.dropPercent == 0 ? "no drop" : "−\(s.dropPercent)%"
+        return "\(ago) · \(drop)"
     }
 }
 

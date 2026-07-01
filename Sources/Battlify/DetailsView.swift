@@ -23,7 +23,6 @@ struct DetailsView: View {
         }
         .scrollIndicators(.hidden)
         .frame(width: 380, height: 600)
-        .tint(.green)
         .onAppear { processes.beginObserving() }
         .onDisappear { processes.endObserving() }
     }
@@ -47,9 +46,9 @@ struct DetailsView: View {
 
             if automation.isClamshellMode {
                 Label("In clamshell (docked) mode the battery tends to sit at 100% and run hot — the two biggest causes of wear. Keep a charge limit and heat-pause enabled.",
-                      systemImage: "exclamationmark.triangle.fill")
+                      systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -66,7 +65,7 @@ struct DetailsView: View {
                 if let h = snap.healthPercent {
                     Text(condition(h))
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(h >= 80 ? .green : .orange)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -75,7 +74,6 @@ struct DetailsView: View {
                     Text("\(h)%")
                         .font(.system(.largeTitle, design: .rounded).weight(.bold))
                         .monospacedDigit()
-                        .foregroundStyle(h >= 80 ? .green : .orange)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Maximum capacity")
                             .font(.callout).foregroundStyle(.secondary)
@@ -94,7 +92,7 @@ struct DetailsView: View {
                         Label {
                             Text(tip).font(.callout).fixedSize(horizontal: false, vertical: true)
                         } icon: {
-                            Image(systemName: "lightbulb.fill").foregroundStyle(.yellow)
+                            Image(systemName: "lightbulb").foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -224,7 +222,7 @@ struct DetailsView: View {
                     .frame(width: 16)
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(processes.suspended.contains(p.id) ? Color.orange : .secondary)
+            .foregroundStyle(processes.suspended.contains(p.id) ? Color.primary : .secondary)
             .help(processes.suspended.contains(p.id) ? "Resume" : "Suspend")
         }
         .padding(.horizontal, 12)

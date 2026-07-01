@@ -43,7 +43,6 @@ struct HistoryView: View {
         }
         .scrollIndicators(.hidden)
         .frame(width: 560, height: 540)
-        .tint(.green)
     }
 
     // MARK: - Lid-closed sessions
@@ -93,8 +92,7 @@ struct HistoryView: View {
     }
 
     private func dropColor(_ drop: Int) -> Color {
-        if drop == 0 { return .secondary }
-        return drop >= 10 ? .red : .primary
+        drop == 0 ? .secondary : .primary
     }
 
     private func closedRangeText(_ s: LidSession) -> String {
@@ -118,13 +116,13 @@ struct HistoryView: View {
                     yStart: .value("min", 0),
                     yEnd: .value("Charge", s.pct)
                 )
-                .foregroundStyle(.green.opacity(0.12))
+                .foregroundStyle(.primary.opacity(0.06))
             }
             LineMark(
                 x: .value("Time", s.t),
                 y: .value("Charge", s.pct)
             )
-            .foregroundStyle(.green)
+            .foregroundStyle(.primary)
             .interpolationMethod(.monotone)
         }
         .chartYScale(domain: 0...100)
@@ -138,7 +136,7 @@ struct HistoryView: View {
                 x: .value("Time", s.t),
                 y: .value("°C", s.temp ?? 0)
             )
-            .foregroundStyle(.orange)
+            .foregroundStyle(.secondary)
             .interpolationMethod(.monotone)
         }
         .chartYAxisLabel("°C")
