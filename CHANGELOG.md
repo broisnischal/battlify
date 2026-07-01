@@ -1,5 +1,18 @@
 # battlify
 
+## 0.7.1
+
+### Patch Changes
+
+- **Fixed the menu popover on multi-monitor setups** — it now sizes to the display
+  it actually opens on (the one under the cursor) instead of the screen holding
+  keyboard focus, so it no longer gets clipped off the bottom or forced to scroll.
+- **Consistent, native corner radii** — every card, banner, button, and tab now uses
+  one harmonized radius scale with continuous (squircle) corners that match macOS's
+  own windows and controls, instead of the previous mix of mismatched round corners.
+- **Removed the Optimized Battery Charging prompt** — dropped the "Recommended Setup"
+  card and the one-time menu nudge to streamline the UI.
+
 ## 0.7.0
 
 ### Minor Changes
