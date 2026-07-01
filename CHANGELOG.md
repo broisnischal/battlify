@@ -1,5 +1,14 @@
 # battlify
 
+## 0.8.2
+
+### Patch Changes
+
+- Fixed a crash on launch (the app opened then immediately quit) on macOS 26. A
+  notification/observer callback used `MainActor.assumeIsolated`, which the macOS 26
+  Swift runtime turns into a hard trap when the callback isn't on the main actor's
+  executor. Those callbacks now hop to the main actor safely with `Task { @MainActor }`.
+
 ## 0.8.1
 
 ### Patch Changes
