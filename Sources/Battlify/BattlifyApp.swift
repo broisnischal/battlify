@@ -20,6 +20,7 @@ struct BattlifyApp: App {
     @StateObject private var startup = StartupManager()
     @StateObject private var updater = UpdaterManager()
     @StateObject private var actions = SystemActions()
+    @StateObject private var settings = AppSettings()
 
     var body: some Scene {
         MenuBarExtra {
@@ -32,11 +33,12 @@ struct BattlifyApp: App {
                 .environmentObject(startup)
                 .environmentObject(updater)
                 .environmentObject(actions)
+                .environmentObject(settings)
         } label: {
             // Kept in its own observing view (below) so it re-renders reliably
             // when the snapshot changes — a label closure that reads the store
             // directly can render once and go stale.
-            MenuBarLabel(battery: battery, chargeLimit: chargeLimit)
+            MenuBarLabel(battery: battery, chargeLimit: chargeLimit, settings: settings)
         }
         .menuBarExtraStyle(.window)
 
@@ -72,10 +74,12 @@ struct BattlifyApp: App {
 struct MenuBarLabel: View {
     @ObservedObject var battery: BatteryStore
     @ObservedObject var chargeLimit: ChargeLimitStore
+    @ObservedObject var settings: AppSettings
 
     var body: some View {
         let snap = battery.snapshot
-        let tint = snap.menuBarTint
+        // Respect the "color icon by state" preference; otherwise stay neutral.
+        let tint: MenuBarTint = settings.colorMenuBarIcon ? snap.menuBarTint : .neutral
         HStack(spacing: 2) {
             // Rendered as an NSImage so the state colour actually shows in the
             // menu bar — SwiftUI's `.foregroundStyle` there is overridden by the
@@ -86,7 +90,9 @@ struct MenuBarLabel: View {
             if snap.isCharging {
                 Image(nsImage: MenuBarLabel.glyph("bolt.fill", tint: tint))
             }
-            Text("\(snap.percentage)%")
+            if settings.showMenuBarPercentage {
+                Text("\(snap.percentage)%")
+            }
         }
         .help(helpText(snap))
     }

@@ -10,6 +10,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var startup: StartupManager
     @EnvironmentObject private var updater: UpdaterManager
     @EnvironmentObject private var actions: SystemActions
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near the typical full height so the popover doesn't visibly grow on
@@ -42,6 +43,8 @@ struct MenuContentView: View {
                 .opacity(license.isPro ? 1 : 0.45)
                 Divider()
                 quickActionsSection
+                Divider()
+                menuBarSection
                 Divider()
                 generalSection
                 Divider()
@@ -160,6 +163,9 @@ struct MenuContentView: View {
             .frame(height: 15)
         }
         .frame(height: 15)
+        .help(chargeLimit.limitEnabled
+              ? "Charge \(snap.percentage)%. The marker shows your \(chargeLimit.limit)% limit."
+              : "Charge \(snap.percentage)%.")
     }
 
     private func limitCaption(_ snap: BatterySnapshot) -> String {
@@ -478,10 +484,13 @@ struct MenuContentView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Power", "powerplug.fill")
             if chargeLimit.daemonAvailable {
-                switchRow("Low Power Mode", Binding(
-                    get: { chargeLimit.lowPowerMode },
-                    set: { chargeLimit.setLowPowerMode($0) }
-                ))
+                switchRowWithHint(
+                    "Low Power Mode",
+                    hint: "Save Modes turn this on. It also lowers the display refresh rate on ProMotion Macs — turn it off here to get full refresh rate back.",
+                    Binding(
+                        get: { chargeLimit.lowPowerMode },
+                        set: { chargeLimit.setLowPowerMode($0) }
+                    ))
             } else {
                 Text("Low Power Mode needs the helper.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -497,20 +506,24 @@ struct MenuContentView: View {
             sectionHeader("Quick Actions", "wand.and.rays")
             HStack(spacing: 8) {
                 actionButton(actions.dimmed ? "Brighten" : "Dim",
-                             systemImage: actions.dimmed ? "sun.max" : "sun.min") {
+                             systemImage: actions.dimmed ? "sun.max" : "sun.min",
+                             help: actions.dimmed ? "Restore the previous brightness"
+                                                  : "Dim the display to save power") {
                     actions.toggleDim()
                 }
-                actionButton("Display Off", systemImage: "moon") {
+                actionButton("Display Off", systemImage: "moon",
+                             help: "Turn the display off now (the Mac stays awake)") {
                     actions.turnDisplayOff()
                 }
-                actionButton("Sleep", systemImage: "powersleep") {
+                actionButton("Sleep", systemImage: "powersleep",
+                             help: "Put the Mac to sleep now") {
                     actions.sleepNow()
                 }
             }
         }
     }
 
-    private func actionButton(_ title: String, systemImage: String,
+    private func actionButton(_ title: String, systemImage: String, help: String,
                               _ run: @escaping () -> Void) -> some View {
         Button(action: run) {
             VStack(spacing: 4) {
@@ -522,6 +535,24 @@ struct MenuContentView: View {
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .help(help)
+    }
+
+    // MARK: - Menu bar appearance
+
+    @ViewBuilder
+    private var menuBarSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Menu Bar", "menubar.rectangle")
+            switchRowWithHint(
+                "Show battery percentage",
+                hint: "Turn off to show just the icon in the menu bar.",
+                $settings.showMenuBarPercentage)
+            switchRowWithHint(
+                "Color icon by charge state",
+                hint: "Green while charging, red when low. Off keeps it monochrome.",
+                $settings.colorMenuBarIcon)
+        }
     }
 
     // MARK: - General (login item + lid sensor)

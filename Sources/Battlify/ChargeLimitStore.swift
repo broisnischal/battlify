@@ -157,6 +157,7 @@ final class ChargeLimitStore: ObservableObject {
         daemonProtocolVersion = r.daemonProtocolVersion
         currentConfig = r.config
         schemeDescription = r.schemeDescription
+        let wasChargingEnabled = chargingEnabled
         chargingEnabled = r.chargingEnabled
         lowPowerMode = r.lowPowerModeEnabled
         powerToggles = r.powerToggles
@@ -175,5 +176,12 @@ final class ChargeLimitStore: ObservableObject {
         preventIdleSleep = r.config.preventIdleSleep
         calibrating = r.config.calibrateToFull
         pauseUntil = r.config.pauseUntil
+
+        // When charging is turned on/off (e.g. you raised the limit and it starts
+        // charging), tell the battery store to re-read promptly so the menu-bar
+        // icon/colour reflects it instead of waiting for the next slow poll.
+        if wasChargingEnabled != chargingEnabled {
+            NotificationCenter.default.post(name: .battlifyChargeStateChanged, object: nil)
+        }
     }
 }

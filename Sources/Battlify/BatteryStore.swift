@@ -4,6 +4,12 @@ import Combine
 import AppKit
 import BattlifyKit
 
+extension Notification.Name {
+    /// Posted when charging is enabled/disabled so views reading live battery
+    /// state can re-read without waiting for the next slow poll.
+    static let battlifyChargeStateChanged = Notification.Name("BattlifyChargeStateChanged")
+}
+
 /// Observable wrapper around `BatteryMonitor`. Updates immediately on power-source
 /// changes (via an IOKit run-loop source) and on a slow timer as a fallback for
 /// values IOKit doesn't push notifications for (temperature, cycle count).
@@ -22,6 +28,24 @@ final class BatteryStore: ObservableObject {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
+        }
+        // Re-read when charging is toggled by the daemon (limit change, pause,
+        // calibrate, …). The SMC change takes a moment to surface in IOKit, so we
+        // poll a couple of times over the next few seconds.
+        NotificationCenter.default.addObserver(
+            forName: .battlifyChargeStateChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSoon() }
+        }
+    }
+
+    /// Refresh now and again shortly after, to catch a just-applied charge change
+    /// once IOKit reflects it.
+    func refreshSoon() {
+        refresh()
+        for delay in [1.0, 3.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.refresh()
+            }
         }
     }
 
