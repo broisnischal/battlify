@@ -34,19 +34,11 @@ struct MenuContentView: View {
                     modeSection
                     Divider()
                     chargeLimitSection
-                    Divider()
-                    sleepSection
-                    Divider()
-                    powerSection
                 }
                 .disabled(!license.isPro)
                 .opacity(license.isPro ? 1 : 0.45)
                 Divider()
                 quickActionsSection
-                Divider()
-                menuBarSection
-                Divider()
-                generalSection
                 Divider()
                 footer
             }
@@ -175,15 +167,6 @@ struct MenuContentView: View {
         return "Limit \(chargeLimit.limit)%"
     }
 
-    /// One-line explanation of the current MagSafe LED mode.
-    private var magSafeHint: String {
-        switch chargeLimit.magSafeLedMode {
-        case .system: return "macOS controls the LED."
-        case .status: return "Orange charging · green holding limit · off briefly after wake."
-        case .off:    return "Keeps the MagSafe LED off."
-        }
-    }
-
     // Green while charging, red at a critical level on battery, otherwise neutral.
     private func chargeColor(_ snap: BatterySnapshot) -> Color {
         if snap.isCharging { return .green }
@@ -299,7 +282,7 @@ struct MenuContentView: View {
                 pauseChargingControl
 
                 if chargeLimit.daemonOutdated {
-                    hintLabel("Helper is outdated — pause/resume won't work until you reinstall it.",
+                    hintLabel("Helper is outdated — reinstall it from Settings.",
                               systemImage: "exclamationmark.triangle.fill")
                 }
 
@@ -328,90 +311,51 @@ struct MenuContentView: View {
 
                     calibrationControl
 
-                    // Keep the limit enforced even through sleep.
-                    switchRowWithHint(
-                        "Stop charging before sleep",
-                        hint: "Cuts charging as the Mac sleeps so it can't top up past the limit.",
-                        Binding(
-                            get: { chargeLimit.disableChargingBeforeSleep },
-                            set: { chargeLimit.disableChargingBeforeSleep = $0; chargeLimit.apply() }
-                        ))
-                    switchRowWithHint(
-                        "Prevent idle sleep while plugged in",
-                        hint: "Keeps the Mac awake on power so the limit is always enforced. Uses a little more energy.",
-                        Binding(
-                            get: { chargeLimit.preventIdleSleep },
-                            set: { chargeLimit.preventIdleSleep = $0; chargeLimit.apply() }
-                        ))
-                }
-
-                // Heat-aware charging (independent of the % limit).
-                switchRow("Pause charging when hot", Binding(
-                    get: { chargeLimit.heatAwareEnabled },
-                    set: { chargeLimit.heatAwareEnabled = $0; chargeLimit.apply() }
-                ))
-                if chargeLimit.heatAwareEnabled {
-                    Stepper(value: Binding(
-                        get: { chargeLimit.maxChargeTempC },
-                        set: { chargeLimit.maxChargeTempC = $0; chargeLimit.apply() }
-                    ), in: 30...45, step: 1) {
-                        HStack {
-                            Text("Max temp").foregroundStyle(.secondary)
-                            Spacer()
-                            Text("\(Int(chargeLimit.maxChargeTempC)) °C")
-                                .fontWeight(.semibold).monospacedDigit()
-                        }
-                        .font(.callout)
-                    }
-                    .controlSize(.small)
-                }
-
-                // Force-discharge down to the limit when plugged in above it.
-                if chargeLimit.dischargeSupported {
-                    switchRowWithHint(
-                        "Discharge to limit",
-                        hint: "If you plug in above the limit, run off battery until it drops back down.",
-                        Binding(
-                            get: { chargeLimit.dischargeEnabled },
-                            set: { chargeLimit.dischargeEnabled = $0; chargeLimit.apply() }
-                        ))
-                    if chargeLimit.discharging {
-                        hintLabel("Discharging to reach the limit…", systemImage: "battery.25")
+                    if !settings.dismissedOptimizedChargingTip {
+                        optimizedChargingTip
                     }
                 }
 
-                // MagSafe LED control (only if the Mac has a controllable LED).
-                if chargeLimit.magSafeSupported {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("MagSafe LED").font(.callout)
-                        Picker("", selection: Binding(
-                            get: { chargeLimit.magSafeLedMode },
-                            set: { chargeLimit.magSafeLedMode = $0; chargeLimit.apply() }
-                        )) {
-                            ForEach(MagSafeLEDMode.allCases) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        Text(magSafeHint)
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                // Why charging is paused (the scheduled-pause case is shown above).
-                if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
-                    if reason == "heat" {
-                        hintLabel("Charging paused — battery is warm", systemImage: "thermometer.high")
-                    } else if reason == "limit" {
-                        hintLabel("Charging paused to hold limit", systemImage: "pause.circle.fill")
-                    } else if reason == "settling" {
-                        hintLabel("Settling after wake — charging resumes shortly", systemImage: "moon.zzz")
+                // Live state: why charging is currently paused. Rare + useful, so
+                // it stays in the menu; everything configurable moved to Settings.
+                if chargeLimit.discharging {
+                    hintLabel("Discharging to reach the limit…", systemImage: "battery.25")
+                } else if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
+                    switch reason {
+                    case "heat":     hintLabel("Charging paused — battery is warm", systemImage: "thermometer.high")
+                    case "limit":    hintLabel("Charging paused to hold limit", systemImage: "pause.circle.fill")
+                    case "settling": hintLabel("Settling after wake — charging resumes shortly", systemImage: "moon.zzz")
+                    default:         EmptyView()
                     }
                 }
             } else {
                 helperMissingView
             }
         }
+    }
+
+    /// One-time nudge to disable macOS's own Optimized Battery Charging, which
+    /// competes with our limit. Shown once, then dismissed for good.
+    private var optimizedChargingTip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "info.circle").foregroundStyle(.secondary)
+                Text("Turn off macOS **Optimized Battery Charging** so it doesn't override this limit.")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button("Open Battery Settings") { SystemActions.openBatterySettings() }
+                    .controlSize(.small)
+                Spacer()
+                Button("Dismiss") { settings.dismissedOptimizedChargingTip = true }
+                    .controlSize(.small)
+                    .buttonStyle(.borderless)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
@@ -439,62 +383,6 @@ struct MenuContentView: View {
         }
         if let installError {
             Text(installError).font(.caption).foregroundStyle(.red).lineLimit(3)
-        }
-    }
-
-    // MARK: - Sleep & idle
-
-    @ViewBuilder
-    private var sleepSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Sleep & Idle", "moon.zzz.fill")
-
-            // Headline lid automation.
-            switchRowWithHint(
-                "Super Save when lid closed",
-                hint: "Maximizes battery while closed, restores when you open it.",
-                $automation.superSaveOnLidClose)
-
-            // Manual radio controls only matter when Super Save isn't driving them.
-            Group {
-                switchRow("Turn off Wi-Fi on lid close", $automation.wifiOffOnLidClose)
-                switchRow("Turn off Bluetooth on lid close", $automation.bluetoothOffOnLidClose)
-                switchRow("Restore Wi-Fi/Bluetooth on wake", $automation.restoreOnWake)
-            }
-            .disabled(automation.superSaveOnLidClose)
-            .opacity(automation.superSaveOnLidClose ? 0.45 : 1)
-
-            if chargeLimit.daemonAvailable {
-                ForEach(PowerToggle.allCases, id: \.self) { toggle in
-                    switchRowWithHint(toggle.title, hint: toggle.hint, Binding(
-                        get: { chargeLimit.isPowerToggleOn(toggle) },
-                        set: { chargeLimit.setPowerToggle(toggle, $0) }
-                    ))
-                }
-                hintLabel("Turn these off to stop the Mac waking while the lid is closed.",
-                          systemImage: "moon.zzz.fill")
-            }
-        }
-    }
-
-    // MARK: - Power
-
-    @ViewBuilder
-    private var powerSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Power", "powerplug.fill")
-            if chargeLimit.daemonAvailable {
-                switchRowWithHint(
-                    "Low Power Mode",
-                    hint: "Save Modes turn this on. It also lowers the display refresh rate on ProMotion Macs — turn it off here to get full refresh rate back.",
-                    Binding(
-                        get: { chargeLimit.lowPowerMode },
-                        set: { chargeLimit.setLowPowerMode($0) }
-                    ))
-            } else {
-                Text("Low Power Mode needs the helper.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -538,82 +426,11 @@ struct MenuContentView: View {
         .help(help)
     }
 
-    // MARK: - Menu bar appearance
-
-    @ViewBuilder
-    private var menuBarSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Menu Bar", "menubar.rectangle")
-            switchRowWithHint(
-                "Show battery percentage",
-                hint: "Turn off to show just the icon in the menu bar.",
-                $settings.showMenuBarPercentage)
-            switchRowWithHint(
-                "Color icon by charge state",
-                hint: "Green while charging, red when low. Off keeps it monochrome.",
-                $settings.colorMenuBarIcon)
-        }
-    }
-
-    // MARK: - General (login item + lid sensor)
-
-    @ViewBuilder
-    private var generalSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("General", "gearshape.fill")
-
-            switchRow("Launch at login", Binding(
-                get: { startup.launchAtLogin },
-                set: { startup.setLaunchAtLogin($0) }
-            ))
-            if startup.requiresApproval {
-                hintLabel("Approve Battlify in System Settings › General › Login Items.",
-                          systemImage: "exclamationmark.triangle.fill")
-            }
-
-            HStack(spacing: 8) {
-                Image(systemName: automation.isLidClosed ? "macbook.and.iphone" : "macbook")
-                    .foregroundStyle(.secondary)
-                Text("Lid").foregroundStyle(.secondary)
-                Spacer()
-                Text(automation.isLidClosed ? "Closed · clamshell" : "Open")
-                    .fontWeight(.medium)
-            }
-            .font(.callout)
-
-            if let s = automation.lastLidSession {
-                HStack(spacing: 8) {
-                    Image(systemName: "clock").foregroundStyle(.secondary)
-                    Text("Last closed").foregroundStyle(.secondary)
-                    Spacer()
-                    Text(lastClosedText(s)).fontWeight(.medium).monospacedDigit()
-                }
-                .font(.callout)
-            }
-
-            if automation.isLidClosed {
-                hintLabel("Docked & closed runs hot at 100% — keep a charge limit + heat pause on.",
-                          systemImage: "thermometer.high")
-            }
-
-            HStack {
-                Button(updater.checking ? "Checking…" : "Check for Updates…") {
-                    updater.check(userInitiated: true)
-                }
-                .disabled(updater.checking)
-                Spacer()
-                Text("v\(updater.currentVersion)")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            .font(.callout)
-            .buttonStyle(.borderless)
-        }
-    }
-
     // MARK: - Footer
 
     private var footer: some View {
         HStack(spacing: 14) {
+            Button("Settings…") { openDetached("settings") }
             Button("Details…") { openDetached("details") }
             Button("History…") { openDetached("history") }
             Spacer()
@@ -659,20 +476,6 @@ struct MenuContentView: View {
         }
     }
 
-    private func switchRowWithHint(_ title: String, hint: String,
-                                   _ value: Binding<Bool>) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.callout)
-                Text(hint).font(.caption2).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 6)
-            Toggle("", isOn: value)
-                .labelsHidden().toggleStyle(.switch).controlSize(.small)
-        }
-    }
-
     private func hintLabel(_ text: String, systemImage: String) -> some View {
         Label(text, systemImage: systemImage)
             .font(.caption2)
@@ -698,14 +501,6 @@ struct MenuContentView: View {
     private func formatMinutes(_ minutes: Int) -> String {
         let h = minutes / 60, m = minutes % 60
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
-    }
-
-    private func lastClosedText(_ s: LidSession) -> String {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        let ago = f.localizedString(for: s.openedAt, relativeTo: Date())
-        let drop = s.dropPercent == 0 ? "no drop" : "−\(s.dropPercent)%"
-        return "\(ago) · \(drop)"
     }
 }
 

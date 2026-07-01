@@ -42,6 +42,19 @@ struct BattlifyApp: App {
         }
         .menuBarExtraStyle(.window)
 
+        // Detached preferences window — everything set-once lives here so the
+        // menu-bar dropdown stays focused on day-to-day controls.
+        Window("Battlify Settings", id: "settings") {
+            SettingsView()
+                .environmentObject(chargeLimit)
+                .environmentObject(automation)
+                .environmentObject(license)
+                .environmentObject(startup)
+                .environmentObject(updater)
+                .environmentObject(settings)
+        }
+        .windowResizability(.contentSize)
+
         // Detached window: battery stats + health tips + top energy users.
         Window("Battery Details", id: "details") {
             DetailsView()

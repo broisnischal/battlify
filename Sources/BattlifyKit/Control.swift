@@ -10,12 +10,45 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
     case powerNap = "powernap"
     case wakeOnNetwork = "womp"
     case tcpKeepAlive = "tcpkeepalive"
+    case dimOnBattery = "lessbright"
+
+    /// Where a toggle belongs in the UI (and, incidentally, which pmset power
+    /// source it applies to).
+    public enum Category: Sendable {
+        case sleepWake       // features that keep the Mac busy during sleep
+        case batteryOptions  // macOS "Battery > Options" style tweaks
+    }
+
+    /// Which pmset power source this toggle writes to / is read from.
+    /// `-a` = all, `-b` = battery only, `-c` = AC only.
+    public enum Scope: String, Sendable {
+        case all = "-a"
+        case battery = "-b"
+        case ac = "-c"
+    }
+
+    public var category: Category {
+        switch self {
+        case .powerNap, .wakeOnNetwork, .tcpKeepAlive: return .sleepWake
+        case .dimOnBattery: return .batteryOptions
+        }
+    }
+
+    /// `dimOnBattery` is meaningful only on battery, so it's scoped to `-b`;
+    /// the rest apply to every power source.
+    public var scope: Scope {
+        switch self {
+        case .dimOnBattery: return .battery
+        default: return .all
+        }
+    }
 
     public var title: String {
         switch self {
         case .powerNap: return "Power Nap"
         case .wakeOnNetwork: return "Wake for network access"
         case .tcpKeepAlive: return "Keep network alive in sleep"
+        case .dimOnBattery: return "Slightly dim the display on battery"
         }
     }
 
@@ -24,6 +57,7 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
         case .powerNap: return "Wakes periodically while closed to sync Mail/iCloud"
         case .wakeOnNetwork: return "Lets other devices wake this Mac over the network"
         case .tcpKeepAlive: return "Keeps Find My & push active during sleep"
+        case .dimOnBattery: return "Lowers brightness a little when unplugged to stretch battery life"
         }
     }
 }
@@ -122,6 +156,9 @@ public enum ControlProtocol {
     ///   v2: added `pauseCharging`.
     ///   v3: MagSafe LED mode (Auto/Status/Off) + post-wake settling.
     ///   v4: prepareForSleep, calibrateToFull, prevent-idle-sleep.
+    // Note: the dim-on-battery toggle is a plain additive pmset write — an older
+    // helper simply ignores an unknown toggle, so it doesn't warrant a version
+    // bump or an "outdated helper" warning.
     public static let version = 4
 }
 

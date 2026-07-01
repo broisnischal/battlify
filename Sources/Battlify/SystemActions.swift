@@ -42,8 +42,30 @@ final class SystemActions: ObservableObject {
 
     // MARK: - Display off / sleep (pmset, no root needed for *now actions)
 
-    func turnDisplayOff() { run("/usr/bin/pmset", ["displaysleepnow"]) }
+    func turnDisplayOff() {
+        // Delay briefly before sleeping the display. The click (or trackpad tap)
+        // that triggered this — plus the popover closing — counts as user activity;
+        // sleeping in the same instant lets that lingering input wake the display
+        // right back up. A short gap lets it settle, so the display stays off until
+        // the *next* key press or trackpad tap.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.run("/usr/bin/pmset", ["displaysleepnow"])
+        }
+    }
+
     func sleepNow() { run("/usr/bin/pmset", ["sleepnow"]) }
+
+    /// Opens System Settings straight to the Battery pane (where Optimized Battery
+    /// Charging lives). Tries the modern pane id first, then the legacy one.
+    static func openBatterySettings() {
+        let candidates = [
+            "x-apple.systempreferences:com.apple.Battery-Settings.extension",
+            "x-apple.systempreferences:com.apple.preference.battery",
+        ]
+        for s in candidates {
+            if let url = URL(string: s), NSWorkspace.shared.open(url) { return }
+        }
+    }
 
     private func run(_ path: String, _ args: [String]) {
         let p = Process()
