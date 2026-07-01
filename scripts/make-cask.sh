@@ -21,19 +21,16 @@ cask "battlify" do
   desc "Menu bar battery saver and charge limiter for Apple Silicon Macs"
   homepage "https://github.com/broisnischal/battlify"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
   depends_on arch: :arm64
 
   app "Battlify.app"
 
-  # The app is signed ad-hoc (not yet notarized), so clear the download
-  # quarantine after install to let it launch without a Gatekeeper warning.
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Battlify.app"]
-  end
-
   caveats <<~EOS
+    This build isn't notarized yet, so install with --no-quarantine (see below)
+    or it will report as "damaged":
+      brew install --cask --no-quarantine battlify
+
     Charge limiting, Low Power Mode, and sleep controls need a small root helper
     (a LaunchDaemon). After first launch, open the Battlify menu-bar item and
     click "Install Helper" — you will be asked for your password once. The helper
