@@ -98,3 +98,31 @@ jobs:
           draft: false
           make_latest: true
           generate_release_notes: true
+
+      # Point the public in-app update feed at this release. Done inline here
+      # rather than in a separate `release: published` workflow because releases
+      # published by the default GITHUB_TOKEN do NOT emit an event that can
+      # trigger another workflow — so that feed workflow never fired on its own.
+      # RELEASES_TOKEN is a PAT with contents:write on the battlify-releases repo.
+      - name: Update appcast feed
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "RELEASES_TOKEN not set — skipping feed update."
+            exit 0
+          fi
+          FEED_REPO="broisnischal/battlify-releases"
+          DMG_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Battlify-${VERSION}.dmg"
+          NEW=$(printf '{"version":"%s","url":"%s","notes":"%s"}' "$VERSION" "$DMG_URL" "Battlify ${VERSION}")
+          echo "New feed: $NEW"
+          SHA=$(gh api "repos/${FEED_REPO}/contents/appcast.json" --jq .sha)
+          gh api -X PUT "repos/${FEED_REPO}/contents/appcast.json" \
+            -f message="chore: update appcast to ${VERSION}" \
+            -f content="$(printf '%s' "$NEW" | base64 | tr -d '\n')" \
+            -f sha="$SHA"
+          echo "Feed updated to ${VERSION}."
