@@ -123,18 +123,37 @@ megabytes (no framework-linked app does), but it also won't sit there draining y
 
 ## Install
 
-1. Download the latest `Battlify.dmg` from
+### Homebrew (recommended)
+
+```bash
+brew tap broisnischal/battlify-releases https://github.com/broisnischal/battlify-releases
+brew install --cask battlify
+```
+
+The cask clears the download quarantine automatically, so it launches straight
+away. To update later: `brew upgrade --cask battlify`.
+
+### Manual (DMG)
+
+1. Download the latest `Battlify-x.y.z.dmg` from
    [Releases](https://github.com/broisnischal/battlify/releases) and drag
    **Battlify** into Applications.
-2. If macOS claims the app is "damaged," that's just Gatekeeper on a build it hasn't
-   notarized yet — it isn't damaged. Clear the quarantine flag:
+2. Because the build isn't notarized yet, macOS may say it's "damaged" — it isn't.
+   Clear the quarantine flag once:
    ```bash
    sudo xattr -r -d com.apple.quarantine /Applications/Battlify.app
    ```
-   (Not needed once the build is notarized.)
-3. Launch it — it lives in the menu bar, not the Dock.
-4. Click **Install Helper…** in the menu (one password prompt). The helper is a
+   (Homebrew does this for you; only needed for the manual DMG.)
+
+Then, either way:
+
+3. Launch it — it lives in the menu bar, not the Dock. (It's a background app, so
+   opening it again just brings the menu-bar item to attention — it won't open a
+   window.)
+4. Click **Install Helper** in the menu (one password prompt). The helper is a
    LaunchDaemon, so it starts at boot and keeps running on its own.
+5. Updates install themselves: **Update** in the menu downloads the new version,
+   replaces the app in place, and relaunches it.
 
 ### Recommended: turn off macOS's own charge management
 
@@ -164,8 +183,8 @@ swift build
 swift run Battlify                 # run the menu-bar app
 sudo ./scripts/install-helper.sh   # install the root helper daemon
 
-./scripts/package-app.sh 0.6.0     # build Battlify.app
-./scripts/make-dmg.sh 0.6.0        # build the DMG
+./scripts/package-app.sh 0.8.1     # build Battlify.app
+./scripts/make-dmg.sh 0.8.1        # build the DMG
 ```
 
 See [`DISTRIBUTION.md`](DISTRIBUTION.md) for signing, notarization, the GitHub

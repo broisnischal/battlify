@@ -126,3 +126,32 @@ jobs:
             -f content="$(printf '%s' "$NEW" | base64 | tr -d '\n')" \
             -f sha="$SHA"
           echo "Feed updated to ${VERSION}."
+
+      # Publish the Homebrew cask to the battlify-releases tap, with the freshly
+      # built DMG's sha256, so `brew install --cask` always matches the release.
+      - name: Update Homebrew cask
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "RELEASES_TOKEN not set — skipping cask update."
+            exit 0
+          fi
+          FEED_REPO="broisnischal/battlify-releases"
+          DMG_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Battlify-${VERSION}.dmg"
+          DMG_SHA=$(shasum -a 256 "dist/Battlify-${VERSION}.dmg" | awk '{print $1}')
+          ./scripts/make-cask.sh "${VERSION}" "${DMG_URL}" "${DMG_SHA}"
+          CONTENT=$(base64 < dist/battlify.rb | tr -d '\n')
+          EXISTING=$(gh api "repos/${FEED_REPO}/contents/Casks/battlify.rb" --jq .sha 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            gh api -X PUT "repos/${FEED_REPO}/contents/Casks/battlify.rb" \
+              -f message="cask: battlify ${VERSION}" -f content="$CONTENT" -f sha="$EXISTING"
+          else
+            gh api -X PUT "repos/${FEED_REPO}/contents/Casks/battlify.rb" \
+              -f message="cask: battlify ${VERSION}" -f content="$CONTENT"
+          fi
+          echo "Cask updated to ${VERSION} (sha ${DMG_SHA})."

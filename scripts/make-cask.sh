@@ -1,11 +1,22 @@
-# Reference copy. The authoritative, always-current cask is published by CI to
-# the tap repo (broisnischal/battlify-releases → Casks/battlify.rb) with the real
-# sha256 of each release's DMG. See scripts/make-cask.sh.
-cask "battlify" do
-  version "0.8.1"
-  sha256 :no_check
+#!/bin/bash
+# Generates the Homebrew cask (battlify.rb) for a release.
+# Usage: ./scripts/make-cask.sh <version> <dmg-url> <sha256>
+set -euo pipefail
 
-  url "https://github.com/broisnischal/battlify/releases/download/v#{version}/Battlify-#{version}.dmg"
+VERSION="${1:?usage: make-cask.sh <version> <dmg-url> <sha256>}"
+DMG_URL="${2:?usage: make-cask.sh <version> <dmg-url> <sha256>}"
+SHA="${3:?usage: make-cask.sh <version> <dmg-url> <sha256>}"
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mkdir -p "$REPO_DIR/dist"
+OUT="$REPO_DIR/dist/battlify.rb"
+
+cat > "$OUT" <<RUBY
+cask "battlify" do
+  version "$VERSION"
+  sha256 "$SHA"
+
+  url "$DMG_URL"
   name "Battlify"
   desc "Menu bar battery saver and charge limiter for Apple Silicon Macs"
   homepage "https://github.com/broisnischal/battlify"
@@ -36,3 +47,7 @@ cask "battlify" do
     "~/Library/Preferences/com.battlify.app.plist",
   ]
 end
+RUBY
+
+echo "wrote $OUT:"
+cat "$OUT"

@@ -144,34 +144,52 @@ final class UpdaterManager: ObservableObject {
             throw UpdaterError.appNotFoundInDMG
         }
 
-        // 4. Detached swap-and-relaunch script. It waits for THIS pid to exit so it
-        //    never overwrites a running bundle, keeps a .bak to roll back on failure,
-        //    clears quarantine (the DMG is notarized + stapled), then relaunches.
+        // 4. Swap-and-relaunch script. It waits for THIS pid to exit so it never
+        //    overwrites a running bundle, keeps a .bak to roll back on failure,
+        //    clears quarantine, refreshes Launch Services (so the new bundle isn't
+        //    shadowed by a stale registration), then relaunches. All output goes to
+        //    a log file so the parent's closing pipes can't SIGPIPE it mid-run.
+        let logPath = tmp + "battlify-update.log"
         let script = """
         #!/bin/bash
+        exec >>"\(logPath)" 2>&1
+        echo "=== $(date) Battlify updater (pid \(pid)) ==="
         while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done
+        echo "app exited; installing update"
         if /usr/bin/ditto "\(srcApp)" "\(bundlePath).new"; then
+          /usr/bin/xattr -dr com.apple.quarantine "\(bundlePath).new" 2>/dev/null || true
+          /bin/rm -rf "\(bundlePath).bak"
           /bin/mv "\(bundlePath)" "\(bundlePath).bak" 2>/dev/null || true
           if /bin/mv "\(bundlePath).new" "\(bundlePath)"; then
+            echo "swap ok"
             /bin/rm -rf "\(bundlePath).bak"
-            /usr/bin/xattr -dr com.apple.quarantine "\(bundlePath)" 2>/dev/null || true
           else
+            echo "swap failed; restoring backup"
             /bin/mv "\(bundlePath).bak" "\(bundlePath)" 2>/dev/null || true
           fi
+        else
+          echo "ditto failed"
         fi
-        /usr/bin/hdiutil detach "\(mountPoint)" -quiet 2>/dev/null || true
+        /usr/bin/xattr -dr com.apple.quarantine "\(bundlePath)" 2>/dev/null || true
+        /usr/bin/hdiutil detach "\(mountPoint)" -quiet 2>/dev/null || /usr/bin/hdiutil detach "\(mountPoint)" -force 2>/dev/null || true
         /bin/rm -f "\(dmgPath)"
         /bin/rmdir "\(mountPoint)" 2>/dev/null || true
-        /usr/bin/open "\(bundlePath)"
+        LSREG="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+        "$LSREG" -f "\(bundlePath)" 2>/dev/null || true
+        echo "launching \(bundlePath)"
+        /usr/bin/open "\(bundlePath)" || /usr/bin/open -a "\(bundlePath)"
+        echo "done"
         /bin/rm -f "$0"
         """
         let scriptPath = tmp + "battlify-update-\(stamp).sh"
         try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
 
-        // 5. Launch it detached and return — the caller then quits the app.
+        // 5. Launch it fully detached (nohup + background in a throwaway shell) so it
+        //    survives this app terminating — a direct child can be torn down with the
+        //    parent and never finish the swap/relaunch. Then the caller quits the app.
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = [scriptPath]
+        p.arguments = ["-c", "/usr/bin/nohup /bin/bash \"\(scriptPath)\" >/dev/null 2>&1 &"]
         try p.run()
     }
 
