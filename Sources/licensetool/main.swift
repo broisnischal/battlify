@@ -6,7 +6,7 @@ import BattlifyKit
 // NOT shipped in the app bundle. The private key must stay secret.
 //
 //   licensetool genkey
-//   licensetool sign --priv <base64> --email a@b.com --name "A B" [--days 365]
+//   licensetool sign --priv <base64> --email a@b.com --device XXXX-XXXX-XXXX [--name "A B"] [--days 365]
 
 let args = Array(CommandLine.arguments.dropFirst())
 
@@ -25,9 +25,10 @@ case "genkey":
 
 case "sign":
     guard let priv = value("--priv"),
-          let email = value("--email") else {
+          let email = value("--email"),
+          let deviceRaw = value("--device") else {
         FileHandle.standardError.write(Data(
-            "usage: licensetool sign --priv <base64> --email <e> [--name <n>] [--days <n>]\n".utf8))
+            "usage: licensetool sign --priv <base64> --email <e> --device <code> [--name <n>] [--days <n>]\n".utf8))
         exit(64)
     }
     let name = value("--name") ?? ""
@@ -35,8 +36,16 @@ case "sign":
     if let days = value("--days").flatMap({ Int($0) }) {
         expires = Date().addingTimeInterval(Double(days) * 86_400)
     }
+    // The app rejects unbound licenses, so minting one would only create support load.
+    let device = DeviceIdentity.normalize(deviceRaw)
+    guard device.count == 12 else {
+        FileHandle.standardError.write(Data(
+            "error: --device must be a 12-hex-digit code like 7F3A-92C1-D04B\n".utf8))
+        exit(64)
+    }
     let info = LicenseInfo(email: email, name: name, issuedAt: Date(),
-                           expiresAt: expires, product: License.product)
+                           expiresAt: expires, product: License.product,
+                           deviceID: device)
     do {
         let token = try License.sign(info, privateKeyBase64: priv)
         print(token)
@@ -45,17 +54,28 @@ case "sign":
         exit(1)
     }
 
+case "device":
+    if let code = DeviceIdentity.deviceCode() {
+        print(code)
+    } else {
+        FileHandle.standardError.write(Data("error: could not read this Mac's hardware UUID\n".utf8))
+        exit(1)
+    }
+
 case "verify":
     guard let token = value("--token") else {
         FileHandle.standardError.write(Data("usage: licensetool verify --token <token>\n".utf8))
         exit(64)
     }
-    // Verify against the public key embedded in the app.
+    // Verify against the public key embedded in the app (or --pub). Pass --device
+    // to also check the binding; omitted, the device check is skipped (seller-side).
     do {
-        let info = try License.verify(token)
+        let info = try License.verify(token, deviceID: value("--device"),
+                                      publicKeyBase64: value("--pub") ?? License.publicKeyBase64)
         print("VALID — \(info.name.isEmpty ? info.email : "\(info.name) <\(info.email)>")")
         print("  issued:  \(info.issuedAt)")
         print("  expires: \(info.expiresAt.map { "\($0)" } ?? "never")")
+        print("  device:  \(info.deviceID ?? "?")")
     } catch {
         print("INVALID — \(error)")
         exit(1)
@@ -66,8 +86,11 @@ default:
     licensetool — Battlify license keys
 
       genkey                              Generate an Ed25519 keypair
-      sign --priv <b64> --email <e>       Mint a license token
+      sign --priv <b64> --email <e>       Mint a license token bound to one Mac
+           --device <code>                (device code shown in the app's license window)
            [--name <n>] [--days <n>]      (omit --days for a perpetual license)
-      verify --token <token>             Verify a token against the app's public key
+      verify --token <token>              Verify a token against the app's public key
+             [--device <code>] [--pub <b64>]   Also check the device binding / other key
+      device                              Print this Mac's device code
     """)
 }

@@ -8,18 +8,24 @@ public struct LicenseInfo: Codable, Sendable, Equatable {
     public var issuedAt: Date
     public var expiresAt: Date?   // nil = perpetual
     public var product: String
+    /// Device code the license is bound to (see DeviceIdentity.deviceCode()).
+    /// Required by verify(): a license without one is rejected (.missingDevice),
+    /// so pre-device-locking keys must be re-issued from the storefront.
+    public var deviceID: String?
 
     enum CodingKeys: String, CodingKey {
-        case email = "e", name = "n", issuedAt = "iat", expiresAt = "exp", product = "p"
+        case email = "e", name = "n", issuedAt = "iat", expiresAt = "exp",
+             product = "p", deviceID = "d"
     }
 
     public init(email: String, name: String, issuedAt: Date,
-                expiresAt: Date?, product: String) {
+                expiresAt: Date?, product: String, deviceID: String? = nil) {
         self.email = email
         self.name = name
         self.issuedAt = issuedAt
         self.expiresAt = expiresAt
         self.product = product
+        self.deviceID = deviceID
     }
 }
 
@@ -28,6 +34,8 @@ public enum LicenseError: Error, CustomStringConvertible {
     case badSignature
     case wrongProduct
     case expired
+    case wrongDevice
+    case missingDevice
 
     public var description: String {
         switch self {
@@ -35,6 +43,9 @@ public enum LicenseError: Error, CustomStringConvertible {
         case .badSignature: return "This license key couldn't be verified."
         case .wrongProduct: return "This key is for a different product."
         case .expired: return "This license has expired."
+        case .wrongDevice: return "This license is registered to a different Mac."
+        case .missingDevice:
+            return "This key isn't linked to a Mac. Sign in at battlify.app to get an updated key for this one."
         }
     }
 }
@@ -52,8 +63,13 @@ public enum License {
     /// LICENSE_SIGNING_PRIVATE_KEY env var, which signs licenses after checkout.
     public static let publicKeyBase64 = "+H12xfer/QAvW5xSQhB0L2rehNFuwm3SpwW3r66Bujc="
 
+    /// Every license must carry a device binding — unbound tokens are rejected.
+    /// - Parameter deviceID: this machine's device code, compared against the
+    ///   one in the license. Pass nil only from seller-side tooling where the
+    ///   token isn't being redeemed (skips the match, not the binding check).
     public static func verify(_ token: String,
                               now: Date = Date(),
+                              deviceID: String? = nil,
                               publicKeyBase64: String = publicKeyBase64) throws -> LicenseInfo {
         let parts = token.split(separator: ".")
         guard parts.count == 2,
@@ -74,6 +90,12 @@ public enum License {
         }
         guard info.product == product else { throw LicenseError.wrongProduct }
         if let exp = info.expiresAt, exp < now { throw LicenseError.expired }
+        guard let bound = info.deviceID else { throw LicenseError.missingDevice }
+        if let mine = deviceID {
+            guard DeviceIdentity.normalize(bound) == DeviceIdentity.normalize(mine) else {
+                throw LicenseError.wrongDevice
+            }
+        }
         return info
     }
 

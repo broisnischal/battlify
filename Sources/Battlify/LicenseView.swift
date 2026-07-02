@@ -79,6 +79,29 @@ struct LicenseView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
 
+        if !license.deviceCode.isEmpty {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Your device code — enter it at checkout")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(license.deviceCode)
+                        .font(.system(.callout, design: .monospaced).weight(.medium))
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(license.deviceCode, forType: .string)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .controlSize(.small)
+            }
+            .padding(10)
+            .background(.quaternary.opacity(0.4),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+
         VStack(alignment: .leading, spacing: 6) {
             Text("Already bought it? Enter your license key")
                 .font(.caption).foregroundStyle(.secondary)
