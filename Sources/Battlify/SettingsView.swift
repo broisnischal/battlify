@@ -805,15 +805,23 @@ struct SettingsView: View {
     @ViewBuilder
     private var liveSplitReadout: some View {
         let f = battery.powerFlow
+        let cycling = chargeLimit.chargePower > 0 && chargeLimit.chargePower < 100
         if f.isPluggedIn {
-            HStack(spacing: 16) {
-                wattStat(.green, "Into battery", f.chargeWatts)
-                wattStat(.orange, "To your Mac", max(0, f.systemWatts ?? 0))
-                Spacer()
-                if let a = f.adapterWatts {
-                    Text(String(format: "Adapter %.0f W", a))
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                        .monospacedDigit()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 16) {
+                    wattStat(.green, cycling ? "Into battery (now)" : "Into battery", f.chargeWatts)
+                    wattStat(.orange, "To your Mac", max(0, f.systemWatts ?? 0))
+                    Spacer()
+                    if let a = f.adapterWatts {
+                        Text(String(format: "Adapter %.0f W", a))
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                if cycling {
+                    Text("At \(chargeLimit.chargePower)% charging runs in long on/off cycles (a couple of minutes each), so this reads full while charging and 0 while resting — averaging about \(chargeLimit.chargePower)% of full power.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(10)

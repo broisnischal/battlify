@@ -49,9 +49,13 @@ final class Daemon: @unchecked Sendable {
     private var keepAwakeAssertion: IOPMAssertionID = 0
     private var lastDisableSleep: Bool?
 
-    // Charge-power duty cycle: a Bresenham-style accumulator that spreads "on"
-    // ticks evenly so the fraction of ticks we charge ≈ chargePower / 100.
-    private var chargeDutyAccumulator = 0
+    // Charge-power duty cycle, done in long phases to avoid flicker/hardware
+    // thrash: each charge/rest phase lasts at least `minChargeDwell`, and the
+    // on:off ratio sets the average charge power. `chargeCycleCharging` is the
+    // current phase; `chargeCyclePhaseStart` is when it began.
+    private let minChargeDwell: TimeInterval = 120   // ≥ 2 min per phase
+    private var chargeCycleCharging = true
+    private var chargeCyclePhaseStart: Date?
 
     init() {
         charge = ChargeController(smc: smc)
@@ -296,7 +300,7 @@ final class Daemon: @unchecked Sendable {
         // *average* watts into the battery track `chargePower`. The hardware has no
         // charge-current dial — only an on/off switch — so this is the closest we
         // can get to "how much goes to the battery vs. the Mac".
-        let enable = chargeDutyGate(desired: desired, power: cfg.chargePower)
+        let enable = chargeDutyGate(desired: desired, power: cfg.chargePower, now: now)
         // The LED reflects the charging *regime* (steady orange while trickling),
         // not each on/off duty tick, so it doesn't flicker. Power 0 = holding.
         let chargingRegime = desired && cfg.chargePower > 0
@@ -310,20 +314,49 @@ final class Daemon: @unchecked Sendable {
     }
 
     /// Decide whether to actually charge this tick given the desired state and the
-    /// requested charge power (0–100%). At 100% (or when not charging) it's a
-    /// passthrough. Below 100% it advances an accumulator and charges only when it
-    /// crosses 100, spreading the "on" ticks so the average duty ≈ power/100.
-    private func chargeDutyGate(desired: Bool, power: Int) -> Bool {
-        guard desired else { chargeDutyAccumulator = 0; return false }
-        let p = min(100, max(0, power))
-        if p >= 100 { return true }
-        if p <= 0 { return false }
-        chargeDutyAccumulator += p
-        if chargeDutyAccumulator >= 100 {
-            chargeDutyAccumulator -= 100
-            return true
+    /// requested charge power (0–100%).
+    ///
+    /// At 100% (or when not charging) it's a passthrough. Below 100% it duty-cycles
+    /// charging, but in *long* phases — each charge and each rest phase lasts at
+    /// least `minChargeDwell` (2 min) — with the on:off ratio set by `power`. This
+    /// is deliberately NOT a fast toggle: cycling the charge switch every few
+    /// seconds flickers the system charge indicators and needlessly stresses the
+    /// charging hardware. At most one toggle per couple of minutes keeps the
+    /// *average* watts near `power`% of full while staying gentle (this is how
+    /// macOS's own optimized charging behaves — long holds, not flicker).
+    private func chargeDutyGate(desired: Bool, power: Int, now: Date) -> Bool {
+        // Not charging (limit reached, paused, …): reset so charging resumes
+        // promptly (in a fresh charge phase) once we're allowed to charge again.
+        guard desired else {
+            chargeCyclePhaseStart = nil; chargeCycleCharging = true; return false
         }
-        return false
+        let p = min(100, max(0, power))
+        if p >= 100 { chargeCyclePhaseStart = nil; chargeCycleCharging = true; return true }
+        if p <= 0  { chargeCyclePhaseStart = nil; chargeCycleCharging = false; return false }
+
+        // The minority phase gets the 2-minute floor; the majority phase is
+        // stretched to hit the requested ratio. So both phases are always ≥ 2 min.
+        let onTime: TimeInterval
+        let offTime: TimeInterval
+        if p <= 50 {
+            onTime = minChargeDwell
+            offTime = minChargeDwell * Double(100 - p) / Double(p)
+        } else {
+            offTime = minChargeDwell
+            onTime = minChargeDwell * Double(p) / Double(100 - p)
+        }
+
+        guard let start = chargeCyclePhaseStart else {
+            chargeCyclePhaseStart = now; chargeCycleCharging = true; return true
+        }
+        let elapsed = now.timeIntervalSince(start)
+        if chargeCycleCharging {
+            if elapsed >= onTime { chargeCycleCharging = false; chargeCyclePhaseStart = now; return false }
+            return true
+        } else {
+            if elapsed >= offTime { chargeCycleCharging = true; chargeCyclePhaseStart = now; return true }
+            return false
+        }
     }
 
     /// Ready-by top-up: on a scheduled day, within the estimated lead time before
