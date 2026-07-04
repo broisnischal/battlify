@@ -48,9 +48,8 @@ final class HistoryViewModel: ObservableObject {
         recordTimer = t
     }
 
-    /// Record the current battery reading, then load — in one task, so the load
-    /// can't race ahead of the append. Call this whenever the window appears so
-    /// the newest sample shows immediately (fixes "had to switch tabs to refresh").
+    /// Record the current reading, then load — in one task so the load can't race
+    /// ahead of the append. Called on window appear so the newest sample shows.
     func refresh() {
         let snap = BatteryMonitor.read()
         let sample = BatterySample(t: Date(), pct: snap.percentage,
@@ -73,10 +72,14 @@ final class HistoryViewModel: ObservableObject {
     /// Load merged samples + derived data for `since` and publish on the main
     /// actor. Runs off the main thread (nonisolated) so file I/O never blocks UI.
     private nonisolated func performLoad(since: Date) async {
-        // Merge daemon-written and user-written samples.
-        var merged = HistoryStore.load(since: since, from: BattlifyPaths.historyFile)
-        merged += HistoryStore.load(since: since, from: BattlifyPaths.userHistoryFile)
-        merged.sort { $0.t < $1.t }
+        // Wear attribution needs 30 days, which is a superset of any chart range,
+        // so read each file once for 30 days and derive the chart window in memory.
+        let wearSince = Date().addingTimeInterval(-30 * 86_400)
+        var all = HistoryStore.load(since: wearSince, from: BattlifyPaths.historyFile)
+        all += HistoryStore.load(since: wearSince, from: BattlifyPaths.userHistoryFile)
+        all.sort { $0.t < $1.t }
+
+        let merged = all.filter { $0.t >= since }   // the chart window
         let sessions = LidSessionStore.recent(limit: 30).filter { $0.closedAt >= since }
 
         // Charging / on-battery runs and per-day rollups, derived from the
@@ -90,12 +93,7 @@ final class HistoryViewModel: ObservableObject {
             .reversed().prefix(30).map { $0 }
         let daily = SessionAnalysis.dailySummaries(from: merged)
 
-        // Wear attribution always looks back 30 days, regardless of the chart range.
-        let wearSince = Date().addingTimeInterval(-30 * 86_400)
-        var wearSamples = HistoryStore.load(since: wearSince, from: BattlifyPaths.historyFile)
-        wearSamples += HistoryStore.load(since: wearSince, from: BattlifyPaths.userHistoryFile)
-        wearSamples.sort { $0.t < $1.t }
-        let report = WearAnalysis.analyze(samples: wearSamples, now: Date())
+        let report = WearAnalysis.analyze(samples: all, now: Date())
 
         await MainActor.run {
             self.samples = merged

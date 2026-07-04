@@ -535,8 +535,7 @@ struct MenuContentView: View {
         return nil
     }
 
-    /// Live power going into the battery while charging, or being drawn on
-    /// battery — shown next to the status so the current watts are visible.
+    /// Live watts into the battery while charging, or drawn while on battery.
     private func liveWattsLine(_ snap: BatterySnapshot) -> String? {
         let f = battery.powerFlow
         if snap.isPluggedIn, f.chargeWatts > 0.5 {

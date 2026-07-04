@@ -190,6 +190,12 @@ public enum ControlClient {
         guard fd >= 0 else { throw ControlError.ioError("socket() failed") }
         defer { close(fd) }
 
+        // Bound send/recv so a wedged daemon can never hang the caller (some paths,
+        // e.g. sleep handling, call this synchronously on the main thread).
+        var tv = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = socketPath.utf8CString

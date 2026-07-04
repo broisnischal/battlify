@@ -771,8 +771,7 @@ struct SettingsView: View {
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
-    /// Charge-power slider: 0–100% of full rate, realized by duty-cycling the
-    /// charge switch. Applies on release so dragging doesn't spam the daemon.
+    /// Charge-power slider (0–100%). Applies on release so dragging doesn't spam the daemon.
     private var chargePowerRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -800,8 +799,7 @@ struct SettingsView: View {
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
-    /// Live watts split: how much is currently flowing into the battery vs. the
-    /// Mac, from the same IORegistry reading the Details → Power Flow card uses.
+    /// Live watts split: how much is currently flowing into the battery vs. the Mac.
     @ViewBuilder
     private var liveSplitReadout: some View {
         let f = battery.powerFlow

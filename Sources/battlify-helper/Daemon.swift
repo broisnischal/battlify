@@ -41,6 +41,11 @@ final class Daemon: @unchecked Sendable {
     private let wakeGapThreshold = 30.0   // gap implying a sleep occurred
     private let wakeSettleDuration = 15.0 // how long to settle after wake
 
+    // Signal handling via DispatchSource (see installSignalHandlers): the sources
+    // fire cleanup on this queue in a normal context, not an async-signal handler.
+    private let signalQueue = DispatchQueue(label: "com.battlify.helper.signals")
+    private var signalSources: [DispatchSourceSignal] = []
+
     // Held IOPMAssertion preventing idle sleep (0 = none held).
     private var idleSleepAssertion: IOPMAssertionID = 0
 
@@ -56,6 +61,14 @@ final class Daemon: @unchecked Sendable {
     private let minChargeDwell: TimeInterval = 120   // ≥ 2 min per phase
     private var chargeCycleCharging = true
     private var chargeCyclePhaseStart: Date?
+
+    // Short cache for pmset-derived state (Low Power Mode + sleep toggles), which
+    // each fork `pmset`. status() runs on every getStatus/command, so cache the
+    // reads briefly and invalidate whenever the daemon changes them itself.
+    private var pmsetCacheAt: Date?
+    private var pmsetCacheLPM = false
+    private var pmsetCacheToggles: [String: Bool] = [:]
+    private let pmsetCacheTTL: TimeInterval = 5
 
     init() {
         charge = ChargeController(smc: smc)
@@ -118,10 +131,12 @@ final class Daemon: @unchecked Sendable {
 
         case .setLowPowerMode(let on):
             let ok = LowPowerMode.set(on)
+            invalidatePmsetCache()
             return status(ok: ok, message: ok ? "lowpowermode set" : "pmset failed")
 
         case .setPowerToggle(let toggle, let on):
             let ok = PowerSettings.set(toggle, on)
+            invalidatePmsetCache()
             return status(ok: ok, message: ok ? "\(toggle.rawValue) set" : "pmset failed")
 
         case .applyMode(let mode):
@@ -185,21 +200,37 @@ final class Daemon: @unchecked Sendable {
         PowerSettings.set(.powerNap, p.powerNap)
         PowerSettings.set(.wakeOnNetwork, p.wakeOnNetwork)
         PowerSettings.set(.tcpKeepAlive, p.tcpKeepAlive)
+        invalidatePmsetCache()
 
         tick() // enforce charge limit immediately
         return status(ok: true, message: "mode \(mode.rawValue)")
     }
 
+    /// pmset-derived state, cached for `pmsetCacheTTL` to avoid forking `pmset`
+    /// on every status call. Invalidated when the daemon changes these settings.
+    private func pmsetState() -> (lpm: Bool, toggles: [String: Bool]) {
+        if let at = pmsetCacheAt, Date().timeIntervalSince(at) < pmsetCacheTTL {
+            return (pmsetCacheLPM, pmsetCacheToggles)
+        }
+        pmsetCacheLPM = LowPowerMode.isEnabled()
+        pmsetCacheToggles = PowerSettings.readToggles()
+        pmsetCacheAt = Date()
+        return (pmsetCacheLPM, pmsetCacheToggles)
+    }
+
+    private func invalidatePmsetCache() { pmsetCacheAt = nil }
+
     private func status(ok: Bool, message: String? = nil) -> ControlResponse {
         let snap = BatteryMonitor.read()
+        let pmset = pmsetState()
         return ControlResponse(
             ok: ok,
             config: ConfigStore.load(),
             batteryPercent: snap.percentage,
             chargingEnabled: (try? charge.isChargingEnabled()) ?? false,
             schemeDescription: charge.schemeDescription,
-            lowPowerModeEnabled: LowPowerMode.isEnabled(),
-            powerToggles: PowerSettings.readToggles(),
+            lowPowerModeEnabled: pmset.lpm,
+            powerToggles: pmset.toggles,
             pauseReason: lastPauseReason,
             magSafeSupported: charge.isMagSafeSupported,
             dischargeSupported: charge.isAdapterControlSupported,
@@ -295,38 +326,25 @@ final class Daemon: @unchecked Sendable {
             }
         }
 
-        // Charge-power duty gate: when charging is wanted but the user asked for
-        // less than full power, only actually charge on a fraction of ticks so the
-        // *average* watts into the battery track `chargePower`. The hardware has no
-        // charge-current dial — only an on/off switch — so this is the closest we
-        // can get to "how much goes to the battery vs. the Mac".
+        // Duty-cycle charging to the requested power. The LED follows the charging
+        // regime (steady) rather than each on/off phase, so it doesn't flicker.
         let enable = chargeDutyGate(desired: desired, power: cfg.chargePower, now: now)
-        // The LED reflects the charging *regime* (steady orange while trickling),
-        // not each on/off duty tick, so it doesn't flicker. Power 0 = holding.
         let chargingRegime = desired && cfg.chargePower > 0
 
         lastPauseReason = desired ? (enable ? nil : "slow") : reason
-        ensure(enabled: enable)
+        ensure(enabled: enable, current: charging)
         manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
         updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
     }
 
-    /// Decide whether to actually charge this tick given the desired state and the
-    /// requested charge power (0–100%).
-    ///
-    /// At 100% (or when not charging) it's a passthrough. Below 100% it duty-cycles
-    /// charging, but in *long* phases — each charge and each rest phase lasts at
-    /// least `minChargeDwell` (2 min) — with the on:off ratio set by `power`. This
-    /// is deliberately NOT a fast toggle: cycling the charge switch every few
-    /// seconds flickers the system charge indicators and needlessly stresses the
-    /// charging hardware. At most one toggle per couple of minutes keeps the
-    /// *average* watts near `power`% of full while staying gentle (this is how
-    /// macOS's own optimized charging behaves — long holds, not flicker).
+    /// Whether to charge this tick for the requested power (0–100%). 100% is a
+    /// passthrough; below 100% it duty-cycles in long phases (each ≥ `minChargeDwell`)
+    /// so charging toggles at most once every couple of minutes rather than flickering
+    /// the charge indicators and thrashing the charger hardware.
     private func chargeDutyGate(desired: Bool, power: Int, now: Date) -> Bool {
-        // Not charging (limit reached, paused, …): reset so charging resumes
-        // promptly (in a fresh charge phase) once we're allowed to charge again.
+        // Reset when not charging so it resumes promptly in a fresh charge phase.
         guard desired else {
             chargeCyclePhaseStart = nil; chargeCycleCharging = true; return false
         }
@@ -510,8 +528,7 @@ final class Daemon: @unchecked Sendable {
         HistoryStore.trim()
     }
 
-    private func ensure(enabled desired: Bool) {
-        guard let current = try? charge.isChargingEnabled() else { return }
+    private func ensure(enabled desired: Bool, current: Bool) {
         if current == desired { return }
         do {
             if desired { try charge.enableCharging() } else { try charge.disableCharging() }
@@ -524,24 +541,31 @@ final class Daemon: @unchecked Sendable {
     // MARK: - Signals & logging
 
     private func installSignalHandlers() {
-        // Re-enable charging and hand the MagSafe LED back to macOS on exit so we
-        // never strand the machine.
-        let cleanup: @convention(c) (Int32) -> Void = { _ in
-            // Re-enable sleep so keep-awake never outlives the daemon and strands
-            // the Mac unable to sleep (disablesleep is a persistent pmset setting).
-            PowerSettings.setDisableSleep(false)
-            let smc = SMC()
-            if (try? smc.open()) != nil {
-                let c = ChargeController(smc: smc)
-                try? c.enableCharging()
-                if c.isAdapterControlSupported { try? c.enableAdapter() }  // stop discharging
-                if c.isMagSafeSupported { try? c.setMagSafeLED(.system) }
-                smc.close()
-            }
-            exit(0)
+        // Handle SIGTERM/SIGINT via DispatchSource rather than a C signal handler:
+        // the cleanup forks `pmset`, opens/writes the SMC and allocates — none of
+        // which is safe in an async-signal context (it could deadlock on malloc or
+        // corrupt the SMC layer, defeating the very safety this cleanup provides).
+        // The source's handler runs as an ordinary block on `signalQueue`, so it's
+        // all safe, and it takes `lock` to serialize with the tick loop's SMC use.
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)   // ignore default disposition; the source owns it
+            let src = DispatchSource.makeSignalSource(signal: sig, queue: signalQueue)
+            src.setEventHandler { self.performCleanupAndExit() }
+            src.resume()
+            signalSources.append(src)
         }
-        signal(SIGTERM, cleanup)
-        signal(SIGINT, cleanup)
+    }
+
+    /// Restore a safe state and exit: re-enable charging, restore the adapter and
+    /// hand the MagSafe LED back to macOS, and clear `disablesleep` so keep-awake
+    /// never outlives the daemon. Serialized with the tick loop via `lock`.
+    private func performCleanupAndExit() -> Never {
+        lock.lock()   // hold through exit; serialize SMC access with tick()
+        PowerSettings.setDisableSleep(false)
+        try? charge.enableCharging()
+        if charge.isAdapterControlSupported { try? charge.enableAdapter() }
+        if charge.isMagSafeSupported { try? charge.setMagSafeLED(.system) }
+        exit(0)
     }
 
     private func log(_ m: String) {

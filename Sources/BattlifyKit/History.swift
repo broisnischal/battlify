@@ -70,6 +70,14 @@ public enum HistoryStore {
 
     /// Trim the file to the most recent `keep` samples, to bound growth.
     public static func trim(keep: Int = 4000, at url: URL = BattlifyPaths.historyFile) {
+        // Cheap size guard: a sample line is well under 200 bytes, so if the file
+        // is smaller than keep×200 it can't hold more than `keep` samples — skip
+        // the full read+parse (this runs after every append, ~every 5 min).
+        if let size = try? FileManager.default
+            .attributesOfItem(atPath: url.path)[.size] as? Int,
+           size < keep * 200 {
+            return
+        }
         let all = load(from: url)
         guard all.count > keep else { return }
         let recent = all.suffix(keep)

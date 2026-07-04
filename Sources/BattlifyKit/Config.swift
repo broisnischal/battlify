@@ -79,12 +79,9 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// power, reducing heat and wear near the top. Off = charge at full rate.
     /// Legacy on/off flag; superseded by `chargePower` (kept in sync for older daemons).
     public var slowCharge: Bool
-    /// Charge power as a percentage (0–100) of the full rate, realized by
-    /// duty-cycling the charge switch. 100 = charge at full rate; 50 ≈ half the
-    /// average watts into the battery (rest powers the Mac); 0 = don't charge
-    /// (all adapter power goes to the system, battery holds). The hardware only
-    /// offers an on/off charge switch, so this is an *average* over a few seconds,
-    /// not a true continuous split.
+    /// Charge power as a percentage (0–100) of full rate, realized by duty-cycling
+    /// the on/off charge switch. 100 = full rate; 0 = hold (no charging). Since the
+    /// hardware has no charge-current dial, this is an average, not a true split.
     public var chargePower: Int
     /// One-shot calibration: temporarily ignore the limit and charge to 100%,
     /// then auto-clear once full. Batteries benefit from an occasional full cycle.

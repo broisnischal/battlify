@@ -112,12 +112,39 @@ final class ChargeLimitStore: ObservableObject {
         }
     }
 
-    /// Pull current status from the daemon.
+    /// Config writes currently in flight. While > 0 the periodic getStatus refresh
+    /// must not ingest, or a stale response could clobber the user's fresh edit.
+    private var pendingWrites = 0
+
+    /// Pull current status from the daemon (skipped while a write is outstanding —
+    /// that write's own response is authoritative).
     func refresh() {
+        guard pendingWrites == 0 else { return }
         Task.detached {
             let result = try? ControlClient.send(.getStatus)
-            await self.ingest(result)
+            await self.ingestFromRefresh(result)
         }
+    }
+
+    /// Ingest a getStatus response only if no config write started meanwhile.
+    private func ingestFromRefresh(_ response: ControlResponse?) {
+        guard pendingWrites == 0 else { return }
+        ingest(response)
+    }
+
+    /// Send a config-changing request and ingest its authoritative response,
+    /// holding off the periodic refresh until it lands (see `pendingWrites`).
+    private func command(_ request: ControlRequest) {
+        pendingWrites += 1
+        Task.detached {
+            let result = try? ControlClient.send(request)
+            await self.finishCommand(result)
+        }
+    }
+
+    private func finishCommand(_ response: ControlResponse?) {
+        ingest(response)
+        pendingWrites = max(0, pendingWrites - 1)
     }
 
     /// Push the current GUI settings to the daemon, preserving fields the menu
@@ -144,26 +171,17 @@ final class ChargeLimitStore: ObservableObject {
         cfg.chargePower = chargePower
         cfg.slowCharge = chargePower < 100   // keep the legacy flag in sync
         currentConfig = cfg
-        Task.detached {
-            let result = try? ControlClient.send(.setConfig(cfg))
-            await self.ingest(result)
-        }
+        command(.setConfig(cfg))
     }
 
     /// Toggle Low Power Mode (routed through the root daemon).
     func setLowPowerMode(_ on: Bool) {
-        Task.detached {
-            let result = try? ControlClient.send(.setLowPowerMode(on))
-            await self.ingest(result)
-        }
+        command(.setLowPowerMode(on))
     }
 
     /// Pause charging: minutes > 0 = for that long; 0 = resume; -1 = indefinitely.
     func pauseCharging(minutes: Int) {
-        Task.detached {
-            let result = try? ControlClient.send(.pauseCharging(minutes))
-            await self.ingest(result)
-        }
+        command(.pauseCharging(minutes))
     }
     func resumeCharging() { pauseCharging(minutes: 0) }
 
@@ -172,20 +190,14 @@ final class ChargeLimitStore: ObservableObject {
     func cancelCalibration() { setCalibration(false) }
     private func setCalibration(_ on: Bool) {
         calibrating = on // optimistic
-        Task.detached {
-            let result = try? ControlClient.send(.calibrateToFull(on))
-            await self.ingest(result)
-        }
+        command(.calibrateToFull(on))
     }
 
     /// Apply a preset save mode (daemon-controlled parts). Returns immediately;
     /// state refreshes when the daemon replies.
     func applyMode(_ newMode: SaveMode) {
         mode = newMode // optimistic
-        Task.detached {
-            let result = try? ControlClient.send(.applyMode(newMode))
-            await self.ingest(result)
-        }
+        command(.applyMode(newMode))
     }
 
     /// True when the given sleep/idle power feature is currently active.
@@ -228,10 +240,7 @@ final class ChargeLimitStore: ObservableObject {
 
     /// Set a sleep/idle power feature (routed through the root daemon).
     func setPowerToggle(_ toggle: PowerToggle, _ on: Bool) {
-        Task.detached {
-            let result = try? ControlClient.send(.setPowerToggle(toggle, on))
-            await self.ingest(result)
-        }
+        command(.setPowerToggle(toggle, on))
     }
 
     private func ingest(_ response: ControlResponse?) {

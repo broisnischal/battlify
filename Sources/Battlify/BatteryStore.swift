@@ -72,9 +72,8 @@ final class BatteryStore: ObservableObject {
         timer = t
     }
 
-    /// Power flow (watts) changes continuously while charging but gets no IOKit
-    /// notification, so poll it on a short timer to keep the live readouts fresh.
-    /// `PowerMonitor.read()` is a cheap IORegistry read (no SMC), so 5s is fine.
+    /// Power flow gets no IOKit notification, so poll it on a short timer to keep
+    /// the live watt readouts fresh. `PowerMonitor.read()` is a cheap IORegistry read.
     private func startPowerFlowPolling() {
         let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.powerFlow = PowerMonitor.read() }
