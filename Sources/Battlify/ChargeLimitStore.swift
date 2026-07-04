@@ -57,7 +57,7 @@ final class ChargeLimitStore: ObservableObject {
     }
     @Published var heatAwareEnabled = false
     @Published var maxChargeTempC = 35.0
-    @Published var magSafeLedMode: MagSafeLEDMode = .system
+    @Published var magSafeLedMode: MagSafeLEDMode = .status   // new-install default
     @Published private(set) var magSafeSupported = false
     @Published var dischargeEnabled = false
     @Published private(set) var dischargeSupported = false

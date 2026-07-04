@@ -114,8 +114,10 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.heatAwareEnabled = heatAwareEnabled
         self.maxChargeTempC = maxChargeTempC
         self.magSafeLedEnabled = magSafeLedEnabled
-        // Default the mode from the legacy flag when not explicitly given.
-        self.magSafeLedMode = magSafeLedMode ?? (magSafeLedEnabled ? .status : .system)
+        // New installs default the LED to Status (orange charging / green holding
+        // at the limit). Configs written before `magSafeLedMode` existed migrate
+        // from the legacy flag in `init(from:)`, so upgraders keep their choice.
+        self.magSafeLedMode = magSafeLedMode ?? .status
         self.dischargeEnabled = dischargeEnabled
         self.disableChargingBeforeSleep = disableChargingBeforeSleep
         self.preventIdleSleep = preventIdleSleep
