@@ -384,10 +384,8 @@ struct SettingsView: View {
                         }
                     }
 
-                    card("Gentle charging") {
-                        toggleRow("Slow down charging near the top",
-                                  "Duty-cycles charging in the last stretch so the battery charges cooler and ages a little slower. Charging to full takes longer.",
-                                  isOn: bind(\.slowCharge))
+                    card("Charge power") {
+                        chargePowerRow
                     }
                 }
             } else {
@@ -769,6 +767,32 @@ struct SettingsView: View {
             }
         }
         .controlSize(.small)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    /// Charge-power slider: 0–100% of full rate, realized by duty-cycling the
+    /// charge switch. Applies on release so dragging doesn't spam the daemon.
+    private var chargePowerRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Power to the battery").font(.callout)
+                Spacer()
+                Text(chargeLimit.chargePower == 0 ? "Off" : "\(chargeLimit.chargePower)%")
+                    .font(.callout.weight(.semibold)).monospacedDigit()
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(chargeLimit.chargePower) },
+                    set: { chargeLimit.chargePower = Int($0) }
+                ),
+                in: 0...100, step: 5,
+                onEditingChanged: { editing in if !editing { chargeLimit.apply() } }
+            )
+            .controlSize(.small)
+            Text("How much of the charger's power goes into the battery versus running your Mac. 100% charges at full speed; lower values duty-cycle charging so the battery gets less average power and stays cooler (charging to full takes longer); 0% holds the battery and sends everything to your Mac. The hardware only has an on/off charge switch, so this is an average, not an exact split.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
 

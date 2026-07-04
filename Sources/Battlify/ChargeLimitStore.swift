@@ -78,8 +78,11 @@ final class ChargeLimitStore: ObservableObject {
     @Published var schedules: [ChargeSchedule] = []
     /// Once-daily "ready by" top-up target.
     @Published var readyBy = ReadyByTarget()
-    /// Gentle (duty-cycled) charging near the top.
+    /// Gentle (duty-cycled) charging near the top. Legacy; derived from chargePower.
     @Published var slowCharge = false
+    /// Charge power as a % (0–100) of full rate, via duty cycling. 100 = full,
+    /// 0 = don't charge (all adapter power to the Mac).
+    @Published var chargePower = 100
     /// One-shot calibration to 100% is in progress (auto-clears when full).
     @Published private(set) var calibrating = false
     /// When charging is scheduled to resume (nil = not paused).
@@ -138,7 +141,8 @@ final class ChargeLimitStore: ObservableObject {
         cfg.keepAwakeMaxTempC = keepAwakeMaxTempC
         cfg.schedules = schedules
         cfg.readyBy = readyBy
-        cfg.slowCharge = slowCharge
+        cfg.chargePower = chargePower
+        cfg.slowCharge = chargePower < 100   // keep the legacy flag in sync
         currentConfig = cfg
         Task.detached {
             let result = try? ControlClient.send(.setConfig(cfg))
@@ -265,6 +269,7 @@ final class ChargeLimitStore: ObservableObject {
         schedules = r.config.schedules
         readyBy = r.config.readyBy
         slowCharge = r.config.slowCharge
+        chargePower = r.config.chargePower
         calibrating = r.config.calibrateToFull
         pauseUntil = r.config.pauseUntil
 

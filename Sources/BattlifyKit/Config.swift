@@ -77,7 +77,15 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     public var readyBy: ReadyByTarget
     /// Gentle charging: duty-cycle charging on/off to hold a lower average charge
     /// power, reducing heat and wear near the top. Off = charge at full rate.
+    /// Legacy on/off flag; superseded by `chargePower` (kept in sync for older daemons).
     public var slowCharge: Bool
+    /// Charge power as a percentage (0–100) of the full rate, realized by
+    /// duty-cycling the charge switch. 100 = charge at full rate; 50 ≈ half the
+    /// average watts into the battery (rest powers the Mac); 0 = don't charge
+    /// (all adapter power goes to the system, battery holds). The hardware only
+    /// offers an on/off charge switch, so this is an *average* over a few seconds,
+    /// not a true continuous split.
+    public var chargePower: Int
     /// One-shot calibration: temporarily ignore the limit and charge to 100%,
     /// then auto-clear once full. Batteries benefit from an occasional full cycle.
     public var calibrateToFull: Bool
@@ -105,6 +113,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 schedules: [ChargeSchedule] = [],
                 readyBy: ReadyByTarget = ReadyByTarget(),
                 slowCharge: Bool = false,
+                chargePower: Int = 100,
                 calibrateToFull: Bool = false,
                 pauseUntil: Date? = nil,
                 mode: SaveMode = .off) {
@@ -129,6 +138,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.schedules = schedules
         self.readyBy = readyBy
         self.slowCharge = slowCharge
+        self.chargePower = min(100, max(0, chargePower))
         self.calibrateToFull = calibrateToFull
         self.pauseUntil = pauseUntil
         self.mode = mode
@@ -160,6 +170,10 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         schedules = try c.decodeIfPresent([ChargeSchedule].self, forKey: .schedules) ?? []
         readyBy = try c.decodeIfPresent(ReadyByTarget.self, forKey: .readyBy) ?? ReadyByTarget()
         slowCharge = try c.decodeIfPresent(Bool.self, forKey: .slowCharge) ?? false
+        // Migrate: configs predating `chargePower` map the legacy on/off flag to
+        // 50% (the old Gentle-charging average); otherwise full power.
+        chargePower = min(100, max(0, try c.decodeIfPresent(Int.self, forKey: .chargePower)
+            ?? (slowCharge ? 50 : 100)))
         calibrateToFull = try c.decodeIfPresent(Bool.self, forKey: .calibrateToFull) ?? false
         pauseUntil = try c.decodeIfPresent(Date.self, forKey: .pauseUntil)
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off

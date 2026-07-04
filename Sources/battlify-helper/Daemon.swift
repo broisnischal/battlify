@@ -49,9 +49,9 @@ final class Daemon: @unchecked Sendable {
     private var keepAwakeAssertion: IOPMAssertionID = 0
     private var lastDisableSleep: Bool?
 
-    // Gentle-charging duty cycle: flipped each tick while near the top so charging
-    // runs roughly every other tick, halving the average charge power.
-    private var slowChargeTick = false
+    // Charge-power duty cycle: a Bresenham-style accumulator that spreads "on"
+    // ticks evenly so the fraction of ticks we charge ≈ chargePower / 100.
+    private var chargeDutyAccumulator = 0
 
     init() {
         charge = ChargeController(smc: smc)
@@ -280,11 +280,6 @@ final class Daemon: @unchecked Sendable {
                     desired = false; reason = "limit"   // hold paused inside the band
                 }
             }
-            // Gentle charging: duty-cycle near the top to lower average charge power.
-            if desired, cfg.slowCharge, level >= max(20, cfg.chargeLimit - 15) {
-                slowChargeTick.toggle()
-                if !slowChargeTick { desired = false; reason = "slow" }
-            }
             // Heat constraint (only while we'd otherwise charge).
             if desired, cfg.heatAwareEnabled, let t = snap.temperature {
                 if t >= cfg.maxChargeTempC {
@@ -296,12 +291,39 @@ final class Daemon: @unchecked Sendable {
             }
         }
 
-        lastPauseReason = desired ? nil : reason
-        ensure(enabled: desired)
+        // Charge-power duty gate: when charging is wanted but the user asked for
+        // less than full power, only actually charge on a fraction of ticks so the
+        // *average* watts into the battery track `chargePower`. The hardware has no
+        // charge-current dial — only an on/off switch — so this is the closest we
+        // can get to "how much goes to the battery vs. the Mac".
+        let enable = chargeDutyGate(desired: desired, power: cfg.chargePower)
+        // The LED reflects the charging *regime* (steady orange while trickling),
+        // not each on/off duty tick, so it doesn't flicker. Power 0 = holding.
+        let chargingRegime = desired && cfg.chargePower > 0
+
+        lastPauseReason = desired ? (enable ? nil : "slow") : reason
+        ensure(enabled: enable)
         manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
-        updateMagSafeLED(cfg, snap, charging: desired, settling: settling)
+        updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
+    }
+
+    /// Decide whether to actually charge this tick given the desired state and the
+    /// requested charge power (0–100%). At 100% (or when not charging) it's a
+    /// passthrough. Below 100% it advances an accumulator and charges only when it
+    /// crosses 100, spreading the "on" ticks so the average duty ≈ power/100.
+    private func chargeDutyGate(desired: Bool, power: Int) -> Bool {
+        guard desired else { chargeDutyAccumulator = 0; return false }
+        let p = min(100, max(0, power))
+        if p >= 100 { return true }
+        if p <= 0 { return false }
+        chargeDutyAccumulator += p
+        if chargeDutyAccumulator >= 100 {
+            chargeDutyAccumulator -= 100
+            return true
+        }
+        return false
     }
 
     /// Ready-by top-up: on a scheduled day, within the estimated lead time before
