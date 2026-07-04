@@ -182,8 +182,9 @@ public enum HelperBuild {
     ///   v1: gentle 2-min charge-power duty cycle (replaces the 10s toggle that
     ///       flickered the charge indicators), + shutdown/perf hardening.
     ///   v2: fix force-discharge oscillation — gate discharge/LED/keep-awake on
-    ///       physical adapter presence (ExternalConnected) instead of the
-    ///       providing-source flag, which flips to "battery" while discharging.
+    ///       physical adapter presence (raw SMC AC-W, falling back to IOKit's
+    ///       ExternalConnected) instead of the providing-source flag, which flips
+    ///       to "battery" while discharging.
     public static let version = 2
 }
 

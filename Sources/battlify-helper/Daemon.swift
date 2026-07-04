@@ -252,9 +252,16 @@ final class Daemon: @unchecked Sendable {
 
     private func tick() {
         var cfg = ConfigStore.load()
-        let snap = BatteryMonitor.read()
+        var snap = BatteryMonitor.read()
         let level = snap.percentage
         let now = Date()
+
+        // Prefer the raw SMC `AC-W` reading for physical adapter presence: it
+        // survives force-discharge (when the OS-visible power state flips to
+        // "battery"), so discharge/LED/keep-awake decisions gated on
+        // `onExternalPower` stay stable while we're draining to the limit. Falls
+        // back to IOKit's ExternalConnected/providing-source when AC-W is absent.
+        if let ac = charge.isACPresent() { snap.isExternalConnected = ac }
 
         recordHistoryIfDue(snap)
 
