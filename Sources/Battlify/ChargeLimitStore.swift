@@ -12,10 +12,14 @@ final class ChargeLimitStore: ObservableObject {
     @Published private(set) var daemonAvailable = false
     /// Protocol version the running daemon reports (0 = pre-versioning / very old).
     @Published private(set) var daemonProtocolVersion = 0
-    /// The installed helper is older than this build expects, so newer requests
-    /// (e.g. pause charging) would be silently ignored — it needs reinstalling.
+    /// Behaviour/build version the running daemon reports (0 = predates it).
+    @Published private(set) var daemonBuildVersion = 0
+    /// The installed helper is older than this build ships — either its protocol
+    /// (newer requests would be ignored) or its behaviour (e.g. a fixed charge
+    /// cycle). Triggers an automatic update (see `autoUpdateHelperIfNeeded`).
     var daemonOutdated: Bool {
-        daemonAvailable && daemonProtocolVersion < ControlProtocol.version
+        daemonAvailable && (daemonProtocolVersion < ControlProtocol.version
+                            || daemonBuildVersion < HelperBuild.version)
     }
     @Published private(set) var schemeDescription = ""
     @Published private(set) var chargingEnabled = true
@@ -147,6 +151,24 @@ final class ChargeLimitStore: ObservableObject {
         pendingWrites = max(0, pendingWrites - 1)
     }
 
+    private var didAttemptHelperUpdate = false
+
+    /// When the running helper is older than this app ships (protocol or behaviour),
+    /// update it once per launch via the bundled admin-authorized installer, so
+    /// daemon fixes take effect without a manual reinstall. Only from a packaged
+    /// .app; a cancelled prompt falls back to the Settings "outdated" banner.
+    private func autoUpdateHelperIfNeeded() {
+        guard daemonOutdated, HelperInstaller.canInstall, !didAttemptHelperUpdate else { return }
+        didAttemptHelperUpdate = true
+        Task.detached {
+            let result = HelperInstaller.install()
+            guard result.ok else { return }
+            // launchd relaunches the new daemon; re-sync once it's back up.
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await MainActor.run { self.refresh() }
+        }
+    }
+
     /// Push the current GUI settings to the daemon, preserving fields the menu
     /// doesn't directly edit (mode).
     func apply() {
@@ -250,6 +272,8 @@ final class ChargeLimitStore: ObservableObject {
         }
         daemonAvailable = true
         daemonProtocolVersion = r.daemonProtocolVersion
+        daemonBuildVersion = r.daemonBuildVersion
+        autoUpdateHelperIfNeeded()
         currentConfig = r.config
         schemeDescription = r.schemeDescription
         let wasChargingEnabled = chargingEnabled
