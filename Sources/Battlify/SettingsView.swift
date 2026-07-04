@@ -5,6 +5,7 @@ import BattlifyKit
 /// Detached preferences window. Everything that's "set once and forget" lives
 /// here so the menu-bar dropdown stays focused on the day-to-day controls.
 struct SettingsView: View {
+    @EnvironmentObject private var battery: BatteryStore
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
     @EnvironmentObject private var automation: AutomationStore
     @EnvironmentObject private var license: LicenseManager
@@ -789,11 +790,50 @@ struct SettingsView: View {
                 onEditingChanged: { editing in if !editing { chargeLimit.apply() } }
             )
             .controlSize(.small)
+
+            liveSplitReadout
+
             Text("How much of the charger's power goes into the battery versus running your Mac. 100% charges at full speed; lower values duty-cycle charging so the battery gets less average power and stays cooler (charging to full takes longer); 0% holds the battery and sends everything to your Mac. The hardware only has an on/off charge switch, so this is an average, not an exact split.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    /// Live watts split: how much is currently flowing into the battery vs. the
+    /// Mac, from the same IORegistry reading the Details → Power Flow card uses.
+    @ViewBuilder
+    private var liveSplitReadout: some View {
+        let f = battery.powerFlow
+        if f.isPluggedIn {
+            HStack(spacing: 16) {
+                wattStat(.green, "Into battery", f.chargeWatts)
+                wattStat(.orange, "To your Mac", max(0, f.systemWatts ?? 0))
+                Spacer()
+                if let a = f.adapterWatts {
+                    Text(String(format: "Adapter %.0f W", a))
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .padding(10)
+            .background(.quaternary.opacity(0.4),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else {
+            Text("On battery — plug in the charger to see the live power split.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func wattStat(_ color: Color, _ label: String, _ w: Double) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label).font(.caption2).foregroundStyle(.secondary)
+                Text(String(format: "%.1f W", w))
+                    .font(.callout.weight(.semibold)).monospacedDigit()
+            }
+        }
     }
 
     private func pickerRow<Content: View>(_ hint: String,

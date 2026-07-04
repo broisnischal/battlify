@@ -52,6 +52,7 @@ struct BattlifyApp: App {
         // menu-bar dropdown stays focused on day-to-day controls.
         Window("Battlify Settings", id: "settings") {
             SettingsView()
+                .environmentObject(battery)
                 .environmentObject(chargeLimit)
                 .environmentObject(automation)
                 .environmentObject(license)
