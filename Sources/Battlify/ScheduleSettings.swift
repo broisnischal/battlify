@@ -24,18 +24,21 @@ struct WeekdayPicker: View {
     ]
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
             ForEach(Array(bits.enumerated()), id: \.offset) { _, item in
                 let on = days.contains(item.1)
                 Button {
                     if on { days.subtract(item.1) } else { days.formUnion(item.1) }
                 } label: {
                     Text(item.0)
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 28, height: 28)
-                        .background(on ? Color.accentColor : Color.primary.opacity(0.08),
-                                    in: Circle())
-                        .foregroundStyle(on ? Color.white : Color.secondary)
+                        .font(.caption.weight(.bold))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(on ? Color.accentColor
+                                                     : Color.secondary.opacity(0.15)))
+                        .overlay(Circle().strokeBorder(
+                            on ? Color.clear : Color.secondary.opacity(0.3), lineWidth: 1))
+                        .foregroundStyle(on ? Color.white : Color.primary.opacity(0.7))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -71,22 +74,19 @@ struct ScheduleEditorView: View {
                 .font(.title3.weight(.semibold))
 
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Name").frame(width: 90, alignment: .leading)
+                row("Name") {
                     TextField("e.g. Overnight hold", text: $draft.label)
                         .textFieldStyle(.roundedBorder)
                 }
 
-                HStack {
-                    Text("Action").frame(width: 90, alignment: .leading)
+                row("Action") {
                     Picker("", selection: $draft.action) {
                         ForEach(ScheduleAction.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented).labelsHidden()
                 }
 
-                HStack {
-                    Text("Starts").frame(width: 90, alignment: .leading)
+                row("Starts") {
                     DatePicker("", selection: Binding(
                         get: { ClockTime.date(fromMinute: draft.startMinute) },
                         set: { draft.startMinute = ClockTime.minute(from: $0) }),
@@ -95,25 +95,29 @@ struct ScheduleEditorView: View {
                     Spacer()
                 }
 
-                HStack {
-                    Text("For").frame(width: 90, alignment: .leading)
+                row("For") {
                     Stepper(value: durationHours, in: 0.5...24, step: 0.5) {
                         Text(durationText).monospacedDigit()
                     }
+                    .fixedSize()
+                    Spacer()
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Repeat").frame(width: 90, alignment: .leading)
-                    WeekdayPicker(days: $draft.days)
-                    HStack(spacing: 8) {
-                        quickDays("Every day", .everyday)
-                        quickDays("Weekdays", .weekdays)
-                        quickDays("Weekends", .weekends)
+                row("Repeat", alignment: .top) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        WeekdayPicker(days: $draft.days)
+                        HStack(spacing: 8) {
+                            quickDays("Every day", .everyday)
+                            quickDays("Weekdays", .weekdays)
+                            quickDays("Weekends", .weekends)
+                        }
                     }
                 }
 
-                Text("Window: \(draft.windowLabel()) · \(draft.days.summary)")
-                    .font(.caption).foregroundStyle(.secondary)
+                row("") {
+                    Text("Window: \(draft.windowLabel()) · \(draft.days.summary)")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             Divider()
@@ -147,9 +151,26 @@ struct ScheduleEditorView: View {
         return "\(h) h \(m) min"
     }
 
+    /// A label + control row with the label in a fixed left column, so every
+    /// field's control lines up in the same value column.
+    @ViewBuilder
+    private func row<Content: View>(_ label: String,
+                                    alignment: VerticalAlignment = .center,
+                                    @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(alignment: alignment, spacing: 12) {
+            Text(label)
+                .foregroundStyle(.secondary)
+                .frame(width: labelWidth, alignment: .leading)
+            content()
+        }
+    }
+    private let labelWidth: CGFloat = 72
+
     private func quickDays(_ title: String, _ set: Weekdays) -> some View {
-        Button(title) { draft.days = set }
+        let active = draft.days == set
+        return Button(title) { draft.days = set }
             .controlSize(.small)
             .buttonStyle(.bordered)
+            .tint(active ? Color.accentColor : Color.secondary)
     }
 }
