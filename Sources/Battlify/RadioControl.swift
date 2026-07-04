@@ -29,6 +29,13 @@ enum RadioControl {
         }
     }
 
+    /// The SSID of the currently-joined Wi-Fi network, or nil if not connected.
+    /// On macOS 14+ this returns nil unless the app has Location authorization —
+    /// macOS treats the joined SSID as location-revealing.
+    static var currentSSID: String? {
+        CWWiFiClient.shared().interface()?.ssid()
+    }
+
     // MARK: - Bluetooth (private API)
 
     static var isBluetoothOn: Bool {

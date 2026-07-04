@@ -15,6 +15,7 @@ struct DetailsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 statsCard(snap)
+                powerFlowCard
                 systemCard
                 healthCard(snap)
                 energyCard
@@ -25,6 +26,115 @@ struct DetailsView: View {
         .frame(width: 380, height: 600)
         .onAppear { processes.beginObserving() }
         .onDisappear { processes.endObserving() }
+    }
+
+    // MARK: - Power flow
+
+    private var powerFlowCard: some View {
+        let f = battery.powerFlow
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Power Flow").font(.title3.weight(.semibold))
+                Spacer()
+                if let d = f.adapterDescription {
+                    Text(d).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+            }
+
+            // Proportional bar: how the adapter's power splits between the system
+            // and the battery (only meaningful while charging on wall power).
+            if let adapter = f.adapterWatts, adapter > 0.5 {
+                let sys = max(0, f.systemWatts ?? 0)
+                let chg = f.chargeWatts
+                let total = max(sys + chg, 0.01)
+                VStack(alignment: .leading, spacing: 7) {
+                    GeometryReader { geo in
+                        HStack(spacing: 2) {
+                            Rectangle().fill(Color.orange)
+                                .frame(width: geo.size.width * sys / total)
+                            Rectangle().fill(Color.green)
+                                .frame(width: geo.size.width * chg / total)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+                    .frame(height: 10)
+                    // Labeled split so the division of the charging watts is legible.
+                    HStack(spacing: 16) {
+                        splitTag(.orange, "System", sys, total)
+                        splitTag(.green, "Into battery", chg, total)
+                        Spacer()
+                    }
+                }
+
+                if chg > 0.5 {
+                    Text("\(watts(chg)) of the \(watts(adapter)) from the adapter is charging the battery — \(pct(chg, of: total)); the rest runs your Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(spacing: 0) {
+                if let adapter = f.adapterWatts {
+                    flowRow("bolt.fill", .yellow, "Adapter in", watts(adapter))
+                    Divider()
+                }
+                if let sys = f.systemWatts {
+                    flowRow("cpu", .orange, "System draw", watts(sys))
+                    Divider()
+                }
+                flowRow(batteryIcon(f), batteryColor(f), batteryLabel(f), watts(abs(f.batteryWatts)))
+            }
+            .padding(.vertical, 4)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            Text("You can't split adapter wattage in hardware, but you can hold a lower average charge power with Gentle charging in Schedule.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func flowRow(_ icon: String, _ color: Color, _ label: String, _ value: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon).frame(width: 20).foregroundStyle(color)
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).fontWeight(.medium).monospacedDigit()
+        }
+        .font(.callout)
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    private func watts(_ w: Double) -> String { String(format: "%.1f W", w) }
+
+    /// Share of `w` out of `total`, as a rounded percentage string.
+    private func pct(_ w: Double, of total: Double) -> String {
+        String(format: "%.0f%%", total > 0 ? (w / total) * 100 : 0)
+    }
+
+    /// A colored dot + label + "watts · %" for one segment of the split bar.
+    private func splitTag(_ color: Color, _ label: String, _ w: Double, _ total: Double) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(label).foregroundStyle(.secondary)
+            Text("\(watts(w)) · \(pct(w, of: total))").fontWeight(.medium).monospacedDigit()
+        }
+        .font(.caption)
+    }
+
+    private func batteryIcon(_ f: PowerFlow) -> String {
+        if f.batteryWatts > 0.5 { return "battery.100.bolt" }
+        if f.batteryWatts < -0.5 { return "battery.50" }
+        return "battery.100"
+    }
+    private func batteryColor(_ f: PowerFlow) -> Color {
+        if f.batteryWatts > 0.5 { return .green }
+        if f.batteryWatts < -0.5 { return .red }
+        return .secondary
+    }
+    private func batteryLabel(_ f: PowerFlow) -> String {
+        if f.batteryWatts > 0.5 { return "Battery charging" }
+        if f.batteryWatts < -0.5 { return "Battery draining" }
+        return "Battery idle"
     }
 
     // MARK: - System (lid sensor)

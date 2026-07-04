@@ -22,6 +22,7 @@ struct BattlifyApp: App {
     @StateObject private var actions = SystemActions()
     @StateObject private var settings = AppSettings()
     @StateObject private var notifier = NotificationManager()
+    @StateObject private var network = NetworkProfileStore()
 
     var body: some Scene {
         MenuBarExtra {
@@ -36,6 +37,8 @@ struct BattlifyApp: App {
                 .environmentObject(actions)
                 .environmentObject(settings)
                 .environmentObject(notifier)
+                .environmentObject(network)
+                .onAppear { network.chargeLimit = chargeLimit }
         } label: {
             // Kept in its own observing view (below) so it re-renders reliably
             // when the snapshot changes — a label closure that reads the store
@@ -49,6 +52,7 @@ struct BattlifyApp: App {
         // menu-bar dropdown stays focused on day-to-day controls.
         Window("Battlify Settings", id: "settings") {
             SettingsView()
+                .environmentObject(battery)
                 .environmentObject(chargeLimit)
                 .environmentObject(automation)
                 .environmentObject(license)
@@ -56,6 +60,7 @@ struct BattlifyApp: App {
                 .environmentObject(updater)
                 .environmentObject(settings)
                 .environmentObject(notifier)
+                .environmentObject(network)
         }
         .windowResizability(.contentSize)
 
@@ -151,9 +156,17 @@ struct MenuBarLabel: View {
         return "On battery — \(snap.percentage)%"
     }
 
+    // Glyphs depend only on (symbol, tint), which change rarely, but the label
+    // re-renders on every store update (incl. the 5s power-flow poll). Cache built
+    // images so those re-renders don't rebuild NSImages. Accessed only from the
+    // main-actor view body, so the plain dictionary is safe.
+    @MainActor private static var glyphCache: [String: NSImage] = [:]
+
     /// Build the status-item glyph. Neutral states stay as adaptive template
     /// images (match the menu bar); meaningful states use a fixed palette colour.
-    static func glyph(_ symbol: String, tint: MenuBarTint) -> NSImage {
+    @MainActor static func glyph(_ symbol: String, tint: MenuBarTint) -> NSImage {
+        let key = "\(symbol)|\(tint.cacheKey)"
+        if let cached = glyphCache[key] { return cached }
         var config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
         if case .colored(let color) = tint {
             config = config.applying(.init(paletteColors: [color]))
@@ -161,6 +174,7 @@ struct MenuBarLabel: View {
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(config) ?? NSImage()
         image.isTemplate = tint.isNeutral
+        glyphCache[key] = image
         return image
     }
 }
@@ -173,6 +187,14 @@ enum MenuBarTint {
     var isNeutral: Bool {
         if case .neutral = self { return true }
         return false
+    }
+
+    /// Stable key for glyph caching.
+    var cacheKey: String {
+        switch self {
+        case .neutral: return "neutral"
+        case .colored(let c): return "colored(\(c))"
+        }
     }
 }
 

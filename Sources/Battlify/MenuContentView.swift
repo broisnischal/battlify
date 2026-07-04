@@ -137,6 +137,12 @@ struct MenuContentView: View {
                     if let eta = etaLine(snap) {
                         Text(eta).font(.caption2).foregroundStyle(.secondary)
                     }
+                    if let watts = liveWattsLine(snap) {
+                        Label(watts, systemImage: "bolt.fill")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .labelStyle(.titleAndIcon)
+                    }
                 }
                 .foregroundStyle(.secondary)
             }
@@ -526,6 +532,18 @@ struct MenuContentView: View {
     private func etaLine(_ snap: BatterySnapshot) -> String? {
         if snap.isCharging, let m = snap.timeToFull { return "\(formatMinutes(m)) to full" }
         if !snap.isPluggedIn, let m = snap.timeToEmpty { return "\(formatMinutes(m)) left" }
+        return nil
+    }
+
+    /// Live watts into the battery while charging, or drawn while on battery.
+    private func liveWattsLine(_ snap: BatterySnapshot) -> String? {
+        let f = battery.powerFlow
+        if snap.isPluggedIn, f.chargeWatts > 0.5 {
+            return String(format: "%.1f W to battery", f.chargeWatts)
+        }
+        if !snap.isPluggedIn, f.dischargeWatts > 0.5 {
+            return String(format: "%.1f W draw", f.dischargeWatts)
+        }
         return nil
     }
 

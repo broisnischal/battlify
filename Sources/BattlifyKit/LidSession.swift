@@ -55,6 +55,11 @@ public enum LidSessionStore {
         }
     }
 
+    /// Delete the lid-sessions file. Best-effort; a missing file is success.
+    public static func clear() {
+        try? FileManager.default.removeItem(at: file)
+    }
+
     /// Most recent sessions, newest first.
     public static func recent(limit: Int = 50) -> [LidSession] {
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }

@@ -29,20 +29,31 @@ public final class ChargeController {
         self.smc = smc
     }
 
+    // Which SMC keys this Mac exposes is fixed for the process lifetime, so resolve
+    // each `keyExists` probe once (lazily, after the SMC is open) and cache it —
+    // the daemon tick would otherwise issue a dozen redundant IOKit calls every 10s.
+    // Accesses are serialized by the daemon's lock, so lazy init is safe here.
+    private lazy var cachedAdapterKey: String? = {
+        if smc.keyExists(ch0i) { return ch0i }
+        if smc.keyExists(ch0j) { return ch0j }
+        if smc.keyExists(chie) { return chie }
+        return nil
+    }()
+    private lazy var cachedUsesLegacyKeys: Bool = smc.keyExists(ch0b) && smc.keyExists(ch0c)
+    private lazy var cachedHasChte: Bool = smc.keyExists(chte)
+    private lazy var cachedMagSafeSupported: Bool = smc.keyExists(aclc)
+    private lazy var cachedChargingControlSupported: Bool =
+        smc.keyExists(ch0b) || smc.keyExists(ch0c) || cachedHasChte
+
     // MARK: - Adapter / force discharge
     //
     // Disabling the power adapter makes the Mac run off the battery even while
     // plugged in — i.e. actively discharge. Used to bring the level *down* to the
     // charge limit when you plug in above it.
 
-    private var adapterKey: String? {
-        if smc.keyExists(ch0i) { return ch0i }
-        if smc.keyExists(ch0j) { return ch0j }
-        if smc.keyExists(chie) { return chie }
-        return nil
-    }
+    private var adapterKey: String? { cachedAdapterKey }
 
-    public var isAdapterControlSupported: Bool { adapterKey != nil }
+    public var isAdapterControlSupported: Bool { cachedAdapterKey != nil }
 
     /// True when the adapter is supplying power normally (not force-discharging).
     public func isAdapterEnabled() throws -> Bool {
@@ -65,7 +76,7 @@ public final class ChargeController {
     // MARK: - MagSafe LED
 
     /// Whether this Mac has a controllable MagSafe charge LED.
-    public var isMagSafeSupported: Bool { smc.keyExists(aclc) }
+    public var isMagSafeSupported: Bool { cachedMagSafeSupported }
 
     public func setMagSafeLED(_ state: MagSafeLED) throws {
         try smc.write(aclc, [state.rawValue])
@@ -79,13 +90,9 @@ public final class ChargeController {
     }
 
     /// True when this Mac uses the legacy CH0B/CH0C charging scheme.
-    private var usesLegacyKeys: Bool {
-        smc.keyExists(ch0b) && smc.keyExists(ch0c)
-    }
+    private var usesLegacyKeys: Bool { cachedUsesLegacyKeys }
 
-    public var isChargingControlSupported: Bool {
-        smc.keyExists(ch0b) || smc.keyExists(ch0c) || smc.keyExists(chte)
-    }
+    public var isChargingControlSupported: Bool { cachedChargingControlSupported }
 
     public func isChargingEnabled() throws -> Bool {
         if usesLegacyKeys {
@@ -118,7 +125,7 @@ public final class ChargeController {
     /// Human-readable description of the scheme in use, for diagnostics.
     public var schemeDescription: String {
         if usesLegacyKeys { return "legacy (CH0B/CH0C)" }
-        if smc.keyExists(chte) { return "tahoe (CHTE)" }
+        if cachedHasChte { return "tahoe (CHTE)" }
         return "unsupported"
     }
 }

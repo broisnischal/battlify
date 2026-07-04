@@ -16,13 +16,17 @@ extension Notification.Name {
 @MainActor
 final class BatteryStore: ObservableObject {
     @Published private(set) var snapshot: BatterySnapshot = .unknown
+    /// Live power flow (adapter/battery/system watts). Updated with the snapshot.
+    @Published private(set) var powerFlow: PowerFlow = .unknown
 
     private var timer: Timer?
+    private var powerTimer: Timer?
     private var runLoopSource: CFRunLoopSource?
 
     init() {
         refresh()
         startPolling()
+        startPowerFlowPolling()
         startPowerSourceNotifications()
         // Refresh right after the Mac wakes so the menu isn't stale.
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -54,6 +58,7 @@ final class BatteryStore: ObservableObject {
 
     func refresh() {
         snapshot = BatteryMonitor.read()
+        powerFlow = PowerMonitor.read()
     }
 
     private func startPolling() {
@@ -65,6 +70,17 @@ final class BatteryStore: ObservableObject {
         t.tolerance = 15   // this is only a fallback poll; let the OS coalesce it
         RunLoop.main.add(t, forMode: .common)
         timer = t
+    }
+
+    /// Power flow gets no IOKit notification, so poll it on a short timer to keep
+    /// the live watt readouts fresh. `PowerMonitor.read()` is a cheap IORegistry read.
+    private func startPowerFlowPolling() {
+        let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.powerFlow = PowerMonitor.read() }
+        }
+        t.tolerance = 1
+        RunLoop.main.add(t, forMode: .common)
+        powerTimer = t
     }
 
     private func startPowerSourceNotifications() {

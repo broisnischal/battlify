@@ -12,10 +12,14 @@ final class ChargeLimitStore: ObservableObject {
     @Published private(set) var daemonAvailable = false
     /// Protocol version the running daemon reports (0 = pre-versioning / very old).
     @Published private(set) var daemonProtocolVersion = 0
-    /// The installed helper is older than this build expects, so newer requests
-    /// (e.g. pause charging) would be silently ignored — it needs reinstalling.
+    /// Behaviour/build version the running daemon reports (0 = predates it).
+    @Published private(set) var daemonBuildVersion = 0
+    /// The installed helper is older than this build ships — either its protocol
+    /// (newer requests would be ignored) or its behaviour (e.g. a fixed charge
+    /// cycle). Triggers an automatic update (see `autoUpdateHelperIfNeeded`).
     var daemonOutdated: Bool {
-        daemonAvailable && daemonProtocolVersion < ControlProtocol.version
+        daemonAvailable && (daemonProtocolVersion < ControlProtocol.version
+                            || daemonBuildVersion < HelperBuild.version)
     }
     @Published private(set) var schemeDescription = ""
     @Published private(set) var chargingEnabled = true
@@ -57,13 +61,32 @@ final class ChargeLimitStore: ObservableObject {
     }
     @Published var heatAwareEnabled = false
     @Published var maxChargeTempC = 35.0
-    @Published var magSafeLedMode: MagSafeLEDMode = .system
+    @Published var magSafeLedMode: MagSafeLEDMode = .status   // new-install default
     @Published private(set) var magSafeSupported = false
     @Published var dischargeEnabled = false
     @Published private(set) var dischargeSupported = false
     @Published private(set) var discharging = false
     @Published var disableChargingBeforeSleep = false
     @Published var preventIdleSleep = false
+    /// "Always Active": keep the Mac awake with the lid closed (on AC power).
+    @Published var keepAwake = false
+    /// Keep-awake only while a matching task runs, then sleep.
+    @Published var keepAwakeRequiresTask = false
+    /// Process names that keep the Mac awake (comma-free list).
+    @Published var keepAwakeProcesses: [String] = []
+    /// Any process at/above this %CPU counts as busy (0 = names only).
+    @Published var keepAwakeMinCpu: Double = 0
+    /// Release keep-awake above this °C (0 = no guardrail).
+    @Published var keepAwakeMaxTempC: Double = 0
+    /// Recurring charge/hold/discharge windows.
+    @Published var schedules: [ChargeSchedule] = []
+    /// Once-daily "ready by" top-up target.
+    @Published var readyBy = ReadyByTarget()
+    /// Gentle (duty-cycled) charging near the top. Legacy; derived from chargePower.
+    @Published var slowCharge = false
+    /// Charge power as a % (0–100) of full rate, via duty cycling. 100 = full,
+    /// 0 = don't charge (all adapter power to the Mac).
+    @Published var chargePower = 100
     /// One-shot calibration to 100% is in progress (auto-clears when full).
     @Published private(set) var calibrating = false
     /// When charging is scheduled to resume (nil = not paused).
@@ -93,11 +116,56 @@ final class ChargeLimitStore: ObservableObject {
         }
     }
 
-    /// Pull current status from the daemon.
+    /// Config writes currently in flight. While > 0 the periodic getStatus refresh
+    /// must not ingest, or a stale response could clobber the user's fresh edit.
+    private var pendingWrites = 0
+
+    /// Pull current status from the daemon (skipped while a write is outstanding —
+    /// that write's own response is authoritative).
     func refresh() {
+        guard pendingWrites == 0 else { return }
         Task.detached {
             let result = try? ControlClient.send(.getStatus)
-            await self.ingest(result)
+            await self.ingestFromRefresh(result)
+        }
+    }
+
+    /// Ingest a getStatus response only if no config write started meanwhile.
+    private func ingestFromRefresh(_ response: ControlResponse?) {
+        guard pendingWrites == 0 else { return }
+        ingest(response)
+    }
+
+    /// Send a config-changing request and ingest its authoritative response,
+    /// holding off the periodic refresh until it lands (see `pendingWrites`).
+    private func command(_ request: ControlRequest) {
+        pendingWrites += 1
+        Task.detached {
+            let result = try? ControlClient.send(request)
+            await self.finishCommand(result)
+        }
+    }
+
+    private func finishCommand(_ response: ControlResponse?) {
+        ingest(response)
+        pendingWrites = max(0, pendingWrites - 1)
+    }
+
+    private var didAttemptHelperUpdate = false
+
+    /// When the running helper is older than this app ships (protocol or behaviour),
+    /// update it once per launch via the bundled admin-authorized installer, so
+    /// daemon fixes take effect without a manual reinstall. Only from a packaged
+    /// .app; a cancelled prompt falls back to the Settings "outdated" banner.
+    private func autoUpdateHelperIfNeeded() {
+        guard daemonOutdated, HelperInstaller.canInstall, !didAttemptHelperUpdate else { return }
+        didAttemptHelperUpdate = true
+        Task.detached {
+            let result = HelperInstaller.install()
+            guard result.ok else { return }
+            // launchd relaunches the new daemon; re-sync once it's back up.
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await MainActor.run { self.refresh() }
         }
     }
 
@@ -115,27 +183,27 @@ final class ChargeLimitStore: ObservableObject {
         cfg.dischargeEnabled = dischargeEnabled
         cfg.disableChargingBeforeSleep = disableChargingBeforeSleep
         cfg.preventIdleSleep = preventIdleSleep
+        cfg.keepAwake = keepAwake
+        cfg.keepAwakeRequiresTask = keepAwakeRequiresTask
+        cfg.keepAwakeProcesses = keepAwakeProcesses
+        cfg.keepAwakeMinCpu = keepAwakeMinCpu
+        cfg.keepAwakeMaxTempC = keepAwakeMaxTempC
+        cfg.schedules = schedules
+        cfg.readyBy = readyBy
+        cfg.chargePower = chargePower
+        cfg.slowCharge = chargePower < 100   // keep the legacy flag in sync
         currentConfig = cfg
-        Task.detached {
-            let result = try? ControlClient.send(.setConfig(cfg))
-            await self.ingest(result)
-        }
+        command(.setConfig(cfg))
     }
 
     /// Toggle Low Power Mode (routed through the root daemon).
     func setLowPowerMode(_ on: Bool) {
-        Task.detached {
-            let result = try? ControlClient.send(.setLowPowerMode(on))
-            await self.ingest(result)
-        }
+        command(.setLowPowerMode(on))
     }
 
     /// Pause charging: minutes > 0 = for that long; 0 = resume; -1 = indefinitely.
     func pauseCharging(minutes: Int) {
-        Task.detached {
-            let result = try? ControlClient.send(.pauseCharging(minutes))
-            await self.ingest(result)
-        }
+        command(.pauseCharging(minutes))
     }
     func resumeCharging() { pauseCharging(minutes: 0) }
 
@@ -144,20 +212,14 @@ final class ChargeLimitStore: ObservableObject {
     func cancelCalibration() { setCalibration(false) }
     private func setCalibration(_ on: Bool) {
         calibrating = on // optimistic
-        Task.detached {
-            let result = try? ControlClient.send(.calibrateToFull(on))
-            await self.ingest(result)
-        }
+        command(.calibrateToFull(on))
     }
 
     /// Apply a preset save mode (daemon-controlled parts). Returns immediately;
     /// state refreshes when the daemon replies.
     func applyMode(_ newMode: SaveMode) {
         mode = newMode // optimistic
-        Task.detached {
-            let result = try? ControlClient.send(.applyMode(newMode))
-            await self.ingest(result)
-        }
+        command(.applyMode(newMode))
     }
 
     /// True when the given sleep/idle power feature is currently active.
@@ -165,12 +227,42 @@ final class ChargeLimitStore: ObservableObject {
         powerToggles[toggle.rawValue] ?? false
     }
 
+    // MARK: - Charging schedules
+
+    func addSchedule(_ schedule: ChargeSchedule = ChargeSchedule()) {
+        schedules.append(schedule)
+        apply()
+    }
+
+    func updateSchedule(_ schedule: ChargeSchedule) {
+        guard let i = schedules.firstIndex(where: { $0.id == schedule.id }) else { return }
+        schedules[i] = schedule
+        apply()
+    }
+
+    /// Update the schedule in place if it exists, otherwise append it.
+    func updateOrAddSchedule(_ schedule: ChargeSchedule) {
+        if let i = schedules.firstIndex(where: { $0.id == schedule.id }) {
+            schedules[i] = schedule
+        } else {
+            schedules.append(schedule)
+        }
+        apply()
+    }
+
+    func removeSchedule(_ schedule: ChargeSchedule) {
+        schedules.removeAll { $0.id == schedule.id }
+        apply()
+    }
+
+    /// Whichever schedule window is active right now, if any.
+    var activeSchedule: ChargeSchedule? {
+        schedules.first { $0.isActive(at: Date()) }
+    }
+
     /// Set a sleep/idle power feature (routed through the root daemon).
     func setPowerToggle(_ toggle: PowerToggle, _ on: Bool) {
-        Task.detached {
-            let result = try? ControlClient.send(.setPowerToggle(toggle, on))
-            await self.ingest(result)
-        }
+        command(.setPowerToggle(toggle, on))
     }
 
     private func ingest(_ response: ControlResponse?) {
@@ -180,6 +272,8 @@ final class ChargeLimitStore: ObservableObject {
         }
         daemonAvailable = true
         daemonProtocolVersion = r.daemonProtocolVersion
+        daemonBuildVersion = r.daemonBuildVersion
+        autoUpdateHelperIfNeeded()
         currentConfig = r.config
         schemeDescription = r.schemeDescription
         let wasChargingEnabled = chargingEnabled
@@ -200,6 +294,15 @@ final class ChargeLimitStore: ObservableObject {
         discharging = r.discharging
         disableChargingBeforeSleep = r.config.disableChargingBeforeSleep
         preventIdleSleep = r.config.preventIdleSleep
+        keepAwake = r.config.keepAwake
+        keepAwakeRequiresTask = r.config.keepAwakeRequiresTask
+        keepAwakeProcesses = r.config.keepAwakeProcesses
+        keepAwakeMinCpu = r.config.keepAwakeMinCpu
+        keepAwakeMaxTempC = r.config.keepAwakeMaxTempC
+        schedules = r.config.schedules
+        readyBy = r.config.readyBy
+        slowCharge = r.config.slowCharge
+        chargePower = r.config.chargePower
         calibrating = r.config.calibrateToFull
         pauseUntil = r.config.pauseUntil
 

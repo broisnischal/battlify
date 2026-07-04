@@ -5,6 +5,7 @@ import BattlifyKit
 /// Detached preferences window. Everything that's "set once and forget" lives
 /// here so the menu-bar dropdown stays focused on the day-to-day controls.
 struct SettingsView: View {
+    @EnvironmentObject private var battery: BatteryStore
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
     @EnvironmentObject private var automation: AutomationStore
     @EnvironmentObject private var license: LicenseManager
@@ -12,20 +13,25 @@ struct SettingsView: View {
     @EnvironmentObject private var updater: UpdaterManager
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var notifier: NotificationManager
+    @EnvironmentObject private var network: NetworkProfileStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var selection: Tab = .charging
+    /// Schedule being edited/added in the sheet (nil = sheet closed).
+    @State private var editingSchedule: ChargeSchedule?
+    @State private var editingIsNew = false
 
     /// The Settings tabs. A hand-rolled tab bar (below) is used instead of
     /// SwiftUI's `TabView`, which on recent macOS collapses into an overflow
     /// "Navigation Tab Bar" popup instead of showing real tabs.
     private enum Tab: String, CaseIterable, Identifiable {
-        case charging, sleepPower, general, about
+        case charging, schedule, sleepPower, general, about
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .charging: return "Charging"
+            case .schedule: return "Schedule"
             case .sleepPower: return "Sleep & Power"
             case .general: return "General"
             case .about: return "About"
@@ -34,6 +40,7 @@ struct SettingsView: View {
         var icon: String {
             switch self {
             case .charging: return "bolt.batteryblock.fill"
+            case .schedule: return "clock.arrow.circlepath"
             case .sleepPower: return "moon.zzz.fill"
             case .general: return "gearshape.fill"
             case .about: return "info.circle"
@@ -48,6 +55,7 @@ struct SettingsView: View {
             Group {
                 switch selection {
                 case .charging:   chargingTab
+                case .schedule:   scheduleTab
                 case .sleepPower: sleepPowerTab
                 case .general:    generalTab
                 case .about:      aboutTab
@@ -56,6 +64,13 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 500, height: 580)
+        .sheet(item: $editingSchedule) { schedule in
+            ScheduleEditorView(
+                schedule: schedule,
+                isNew: editingIsNew,
+                onSave: { chargeLimit.updateOrAddSchedule($0) },
+                onDelete: editingIsNew ? nil : { chargeLimit.removeSchedule(schedule) })
+        }
     }
 
     // MARK: - Tab bar
@@ -218,6 +233,51 @@ struct SettingsView: View {
                         toggleRow("Prevent idle sleep while plugged in",
                                   "Keeps the Mac awake on power so the limit is always enforced. Uses a little more energy.",
                                   isOn: bind(\.preventIdleSleep))
+                        divider
+                        toggleRow("Always Active (keep awake with lid closed)",
+                                  "Terminal jobs and background tasks keep running with the lid shut. On AC power only — releases when you unplug. Heavy work with the lid closed runs hot, so keep it ventilated.",
+                                  isOn: bind(\.keepAwake))
+                        if chargeLimit.keepAwake {
+                            divider
+                            toggleRow("Only while a task is running",
+                                      "Stay awake only while a matching process runs, then let the Mac sleep — so an overnight build or download finishes and then it rests.",
+                                      isOn: bind(\.keepAwakeRequiresTask))
+                            if chargeLimit.keepAwakeRequiresTask {
+                                divider
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Keep awake for these apps/processes").font(.callout)
+                                    TextField("e.g. ffmpeg, npm, docker, rsync",
+                                              text: keepAwakeProcessText)
+                                        .textFieldStyle(.roundedBorder)
+                                    Text("Comma-separated names; matched against running commands.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 12).padding(.vertical, 10)
+                                divider
+                                stepperRow("Or any process above",
+                                           value: chargeLimit.keepAwakeMinCpu > 0
+                                                ? "\(Int(chargeLimit.keepAwakeMinCpu))% CPU" : "Off",
+                                           binding: Binding(
+                                            get: { chargeLimit.keepAwakeMinCpu },
+                                            set: { chargeLimit.keepAwakeMinCpu = $0; chargeLimit.apply() }),
+                                           range: 0...100)
+                            }
+                            divider
+                            toggleRow("Sleep if it gets too hot",
+                                      "Safety guardrail — releases keep-awake and lets the Mac sleep if it runs hot with the lid closed.",
+                                      isOn: Binding(
+                                        get: { chargeLimit.keepAwakeMaxTempC > 0 },
+                                        set: { chargeLimit.keepAwakeMaxTempC = $0 ? 40 : 0; chargeLimit.apply() }))
+                            if chargeLimit.keepAwakeMaxTempC > 0 {
+                                divider
+                                stepperRow("Temperature cutoff",
+                                           value: "\(Int(chargeLimit.keepAwakeMaxTempC)) °C",
+                                           binding: Binding(
+                                            get: { chargeLimit.keepAwakeMaxTempC },
+                                            set: { chargeLimit.keepAwakeMaxTempC = $0; chargeLimit.apply() }),
+                                           range: 35...55)
+                            }
+                        }
                     }
 
                     card("Heat") {
@@ -262,6 +322,125 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Schedule
+
+    private var scheduleTab: some View {
+        tab {
+            if chargeLimit.daemonAvailable {
+                proGate {
+                    card("Charging schedules") {
+                        if chargeLimit.schedules.isEmpty {
+                            infoRow("No schedules yet. Add one to charge, hold, or run on battery on a weekly timetable — for example, hold every night from 10 PM for 5 hours.",
+                                    systemImage: "clock")
+                        } else {
+                            ForEach(chargeLimit.schedules) { s in
+                                scheduleRow(s)
+                                divider
+                            }
+                        }
+                        HStack {
+                            Button {
+                                editingIsNew = true
+                                editingSchedule = ChargeSchedule()
+                            } label: { Label("Add Schedule", systemImage: "plus") }
+                                .controlSize(.small)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                    }
+
+                    card("Ready by") {
+                        toggleRow("Charge to a target by a set time",
+                                  "Hold at your limit overnight, then top up so it's ready right on time — minimizing hours spent at a high charge.",
+                                  isOn: Binding(
+                                    get: { chargeLimit.readyBy.enabled },
+                                    set: { chargeLimit.readyBy.enabled = $0; chargeLimit.apply() }))
+                        if chargeLimit.readyBy.enabled {
+                            divider
+                            HStack {
+                                Text("Ready by").font(.callout)
+                                Spacer()
+                                DatePicker("", selection: Binding(
+                                    get: { ClockTime.date(fromMinute: chargeLimit.readyBy.targetMinute) },
+                                    set: { chargeLimit.readyBy.targetMinute = ClockTime.minute(from: $0); chargeLimit.apply() }),
+                                    displayedComponents: .hourAndMinute)
+                                .labelsHidden()
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 10)
+                            divider
+                            stepperRow("Charge to",
+                                       value: "\(chargeLimit.readyBy.targetPercent)%",
+                                       binding: Binding(
+                                        get: { Double(chargeLimit.readyBy.targetPercent) },
+                                        set: { chargeLimit.readyBy.targetPercent = Int($0); chargeLimit.apply() }),
+                                       range: 50...100)
+                            divider
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("On these days").font(.callout)
+                                WeekdayPicker(days: Binding(
+                                    get: { chargeLimit.readyBy.days },
+                                    set: { chargeLimit.readyBy.days = $0; chargeLimit.apply() }))
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 10)
+                        }
+                    }
+
+                    card("Charge power") {
+                        chargePowerRow
+                    }
+                }
+            } else {
+                helperCard
+            }
+        }
+    }
+
+    /// One row in the schedules list: label, window/day summary, live "active" badge.
+    private func scheduleRow(_ s: ChargeSchedule) -> some View {
+        Button {
+            editingIsNew = false
+            editingSchedule = s
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: scheduleIcon(s.action))
+                    .frame(width: 22)
+                    .foregroundStyle(s.enabled ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(s.label.isEmpty ? s.action.title : s.label)
+                            .font(.callout)
+                        if chargeLimit.activeSchedule?.id == s.id {
+                            Text("ACTIVE")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Color.green.opacity(0.25), in: Capsule())
+                                .foregroundStyle(.green)
+                        }
+                    }
+                    Text("\(s.windowLabel()) · \(s.days.summary)")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { s.enabled },
+                    set: { var c = s; c.enabled = $0; chargeLimit.updateSchedule(c) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func scheduleIcon(_ a: ScheduleAction) -> String {
+        switch a {
+        case .charge: return "bolt.fill"
+        case .hold: return "pause.fill"
+        case .discharge: return "battery.25"
+        }
+    }
+
     // MARK: - Sleep & Power
 
     private var sleepPowerTab: some View {
@@ -295,7 +474,64 @@ struct SettingsView: View {
                                     get: { chargeLimit.lowPowerMode },
                                     set: { chargeLimit.setLowPowerMode($0) }))
                     }
+
+                    networkCard
                 }
+            }
+        }
+    }
+
+    // MARK: - Network profiles
+
+    private var networkCard: some View {
+        card("Network profiles") {
+            toggleRow("Switch mode by Wi-Fi network",
+                      "Automatically pick a save mode based on the network you join — e.g. hold 80% at home, charge to full on the road.",
+                      isOn: Binding(get: { network.enabled },
+                                    set: { network.enabled = $0 }))
+            if network.enabled {
+                divider
+                labelRow("Current network", network.currentSSID ?? "Not connected")
+                if !network.locationAuthorized {
+                    divider
+                    infoRow("Allow Location access so Battlify can read the Wi-Fi network name (macOS requires it). Check System Settings › Privacy & Security › Location Services.",
+                            systemImage: "location.slash")
+                }
+                divider
+                ForEach(network.profiles) { p in
+                    HStack(spacing: 10) {
+                        Image(systemName: "wifi").frame(width: 20).foregroundStyle(.tint)
+                        Text(p.ssid).font(.callout).lineLimit(1)
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { p.mode },
+                            set: { m in
+                                if let i = network.profiles.firstIndex(where: { $0.id == p.id }) {
+                                    network.profiles[i].mode = m
+                                }
+                            })) {
+                            ForEach(SaveMode.allCases) { Text($0.title).tag($0) }
+                        }
+                        .labelsHidden().frame(width: 130)
+                        Button {
+                            network.removeProfile(p)
+                        } label: { Image(systemName: "minus.circle.fill") }
+                            .buttonStyle(.borderless).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    divider
+                }
+                HStack {
+                    Button {
+                        if let ssid = network.currentSSID {
+                            network.addProfile(ssid: ssid, mode: chargeLimit.mode)
+                        }
+                    } label: { Label("Add current network", systemImage: "plus") }
+                        .controlSize(.small)
+                        .disabled(network.currentSSID == nil)
+                    Spacer()
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
             }
         }
     }
@@ -535,6 +771,77 @@ struct SettingsView: View {
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
+    /// Charge-power slider (0–100%). Applies on release so dragging doesn't spam the daemon.
+    private var chargePowerRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Power to the battery").font(.callout)
+                Spacer()
+                Text(chargeLimit.chargePower == 0 ? "Off" : "\(chargeLimit.chargePower)%")
+                    .font(.callout.weight(.semibold)).monospacedDigit()
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(chargeLimit.chargePower) },
+                    set: { chargeLimit.chargePower = Int($0) }
+                ),
+                in: 0...100, step: 5,
+                onEditingChanged: { editing in if !editing { chargeLimit.apply() } }
+            )
+            .controlSize(.small)
+
+            liveSplitReadout
+
+            Text("How much of the charger's power goes into the battery versus running your Mac. 100% charges at full speed; lower values duty-cycle charging so the battery gets less average power and stays cooler (charging to full takes longer); 0% holds the battery and sends everything to your Mac. The hardware only has an on/off charge switch, so this is an average, not an exact split.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    /// Live watts split: how much is currently flowing into the battery vs. the Mac.
+    @ViewBuilder
+    private var liveSplitReadout: some View {
+        let f = battery.powerFlow
+        let cycling = chargeLimit.chargePower > 0 && chargeLimit.chargePower < 100
+        if f.isPluggedIn {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 16) {
+                    wattStat(.green, cycling ? "Into battery (now)" : "Into battery", f.chargeWatts)
+                    wattStat(.orange, "To your Mac", max(0, f.systemWatts ?? 0))
+                    Spacer()
+                    if let a = f.adapterWatts {
+                        Text(String(format: "Adapter %.0f W", a))
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                if cycling {
+                    Text("At \(chargeLimit.chargePower)% charging runs in long on/off cycles (a couple of minutes each), so this reads full while charging and 0 while resting — averaging about \(chargeLimit.chargePower)% of full power.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(10)
+            .background(.quaternary.opacity(0.4),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else {
+            Text("On battery — plug in the charger to see the live power split.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func wattStat(_ color: Color, _ label: String, _ w: Double) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label).font(.caption2).foregroundStyle(.secondary)
+                Text(String(format: "%.1f W", w))
+                    .font(.callout.weight(.semibold)).monospacedDigit()
+            }
+        }
+    }
+
     private func pickerRow<Content: View>(_ hint: String,
                                           @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -565,6 +872,19 @@ struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    /// The keep-awake process list as editable comma-separated text.
+    private var keepAwakeProcessText: Binding<String> {
+        Binding(
+            get: { chargeLimit.keepAwakeProcesses.joined(separator: ", ") },
+            set: {
+                chargeLimit.keepAwakeProcesses = $0
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                chargeLimit.apply()
+            })
+    }
 
     /// Binding into a Bool on the charge store that re-applies the policy on change.
     private func bind(_ keyPath: ReferenceWritableKeyPath<ChargeLimitStore, Bool>) -> Binding<Bool> {

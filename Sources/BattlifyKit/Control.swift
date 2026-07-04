@@ -75,6 +75,10 @@ public enum ControlRequest: Codable, Sendable {
     case prepareForSleep
     /// Start (true) or cancel (false) a one-shot charge-to-100% calibration.
     case calibrateToFull(Bool)
+    /// Delete the daemon-written sample history file (`/Library/.../history.jsonl`).
+    /// The GUI can't remove it itself — the directory is root-owned — so it asks
+    /// the daemon, which runs as root.
+    case clearSamples
 }
 
 public struct ControlResponse: Codable, Sendable {
@@ -99,6 +103,10 @@ public struct ControlResponse: Codable, Sendable {
     /// Protocol version the responding daemon was built with (see `ControlProtocol`).
     /// Absent from older daemons, which decode to 0 → treated as outdated.
     public var daemonProtocolVersion: Int
+    /// Behaviour/build version of the running daemon (see `HelperBuild`). Bumps for
+    /// pure behaviour fixes that don't change the protocol, so the GUI can update a
+    /// helper that's protocol-current but behaviour-stale. Older daemons decode to 0.
+    public var daemonBuildVersion: Int
 
     public init(ok: Bool, config: BattlifyConfig, batteryPercent: Int,
                 chargingEnabled: Bool, schemeDescription: String,
@@ -107,7 +115,8 @@ public struct ControlResponse: Codable, Sendable {
                 pauseReason: String? = nil, magSafeSupported: Bool = false,
                 dischargeSupported: Bool = false, discharging: Bool = false,
                 message: String? = nil,
-                daemonProtocolVersion: Int = ControlProtocol.version) {
+                daemonProtocolVersion: Int = ControlProtocol.version,
+                daemonBuildVersion: Int = HelperBuild.version) {
         self.ok = ok
         self.config = config
         self.batteryPercent = batteryPercent
@@ -121,6 +130,7 @@ public struct ControlResponse: Codable, Sendable {
         self.discharging = discharging
         self.message = message
         self.daemonProtocolVersion = daemonProtocolVersion
+        self.daemonBuildVersion = daemonBuildVersion
     }
 
     // Version-tolerant decoding so GUI/daemon version skew doesn't break the
@@ -140,6 +150,7 @@ public struct ControlResponse: Codable, Sendable {
         discharging = try c.decodeIfPresent(Bool.self, forKey: .discharging) ?? false
         message = try c.decodeIfPresent(String.self, forKey: .message)
         daemonProtocolVersion = try c.decodeIfPresent(Int.self, forKey: .daemonProtocolVersion) ?? 0
+        daemonBuildVersion = try c.decodeIfPresent(Int.self, forKey: .daemonBuildVersion) ?? 0
     }
 }
 
@@ -156,10 +167,21 @@ public enum ControlProtocol {
     ///   v2: added `pauseCharging`.
     ///   v3: MagSafe LED mode (Auto/Status/Off) + post-wake settling.
     ///   v4: prepareForSleep, calibrateToFull, prevent-idle-sleep.
+    ///   v5: clearSamples (delete the daemon-written history file).
     // Note: the dim-on-battery toggle is a plain additive pmset write — an older
     // helper simply ignores an unknown toggle, so it doesn't warrant a version
     // bump or an "outdated helper" warning.
-    public static let version = 4
+    public static let version = 5
+}
+
+public enum HelperBuild {
+    /// Bumped whenever the daemon's *behaviour* changes in a way that warrants
+    /// updating an already-installed helper, even when the request/response
+    /// protocol is unchanged. The GUI updates the helper when the running daemon
+    /// reports a lower value than this (see `ChargeLimitStore.helperOutdated`).
+    ///   v1: gentle 2-min charge-power duty cycle (replaces the 10s toggle that
+    ///       flickered the charge indicators), + shutdown/perf hardening.
+    public static let version = 1
 }
 
 public enum ControlError: Error, CustomStringConvertible {
@@ -184,6 +206,12 @@ public enum ControlClient {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ControlError.ioError("socket() failed") }
         defer { close(fd) }
+
+        // Bound send/recv so a wedged daemon can never hang the caller (some paths,
+        // e.g. sleep handling, call this synchronously on the main thread).
+        var tv = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)

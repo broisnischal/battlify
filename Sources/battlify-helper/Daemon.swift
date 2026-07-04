@@ -41,8 +41,34 @@ final class Daemon: @unchecked Sendable {
     private let wakeGapThreshold = 30.0   // gap implying a sleep occurred
     private let wakeSettleDuration = 15.0 // how long to settle after wake
 
+    // Signal handling via DispatchSource (see installSignalHandlers): the sources
+    // fire cleanup on this queue in a normal context, not an async-signal handler.
+    private let signalQueue = DispatchQueue(label: "com.battlify.helper.signals")
+    private var signalSources: [DispatchSourceSignal] = []
+
     // Held IOPMAssertion preventing idle sleep (0 = none held).
     private var idleSleepAssertion: IOPMAssertionID = 0
+
+    // "Always Active": held assertion + last-written pmset disablesleep state
+    // (nil = not yet written this run) so we only shell out to pmset on change.
+    private var keepAwakeAssertion: IOPMAssertionID = 0
+    private var lastDisableSleep: Bool?
+
+    // Charge-power duty cycle, done in long phases to avoid flicker/hardware
+    // thrash: each charge/rest phase lasts at least `minChargeDwell`, and the
+    // on:off ratio sets the average charge power. `chargeCycleCharging` is the
+    // current phase; `chargeCyclePhaseStart` is when it began.
+    private let minChargeDwell: TimeInterval = 120   // ≥ 2 min per phase
+    private var chargeCycleCharging = true
+    private var chargeCyclePhaseStart: Date?
+
+    // Short cache for pmset-derived state (Low Power Mode + sleep toggles), which
+    // each fork `pmset`. status() runs on every getStatus/command, so cache the
+    // reads briefly and invalidate whenever the daemon changes them itself.
+    private var pmsetCacheAt: Date?
+    private var pmsetCacheLPM = false
+    private var pmsetCacheToggles: [String: Bool] = [:]
+    private let pmsetCacheTTL: TimeInterval = 5
 
     init() {
         charge = ChargeController(smc: smc)
@@ -105,10 +131,12 @@ final class Daemon: @unchecked Sendable {
 
         case .setLowPowerMode(let on):
             let ok = LowPowerMode.set(on)
+            invalidatePmsetCache()
             return status(ok: ok, message: ok ? "lowpowermode set" : "pmset failed")
 
         case .setPowerToggle(let toggle, let on):
             let ok = PowerSettings.set(toggle, on)
+            invalidatePmsetCache()
             return status(ok: ok, message: ok ? "\(toggle.rawValue) set" : "pmset failed")
 
         case .applyMode(let mode):
@@ -144,6 +172,13 @@ final class Daemon: @unchecked Sendable {
             do { try ConfigStore.save(cfg); tick()
                  return status(ok: true, message: on ? "calibration started" : "calibration cancelled") }
             catch { return status(ok: false, message: "save failed: \(error)") }
+
+        case .clearSamples:
+            // Delete the root-owned history file the GUI can't touch itself.
+            // Reset the sample counter so we don't immediately re-append mid-tick.
+            HistoryStore.clear()
+            ticksSinceSample = 0
+            return status(ok: true, message: "history cleared")
         }
     }
 
@@ -165,21 +200,37 @@ final class Daemon: @unchecked Sendable {
         PowerSettings.set(.powerNap, p.powerNap)
         PowerSettings.set(.wakeOnNetwork, p.wakeOnNetwork)
         PowerSettings.set(.tcpKeepAlive, p.tcpKeepAlive)
+        invalidatePmsetCache()
 
         tick() // enforce charge limit immediately
         return status(ok: true, message: "mode \(mode.rawValue)")
     }
 
+    /// pmset-derived state, cached for `pmsetCacheTTL` to avoid forking `pmset`
+    /// on every status call. Invalidated when the daemon changes these settings.
+    private func pmsetState() -> (lpm: Bool, toggles: [String: Bool]) {
+        if let at = pmsetCacheAt, Date().timeIntervalSince(at) < pmsetCacheTTL {
+            return (pmsetCacheLPM, pmsetCacheToggles)
+        }
+        pmsetCacheLPM = LowPowerMode.isEnabled()
+        pmsetCacheToggles = PowerSettings.readToggles()
+        pmsetCacheAt = Date()
+        return (pmsetCacheLPM, pmsetCacheToggles)
+    }
+
+    private func invalidatePmsetCache() { pmsetCacheAt = nil }
+
     private func status(ok: Bool, message: String? = nil) -> ControlResponse {
         let snap = BatteryMonitor.read()
+        let pmset = pmsetState()
         return ControlResponse(
             ok: ok,
             config: ConfigStore.load(),
             batteryPercent: snap.percentage,
             chargingEnabled: (try? charge.isChargingEnabled()) ?? false,
             schemeDescription: charge.schemeDescription,
-            lowPowerModeEnabled: LowPowerMode.isEnabled(),
-            powerToggles: PowerSettings.readToggles(),
+            lowPowerModeEnabled: pmset.lpm,
+            powerToggles: pmset.toggles,
             pauseReason: lastPauseReason,
             magSafeSupported: charge.isMagSafeSupported,
             dischargeSupported: charge.isAdapterControlSupported,
@@ -234,6 +285,10 @@ final class Daemon: @unchecked Sendable {
         let settling = managing && (settleUntil.map { now < $0 } ?? false)
 
         let charging = (try? charge.isChargingEnabled()) ?? true
+        // Recurring schedule window active right now (first match wins), and the
+        // "ready by" top-up state — both influence the charge decision below.
+        let activeSchedule = cfg.schedules.first { $0.isActive(at: now) }
+        let topUp = topUpBypassActive(cfg, level: level, now: now)
         var desired = true
         var reason: String? = nil
 
@@ -243,10 +298,17 @@ final class Daemon: @unchecked Sendable {
         } else if settling {
             // Hold charging off briefly after wake before resuming control.
             desired = false; reason = "settling"
+        } else if let s = activeSchedule, s.action == .hold || s.action == .discharge {
+            // A hold/discharge window keeps charging off (discharge is driven in
+            // manageDischarge). A "charge" window falls through to normal logic.
+            desired = false; reason = "schedule"
         } else {
-            // Charge-limit constraint, with a hysteresis band. Calibration bypasses
-            // the limit so the battery can reach 100% (heat safety still applies).
-            if cfg.chargeLimitEnabled && !cfg.calibrateToFull {
+            // A "charge" schedule window and ready-by top-up both bypass the limit
+            // ceiling (charge toward 100 / the target). Calibration does too.
+            let bypassLimit = cfg.calibrateToFull || topUp || (activeSchedule?.action == .charge)
+
+            // Charge-limit constraint, with a hysteresis band.
+            if cfg.chargeLimitEnabled && !bypassLimit {
                 if level >= cfg.chargeLimit {
                     desired = false; reason = "limit"
                 } else if level >= cfg.chargeLimit - cfg.resumeMargin && !charging {
@@ -264,11 +326,116 @@ final class Daemon: @unchecked Sendable {
             }
         }
 
-        lastPauseReason = desired ? nil : reason
-        ensure(enabled: desired)
-        manageDischarge(cfg, snap)
-        updateMagSafeLED(cfg, snap, charging: desired, settling: settling)
+        // Duty-cycle charging to the requested power. The LED follows the charging
+        // regime (steady) rather than each on/off phase, so it doesn't flicker.
+        let enable = chargeDutyGate(desired: desired, power: cfg.chargePower, now: now)
+        let chargingRegime = desired && cfg.chargePower > 0
+
+        lastPauseReason = desired ? (enable ? nil : "slow") : reason
+        ensure(enabled: enable, current: charging)
+        manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
+        updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         updateIdleSleepAssertion(cfg, snap)
+        updateKeepAwake(cfg, snap)
+    }
+
+    /// Whether to charge this tick for the requested power (0–100%). 100% is a
+    /// passthrough; below 100% it duty-cycles in long phases (each ≥ `minChargeDwell`)
+    /// so charging toggles at most once every couple of minutes rather than flickering
+    /// the charge indicators and thrashing the charger hardware.
+    private func chargeDutyGate(desired: Bool, power: Int, now: Date) -> Bool {
+        // Reset when not charging so it resumes promptly in a fresh charge phase.
+        guard desired else {
+            chargeCyclePhaseStart = nil; chargeCycleCharging = true; return false
+        }
+        let p = min(100, max(0, power))
+        if p >= 100 { chargeCyclePhaseStart = nil; chargeCycleCharging = true; return true }
+        if p <= 0  { chargeCyclePhaseStart = nil; chargeCycleCharging = false; return false }
+
+        // The minority phase gets the 2-minute floor; the majority phase is
+        // stretched to hit the requested ratio. So both phases are always ≥ 2 min.
+        let onTime: TimeInterval
+        let offTime: TimeInterval
+        if p <= 50 {
+            onTime = minChargeDwell
+            offTime = minChargeDwell * Double(100 - p) / Double(p)
+        } else {
+            offTime = minChargeDwell
+            onTime = minChargeDwell * Double(p) / Double(100 - p)
+        }
+
+        guard let start = chargeCyclePhaseStart else {
+            chargeCyclePhaseStart = now; chargeCycleCharging = true; return true
+        }
+        let elapsed = now.timeIntervalSince(start)
+        if chargeCycleCharging {
+            if elapsed >= onTime { chargeCycleCharging = false; chargeCyclePhaseStart = now; return false }
+            return true
+        } else {
+            if elapsed >= offTime { chargeCycleCharging = true; chargeCyclePhaseStart = now; return true }
+            return false
+        }
+    }
+
+    /// Ready-by top-up: on a scheduled day, within the estimated lead time before
+    /// the target and still below the target level → charge past the limit so the
+    /// battery reaches the target right around the target time (minimizing hours
+    /// spent pinned at a high charge). Lead time is estimated from how far below
+    /// the target we are, since `timeToFull` isn't available while holding.
+    private func topUpBypassActive(_ cfg: BattlifyConfig, level: Int, now: Date) -> Bool {
+        let r = cfg.readyBy
+        guard r.enabled, r.days.contains(now), level < r.targetPercent else { return false }
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: now)
+        let nowMin = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+        guard nowMin <= r.targetMinute else { return false }   // target already passed today
+        let minutesUntil = r.targetMinute - nowMin
+        // ~1.5 min per percentage point to charge, plus a 15-minute safety buffer.
+        let minutesNeeded = Double(r.targetPercent - level) * 1.5 + 15
+        return Double(minutesUntil) <= minutesNeeded
+    }
+
+    /// "Always Active": keep the Mac fully awake with the lid closed so terminal
+    /// jobs and background tasks keep running. Enforced only on AC power — closed
+    /// and unventilated, a Mac kept awake on battery would drain fast and heat up,
+    /// so unplugging auto-releases it. Combines `pmset disablesleep` (the only
+    /// thing that prevents lid-close/clamshell sleep) with a PreventSystemSleep
+    /// assertion as a belt-and-suspenders against idle sleep. Because disablesleep
+    /// doesn't survive a reboot, the first tick after startup re-applies it
+    /// (`lastDisableSleep` starts nil, forcing a write).
+    private func updateKeepAwake(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+        var want = cfg.keepAwake && snap.isPluggedIn
+
+        // Task-gated: only hold while a matching task is actually running, so the
+        // Mac sleeps once the work finishes instead of staying awake forever.
+        if want && cfg.keepAwakeRequiresTask {
+            want = ProcessScan.isBusy(names: cfg.keepAwakeProcesses, minCpu: cfg.keepAwakeMinCpu)
+        }
+        // Thermal guardrail: a closed, unventilated Mac running hard can overheat,
+        // so release keep-awake (allow sleep) once it crosses the limit.
+        if want, cfg.keepAwakeMaxTempC > 0, let t = snap.temperature, t >= cfg.keepAwakeMaxTempC {
+            want = false
+            log("keep-awake released: temperature \(String(format: "%.1f", t))°C ≥ guardrail \(cfg.keepAwakeMaxTempC)°C")
+        }
+
+        if lastDisableSleep != want {
+            if PowerSettings.setDisableSleep(want) {
+                lastDisableSleep = want
+                log("keep-awake (disablesleep) \(want ? "enabled" : "disabled")")
+            }
+        }
+
+        if want && keepAwakeAssertion == 0 {
+            var id: IOPMAssertionID = 0
+            let ok = IOPMAssertionCreateWithName(
+                kIOPMAssertPreventUserIdleSystemSleep as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "Battlify: keep awake (Always Active)" as CFString,
+                &id)
+            if ok == kIOReturnSuccess { keepAwakeAssertion = id }
+        } else if !want && keepAwakeAssertion != 0 {
+            IOPMAssertionRelease(keepAwakeAssertion)
+            keepAwakeAssertion = 0
+        }
     }
 
     /// Hold an idle-sleep assertion only while it's useful: prevent-idle-sleep on,
@@ -294,14 +461,17 @@ final class Daemon: @unchecked Sendable {
     /// Force-discharge to bring the level down to the limit when plugged in above
     /// it; otherwise keep the adapter on. Always leaves the adapter enabled when
     /// not actively sailing down, so the Mac charges normally.
-    private func manageDischarge(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+    private func manageDischarge(_ cfg: BattlifyConfig, _ snap: BatterySnapshot,
+                                 scheduleDischarge: Bool) {
         guard charge.isAdapterControlSupported else { return }
 
-        let shouldDischarge = cfg.dischargeEnabled
+        // Discharge-to-limit (when you plug in above the limit) …
+        let limitDischarge = cfg.dischargeEnabled
             && cfg.chargeLimitEnabled
             && !cfg.calibrateToFull   // calibration is charging up, don't fight it
-            && snap.isPluggedIn
             && snap.percentage > cfg.chargeLimit
+        // … or an active "run on battery" schedule window.
+        let shouldDischarge = snap.isPluggedIn && (limitDischarge || scheduleDischarge)
 
         let adapterOn = (try? charge.isAdapterEnabled()) ?? true
         if shouldDischarge {
@@ -358,8 +528,7 @@ final class Daemon: @unchecked Sendable {
         HistoryStore.trim()
     }
 
-    private func ensure(enabled desired: Bool) {
-        guard let current = try? charge.isChargingEnabled() else { return }
+    private func ensure(enabled desired: Bool, current: Bool) {
         if current == desired { return }
         do {
             if desired { try charge.enableCharging() } else { try charge.disableCharging() }
@@ -372,21 +541,31 @@ final class Daemon: @unchecked Sendable {
     // MARK: - Signals & logging
 
     private func installSignalHandlers() {
-        // Re-enable charging and hand the MagSafe LED back to macOS on exit so we
-        // never strand the machine.
-        let cleanup: @convention(c) (Int32) -> Void = { _ in
-            let smc = SMC()
-            if (try? smc.open()) != nil {
-                let c = ChargeController(smc: smc)
-                try? c.enableCharging()
-                if c.isAdapterControlSupported { try? c.enableAdapter() }  // stop discharging
-                if c.isMagSafeSupported { try? c.setMagSafeLED(.system) }
-                smc.close()
-            }
-            exit(0)
+        // Handle SIGTERM/SIGINT via DispatchSource rather than a C signal handler:
+        // the cleanup forks `pmset`, opens/writes the SMC and allocates — none of
+        // which is safe in an async-signal context (it could deadlock on malloc or
+        // corrupt the SMC layer, defeating the very safety this cleanup provides).
+        // The source's handler runs as an ordinary block on `signalQueue`, so it's
+        // all safe, and it takes `lock` to serialize with the tick loop's SMC use.
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)   // ignore default disposition; the source owns it
+            let src = DispatchSource.makeSignalSource(signal: sig, queue: signalQueue)
+            src.setEventHandler { self.performCleanupAndExit() }
+            src.resume()
+            signalSources.append(src)
         }
-        signal(SIGTERM, cleanup)
-        signal(SIGINT, cleanup)
+    }
+
+    /// Restore a safe state and exit: re-enable charging, restore the adapter and
+    /// hand the MagSafe LED back to macOS, and clear `disablesleep` so keep-awake
+    /// never outlives the daemon. Serialized with the tick loop via `lock`.
+    private func performCleanupAndExit() -> Never {
+        lock.lock()   // hold through exit; serialize SMC access with tick()
+        PowerSettings.setDisableSleep(false)
+        try? charge.enableCharging()
+        if charge.isAdapterControlSupported { try? charge.enableAdapter() }
+        if charge.isMagSafeSupported { try? charge.setMagSafeLED(.system) }
+        exit(0)
     }
 
     private func log(_ m: String) {
