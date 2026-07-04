@@ -84,6 +84,7 @@ struct HistoryView: View {
         }
         .scrollIndicators(.hidden)
         .frame(width: 560, height: 540)
+        .onAppear { model.refresh() }   // refresh each time the window is opened
         .confirmationDialog(
             pendingClear?.title ?? "",
             isPresented: Binding(get: { pendingClear != nil },

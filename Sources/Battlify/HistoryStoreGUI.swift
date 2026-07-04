@@ -38,55 +38,72 @@ final class HistoryViewModel: ObservableObject {
     private var recordTimer: Timer?
 
     init() {
-        recordSample()
-        reload()
+        refresh()
         // Record our own sample every 5 minutes while running.
         let t = Timer(timeInterval: 300, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.recordSample()
-                self?.reload()
-            }
+            Task { @MainActor in self?.refresh() }
         }
         t.tolerance = 60   // 5-min history sampling; a minute of drift is harmless
         RunLoop.main.add(t, forMode: .common)
         recordTimer = t
     }
 
-    func reload() {
+    /// Record the current battery reading, then load — in one task, so the load
+    /// can't race ahead of the append. Call this whenever the window appears so
+    /// the newest sample shows immediately (fixes "had to switch tabs to refresh").
+    func refresh() {
+        let snap = BatteryMonitor.read()
+        let sample = BatterySample(t: Date(), pct: snap.percentage,
+                                   charging: snap.isCharging, temp: snap.temperature)
         let since = Date().addingTimeInterval(-range.interval)
         Task.detached {
-            // Merge daemon-written and user-written samples.
-            var merged = HistoryStore.load(since: since, from: BattlifyPaths.historyFile)
-            merged += HistoryStore.load(since: since, from: BattlifyPaths.userHistoryFile)
-            merged.sort { $0.t < $1.t }
-            let sessions = LidSessionStore.recent(limit: 30).filter { $0.closedAt >= since }
+            HistoryStore.append(sample, to: BattlifyPaths.userHistoryFile)
+            HistoryStore.trim(at: BattlifyPaths.userHistoryFile)
+            await self.performLoad(since: since)
+        }
+    }
 
-            // Charging / on-battery runs and per-day rollups, derived from the
-            // same samples (newest first for display).
-            let spans = SessionAnalysis.spans(from: merged)
-            let charge = spans
-                .filter { $0.kind == .charging && $0.duration >= 180 }
-                .reversed().prefix(30).map { $0 }
-            let discharge = spans
-                .filter { $0.kind == .discharging && $0.duration >= 600 && $0.deltaPct < 0 }
-                .reversed().prefix(30).map { $0 }
-            let daily = SessionAnalysis.dailySummaries(from: merged)
+    /// Reload the current range without recording a new sample (used by the range
+    /// picker and after clearing history).
+    func reload() {
+        let since = Date().addingTimeInterval(-range.interval)
+        Task.detached { await self.performLoad(since: since) }
+    }
 
-            // Wear attribution always looks back 30 days, regardless of the chart range.
-            let wearSince = Date().addingTimeInterval(-30 * 86_400)
-            var wearSamples = HistoryStore.load(since: wearSince, from: BattlifyPaths.historyFile)
-            wearSamples += HistoryStore.load(since: wearSince, from: BattlifyPaths.userHistoryFile)
-            wearSamples.sort { $0.t < $1.t }
-            let report = WearAnalysis.analyze(samples: wearSamples, now: Date())
+    /// Load merged samples + derived data for `since` and publish on the main
+    /// actor. Runs off the main thread (nonisolated) so file I/O never blocks UI.
+    private nonisolated func performLoad(since: Date) async {
+        // Merge daemon-written and user-written samples.
+        var merged = HistoryStore.load(since: since, from: BattlifyPaths.historyFile)
+        merged += HistoryStore.load(since: since, from: BattlifyPaths.userHistoryFile)
+        merged.sort { $0.t < $1.t }
+        let sessions = LidSessionStore.recent(limit: 30).filter { $0.closedAt >= since }
 
-            await MainActor.run {
-                self.samples = merged
-                self.lidSessions = sessions
-                self.chargeSessions = charge
-                self.dischargeSessions = discharge
-                self.dailySummaries = daily
-                self.wearReport = report
-            }
+        // Charging / on-battery runs and per-day rollups, derived from the
+        // same samples (newest first for display).
+        let spans = SessionAnalysis.spans(from: merged)
+        let charge = spans
+            .filter { $0.kind == .charging && $0.duration >= 180 }
+            .reversed().prefix(30).map { $0 }
+        let discharge = spans
+            .filter { $0.kind == .discharging && $0.duration >= 600 && $0.deltaPct < 0 }
+            .reversed().prefix(30).map { $0 }
+        let daily = SessionAnalysis.dailySummaries(from: merged)
+
+        // Wear attribution always looks back 30 days, regardless of the chart range.
+        let wearSince = Date().addingTimeInterval(-30 * 86_400)
+        var wearSamples = HistoryStore.load(since: wearSince, from: BattlifyPaths.historyFile)
+        wearSamples += HistoryStore.load(since: wearSince, from: BattlifyPaths.userHistoryFile)
+        wearSamples.sort { $0.t < $1.t }
+        let report = WearAnalysis.analyze(samples: wearSamples, now: Date())
+
+        await MainActor.run {
+            self.samples = merged
+            self.lidSessions = sessions
+            self.chargeSessions = charge
+            self.dischargeSessions = discharge
+            self.dailySummaries = daily
+            self.wearReport = report
         }
     }
 
@@ -119,16 +136,6 @@ final class HistoryViewModel: ObservableObject {
             _ = try? ControlClient.send(.clearSamples)
             LidSessionStore.clear()
             await MainActor.run { self.reload() }
-        }
-    }
-
-    private func recordSample() {
-        let snap = BatteryMonitor.read()
-        let sample = BatterySample(t: Date(), pct: snap.percentage,
-                                   charging: snap.isCharging, temp: snap.temperature)
-        Task.detached {
-            HistoryStore.append(sample, to: BattlifyPaths.userHistoryFile)
-            HistoryStore.trim(at: BattlifyPaths.userHistoryFile)
         }
     }
 }
