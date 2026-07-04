@@ -44,19 +44,33 @@ struct DetailsView: View {
             // Proportional bar: how the adapter's power splits between the system
             // and the battery (only meaningful while charging on wall power).
             if let adapter = f.adapterWatts, adapter > 0.5 {
-                GeometryReader { geo in
-                    let sys = max(0, f.systemWatts ?? 0)
-                    let chg = f.chargeWatts
-                    let total = max(sys + chg, 0.01)
-                    HStack(spacing: 2) {
-                        Rectangle().fill(Color.orange)
-                            .frame(width: geo.size.width * sys / total)
-                        Rectangle().fill(Color.green)
-                            .frame(width: geo.size.width * chg / total)
+                let sys = max(0, f.systemWatts ?? 0)
+                let chg = f.chargeWatts
+                let total = max(sys + chg, 0.01)
+                VStack(alignment: .leading, spacing: 7) {
+                    GeometryReader { geo in
+                        HStack(spacing: 2) {
+                            Rectangle().fill(Color.orange)
+                                .frame(width: geo.size.width * sys / total)
+                            Rectangle().fill(Color.green)
+                                .frame(width: geo.size.width * chg / total)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .frame(height: 10)
+                    // Labeled split so the division of the charging watts is legible.
+                    HStack(spacing: 16) {
+                        splitTag(.orange, "System", sys, total)
+                        splitTag(.green, "Into battery", chg, total)
+                        Spacer()
+                    }
                 }
-                .frame(height: 10)
+
+                if chg > 0.5 {
+                    Text("\(watts(chg)) of the \(watts(adapter)) from the adapter is charging the battery — \(pct(chg, of: total)); the rest runs your Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             VStack(spacing: 0) {
@@ -91,6 +105,21 @@ struct DetailsView: View {
     }
 
     private func watts(_ w: Double) -> String { String(format: "%.1f W", w) }
+
+    /// Share of `w` out of `total`, as a rounded percentage string.
+    private func pct(_ w: Double, of total: Double) -> String {
+        String(format: "%.0f%%", total > 0 ? (w / total) * 100 : 0)
+    }
+
+    /// A colored dot + label + "watts · %" for one segment of the split bar.
+    private func splitTag(_ color: Color, _ label: String, _ w: Double, _ total: Double) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(label).foregroundStyle(.secondary)
+            Text("\(watts(w)) · \(pct(w, of: total))").fontWeight(.medium).monospacedDigit()
+        }
+        .font(.caption)
+    }
 
     private func batteryIcon(_ f: PowerFlow) -> String {
         if f.batteryWatts > 0.5 { return "battery.100.bolt" }
