@@ -6,7 +6,13 @@ import IOKit.ps
 public struct BatterySnapshot: Equatable, Sendable {
     public var percentage: Int          // current charge 0...100
     public var isCharging: Bool
-    public var isPluggedIn: Bool        // external power connected
+    public var isPluggedIn: Bool        // external power *providing* (macOS' view)
+    /// Physical adapter presence, from AppleSmartBattery's `ExternalConnected`.
+    /// Unlike `isPluggedIn`, this stays true during force-discharge: when we cut
+    /// the adapter so the Mac runs off battery, macOS reports "Battery Power" and
+    /// `isPluggedIn` flips to false even though the cable is still connected.
+    /// Falls back to `isPluggedIn` when the hardware key is unavailable.
+    public var isExternalConnected: Bool
     public var isFullyCharged: Bool
     public var timeToEmpty: Int?        // minutes, nil if unknown/charging
     public var timeToFull: Int?         // minutes, nil if unknown/not charging
@@ -17,8 +23,14 @@ public struct BatterySnapshot: Equatable, Sendable {
     public var maxCapacity: Int?        // mAh (current full-charge capacity)
     public var powerSource: String      // "Battery Power" / "AC Power"
 
+    /// True when the charger is physically connected, regardless of whether macOS
+    /// is currently drawing from it. Use this for AC-power gating (discharge, LED,
+    /// keep-awake) so force-discharge doesn't read as "unplugged".
+    public var onExternalPower: Bool { isExternalConnected || isPluggedIn }
+
     public static let unknown = BatterySnapshot(
-        percentage: 0, isCharging: false, isPluggedIn: false, isFullyCharged: false,
+        percentage: 0, isCharging: false, isPluggedIn: false,
+        isExternalConnected: false, isFullyCharged: false,
         timeToEmpty: nil, timeToFull: nil, cycleCount: nil, temperature: nil,
         healthPercent: nil, designCapacity: nil, maxCapacity: nil, powerSource: "Unknown"
     )
@@ -76,6 +88,10 @@ public enum BatteryMonitor {
                 snap.timeToFull = ttf
             }
         }
+
+        // Baseline physical-presence from the providing source; readSmartBattery
+        // overrides it with the hardware `ExternalConnected` key when available.
+        snap.isExternalConnected = snap.isPluggedIn
     }
 
     // MARK: - AppleSmartBattery (hardware detail)
@@ -91,6 +107,12 @@ public enum BatteryMonitor {
             == KERN_SUCCESS,
               let props = propsRef?.takeRetainedValue() as? [String: Any]
         else { return }
+
+        // Physical adapter presence — true even while force-discharging (adapter
+        // inhibited), unlike the providing-source flag. Overrides the baseline.
+        if let ext = props["ExternalConnected"] as? Bool {
+            snap.isExternalConnected = ext
+        }
 
         if let cycles = props["CycleCount"] as? Int {
             snap.cycleCount = cycles
