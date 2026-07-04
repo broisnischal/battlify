@@ -8,9 +8,18 @@ import BattlifyKit
 final class HistoryViewModel: ObservableObject {
     @Published private(set) var samples: [BatterySample] = []
     @Published private(set) var lidSessions: [LidSession] = []
+    /// Charging runs derived from `samples`, newest first.
+    @Published private(set) var chargeSessions: [ChargeSpan] = []
+    /// On-battery runs derived from `samples`, newest first.
+    @Published private(set) var dischargeSessions: [ChargeSpan] = []
+    /// Per-day rollups derived from `samples`, newest day first.
+    @Published private(set) var dailySummaries: [DailySummary] = []
     /// 30-day wear attribution, independent of the chart's `range`.
     @Published private(set) var wearReport: WearReport = .empty
     @Published var range: HistoryRange = .day
+
+    /// Threshold (charge %) above which time counts as "high charge".
+    let highChargeThreshold = SessionAnalysis.highChargeThreshold
 
     enum HistoryRange: String, CaseIterable, Identifiable {
         case sixHours = "6h"
@@ -52,6 +61,17 @@ final class HistoryViewModel: ObservableObject {
             merged.sort { $0.t < $1.t }
             let sessions = LidSessionStore.recent(limit: 30).filter { $0.closedAt >= since }
 
+            // Charging / on-battery runs and per-day rollups, derived from the
+            // same samples (newest first for display).
+            let spans = SessionAnalysis.spans(from: merged)
+            let charge = spans
+                .filter { $0.kind == .charging && $0.duration >= 180 }
+                .reversed().prefix(30).map { $0 }
+            let discharge = spans
+                .filter { $0.kind == .discharging && $0.duration >= 600 && $0.deltaPct < 0 }
+                .reversed().prefix(30).map { $0 }
+            let daily = SessionAnalysis.dailySummaries(from: merged)
+
             // Wear attribution always looks back 30 days, regardless of the chart range.
             let wearSince = Date().addingTimeInterval(-30 * 86_400)
             var wearSamples = HistoryStore.load(since: wearSince, from: BattlifyPaths.historyFile)
@@ -62,8 +82,43 @@ final class HistoryViewModel: ObservableObject {
             await MainActor.run {
                 self.samples = merged
                 self.lidSessions = sessions
+                self.chargeSessions = charge
+                self.dischargeSessions = discharge
+                self.dailySummaries = daily
                 self.wearReport = report
             }
+        }
+    }
+
+    // MARK: - Clearing history
+
+    /// Erase the charge-sample history: the user-written file directly, and the
+    /// root-owned daemon file via the helper. The chart, sessions, wear analysis
+    /// and daily rollups are all derived from these samples, so they clear too.
+    func clearChartHistory() {
+        Task.detached {
+            HistoryStore.clear(at: BattlifyPaths.userHistoryFile)
+            _ = try? ControlClient.send(.clearSamples)   // daemon deletes its own file
+            await MainActor.run { self.reload() }
+        }
+    }
+
+    /// Erase the lid-closed session history (user-writable; no helper needed).
+    func clearLidSessions() {
+        Task.detached {
+            LidSessionStore.clear()
+            await MainActor.run { self.reload() }
+        }
+    }
+
+    /// Erase everything: samples (chart, charge/discharge sessions, wear, daily)
+    /// and lid sessions.
+    func clearAll() {
+        Task.detached {
+            HistoryStore.clear(at: BattlifyPaths.userHistoryFile)
+            _ = try? ControlClient.send(.clearSamples)
+            LidSessionStore.clear()
+            await MainActor.run { self.reload() }
         }
     }
 

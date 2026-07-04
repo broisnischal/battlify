@@ -153,6 +153,13 @@ final class Daemon: @unchecked Sendable {
             do { try ConfigStore.save(cfg); tick()
                  return status(ok: true, message: on ? "calibration started" : "calibration cancelled") }
             catch { return status(ok: false, message: "save failed: \(error)") }
+
+        case .clearSamples:
+            // Delete the root-owned history file the GUI can't touch itself.
+            // Reset the sample counter so we don't immediately re-append mid-tick.
+            HistoryStore.clear()
+            ticksSinceSample = 0
+            return status(ok: true, message: "history cleared")
         }
     }
 

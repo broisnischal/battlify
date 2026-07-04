@@ -63,6 +63,11 @@ public enum HistoryStore {
         return out
     }
 
+    /// Delete the history file. Best-effort; a missing file is success.
+    public static func clear(at url: URL = BattlifyPaths.historyFile) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
     /// Trim the file to the most recent `keep` samples, to bound growth.
     public static func trim(keep: Int = 4000, at url: URL = BattlifyPaths.historyFile) {
         let all = load(from: url)

@@ -4,6 +4,40 @@ import BattlifyKit
 
 struct HistoryView: View {
     @StateObject private var model = HistoryViewModel()
+    @State private var pendingClear: ClearTarget?
+
+    /// What a clear action will erase, with the copy for its confirmation prompt.
+    private enum ClearTarget: Identifiable {
+        case chart, lid, all
+        var id: Int { hashValue }
+
+        var title: String {
+            switch self {
+            case .chart: return "Clear chart history?"
+            case .lid: return "Clear lid-closed sessions?"
+            case .all: return "Clear all history?"
+            }
+        }
+        var message: String {
+            switch self {
+            case .chart:
+                return "Removes the charge samples behind the chart, charging and battery sessions, the daily summary, and the wear analysis. This can't be undone."
+            case .lid:
+                return "Removes the record of how much the battery drained while the lid was closed. This can't be undone."
+            case .all:
+                return "Removes every stored battery history — samples, sessions, and lid records. This can't be undone."
+            }
+        }
+        var confirmLabel: String {
+            switch self {
+            case .chart: return "Clear Chart History"
+            case .lid: return "Clear Lid Sessions"
+            case .all: return "Clear Everything"
+            }
+        }
+    }
+
+    private var hasAnyHistory: Bool { !model.samples.isEmpty || !model.lidSessions.isEmpty }
 
     var body: some View {
         ScrollView {
@@ -20,6 +54,8 @@ struct HistoryView: View {
                     .pickerStyle(.segmented)
                     .frame(width: 160)
                     .onChange(of: model.range) { _, _ in model.reload() }
+
+                    clearMenu
                 }
 
                 if model.samples.isEmpty {
@@ -38,12 +74,55 @@ struct HistoryView: View {
                 }
 
                 wearSection
+                chargingSessionsSection
                 lidSessionsSection
+                batterySessionsSection
+                highChargeSection
+                dailySummarySection
             }
             .padding(18)
         }
         .scrollIndicators(.hidden)
         .frame(width: 560, height: 540)
+        .confirmationDialog(
+            pendingClear?.title ?? "",
+            isPresented: Binding(get: { pendingClear != nil },
+                                 set: { if !$0 { pendingClear = nil } }),
+            presenting: pendingClear
+        ) { target in
+            Button(target.confirmLabel, role: .destructive) { perform(target) }
+            Button("Cancel", role: .cancel) {}
+        } message: { target in
+            Text(target.message)
+        }
+    }
+
+    // MARK: - Clear menu
+
+    private var clearMenu: some View {
+        Menu {
+            Button("Clear Chart History…") { pendingClear = .chart }
+                .disabled(model.samples.isEmpty)
+            Button("Clear Lid Sessions…") { pendingClear = .lid }
+                .disabled(model.lidSessions.isEmpty)
+            Divider()
+            Button("Clear Everything…", role: .destructive) { pendingClear = .all }
+        } label: {
+            Image(systemName: "trash")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!hasAnyHistory)
+        .help("Clear battery history")
+    }
+
+    private func perform(_ target: ClearTarget) {
+        switch target {
+        case .chart: model.clearChartHistory()
+        case .lid: model.clearLidSessions()
+        case .all: model.clearAll()
+        }
     }
 
     // MARK: - Wear attribution
@@ -167,6 +246,183 @@ struct HistoryView: View {
         let m = Int(t) / 60
         if m < 60 { return "\(m)m" }
         return "\(m / 60)h \(m % 60)m"
+    }
+
+    // MARK: - Charging / battery sessions (derived from samples)
+
+    @ViewBuilder
+    private var chargingSessionsSection: some View {
+        chargeSpanSection(
+            title: "Charging Sessions",
+            emptyText: "No charging sessions in this period yet. Plug in to see how fast the battery charges.",
+            spans: model.chargeSessions)
+    }
+
+    @ViewBuilder
+    private var batterySessionsSection: some View {
+        chargeSpanSection(
+            title: "On Battery",
+            emptyText: "No on-battery sessions in this period yet. Unplug to see how fast the battery drains in real use.",
+            spans: model.dischargeSessions)
+    }
+
+    @ViewBuilder
+    private func chargeSpanSection(title: String, emptyText: String, spans: [ChargeSpan]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.title3.weight(.semibold))
+
+            if spans.isEmpty {
+                Text(emptyText)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(spans.enumerated()), id: \.element.id) { i, s in
+                        if i > 0 { Divider() }
+                        chargeSpanRow(s)
+                    }
+                }
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+
+    private func chargeSpanRow(_ s: ChargeSpan) -> some View {
+        let charging = s.kind == .charging
+        return HStack(spacing: 10) {
+            Image(systemName: charging ? "bolt.fill" : "battery.75")
+                .foregroundStyle(charging ? Color.green : .secondary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(timeText(s.startAt)).font(.callout)
+                Text("\(s.startPct)% → \(s.endPct)% · \(durationText(s.duration))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(deltaText(s))
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(charging ? Color.green : .primary)
+                    .monospacedDigit()
+                if let rate = s.ratePerHour {
+                    Text(String(format: "%.1f%%/h", rate))
+                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    private func deltaText(_ s: ChargeSpan) -> String {
+        let d = s.deltaPct
+        if d == 0 { return "no change" }
+        return d > 0 ? "+\(d)%" : "−\(-d)%"
+    }
+
+    // MARK: - Time at high charge (per day)
+
+    @ViewBuilder
+    private var highChargeSection: some View {
+        let days = model.dailySummaries.filter { $0.highChargeTime > 0 }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Time at High Charge").font(.title3.weight(.semibold))
+                Spacer()
+                Text("above \(model.highChargeThreshold)%")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            if days.isEmpty {
+                Text("The battery hasn't spent time above \(model.highChargeThreshold)% in this period. Sitting at a high charge is a leading cause of wear, so less is better.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(days.enumerated()), id: \.element.id) { i, d in
+                        if i > 0 { Divider() }
+                        HStack {
+                            Text(dayText(d.day)).font(.callout)
+                            Spacer()
+                            Text(durationText(d.highChargeTime))
+                                .font(.callout.weight(.semibold)).monospacedDigit()
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                    }
+                }
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+
+    // MARK: - Daily summary
+
+    @ViewBuilder
+    private var dailySummarySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Daily Summary").font(.title3.weight(.semibold))
+
+            if model.dailySummaries.isEmpty {
+                Text("No daily summary yet. Battlify rolls up each day's charge range, time on power, and temperature once it has a day of samples.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(model.dailySummaries.enumerated()), id: \.element.id) { i, d in
+                        if i > 0 { Divider() }
+                        dailyRow(d)
+                    }
+                }
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+
+    private func dailyRow(_ d: DailySummary) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(dayText(d.day)).font(.callout.weight(.medium))
+                Text(powerTimeText(d)).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(d.minPct)–\(d.maxPct)%")
+                    .font(.callout.weight(.semibold)).monospacedDigit()
+                if let peak = d.peakTemp {
+                    Text(tempText(avg: d.avgTemp, peak: peak))
+                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    private func powerTimeText(_ d: DailySummary) -> String {
+        var parts: [String] = []
+        if d.chargingTime > 0 { parts.append("charged \(durationText(d.chargingTime))") }
+        if d.batteryTime > 0 { parts.append("on battery \(durationText(d.batteryTime))") }
+        return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+    }
+
+    private func tempText(avg: Double?, peak: Double) -> String {
+        if let avg { return String(format: "avg %.0f° · peak %.0f°", avg, peak) }
+        return String(format: "peak %.0f°", peak)
+    }
+
+    // MARK: - Date formatting
+
+    private func timeText(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, h:mm a"
+        return f.string(from: date)
+    }
+
+    private func dayText(_ date: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "Today" }
+        if cal.isDateInYesterday(date) { return "Yesterday" }
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d"
+        return f.string(from: date)
     }
 
     private var chargeChart: some View {

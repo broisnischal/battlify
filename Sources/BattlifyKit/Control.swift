@@ -75,6 +75,10 @@ public enum ControlRequest: Codable, Sendable {
     case prepareForSleep
     /// Start (true) or cancel (false) a one-shot charge-to-100% calibration.
     case calibrateToFull(Bool)
+    /// Delete the daemon-written sample history file (`/Library/.../history.jsonl`).
+    /// The GUI can't remove it itself — the directory is root-owned — so it asks
+    /// the daemon, which runs as root.
+    case clearSamples
 }
 
 public struct ControlResponse: Codable, Sendable {
@@ -156,10 +160,11 @@ public enum ControlProtocol {
     ///   v2: added `pauseCharging`.
     ///   v3: MagSafe LED mode (Auto/Status/Off) + post-wake settling.
     ///   v4: prepareForSleep, calibrateToFull, prevent-idle-sleep.
+    ///   v5: clearSamples (delete the daemon-written history file).
     // Note: the dim-on-battery toggle is a plain additive pmset write — an older
     // helper simply ignores an unknown toggle, so it doesn't warrant a version
     // bump or an "outdated helper" warning.
-    public static let version = 4
+    public static let version = 5
 }
 
 public enum ControlError: Error, CustomStringConvertible {
