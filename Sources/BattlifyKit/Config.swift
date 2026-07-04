@@ -51,6 +51,33 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// Hold a power assertion (while plugged in) so the Mac won't idle-sleep,
     /// keeping the charge limit continuously enforced.
     public var preventIdleSleep: Bool
+    /// "Always Active": keep the Mac fully awake with the lid closed (via
+    /// `pmset disablesleep`) so terminal jobs and background tasks keep running.
+    /// Applied only while on AC power — it auto-releases when unplugged to avoid
+    /// draining the battery and overheating a closed, unventilated Mac.
+    public var keepAwake: Bool
+    /// When true, keep-awake only holds while a matching task is running (see
+    /// `keepAwakeProcesses` / `keepAwakeMinCpu`); the Mac sleeps once the work is
+    /// done. When false, keep-awake stays on until you turn it off.
+    public var keepAwakeRequiresTask: Bool
+    /// Process names (matched case-insensitively as a substring of the command)
+    /// that keep the Mac awake while running, e.g. ["ffmpeg", "npm", "docker"].
+    public var keepAwakeProcesses: [String]
+    /// If > 0, any process using at least this %CPU also counts as "busy" and
+    /// keeps the Mac awake (0 = ignore CPU, match names only).
+    public var keepAwakeMinCpu: Double
+    /// Thermal guardrail for keep-awake: if the battery/system runs at/above this
+    /// °C while keep-awake is holding, release it (let the Mac sleep) to protect a
+    /// closed, unventilated machine. 0 = no guardrail.
+    public var keepAwakeMaxTempC: Double
+
+    /// Recurring charging windows (charge/hold/discharge on a weekly timetable).
+    public var schedules: [ChargeSchedule]
+    /// Once-daily "ready by" top-up target.
+    public var readyBy: ReadyByTarget
+    /// Gentle charging: duty-cycle charging on/off to hold a lower average charge
+    /// power, reducing heat and wear near the top. Off = charge at full rate.
+    public var slowCharge: Bool
     /// One-shot calibration: temporarily ignore the limit and charge to 100%,
     /// then auto-clear once full. Batteries benefit from an occasional full cycle.
     public var calibrateToFull: Bool
@@ -70,6 +97,14 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 dischargeEnabled: Bool = false,
                 disableChargingBeforeSleep: Bool = false,
                 preventIdleSleep: Bool = false,
+                keepAwake: Bool = false,
+                keepAwakeRequiresTask: Bool = false,
+                keepAwakeProcesses: [String] = [],
+                keepAwakeMinCpu: Double = 0,
+                keepAwakeMaxTempC: Double = 0,
+                schedules: [ChargeSchedule] = [],
+                readyBy: ReadyByTarget = ReadyByTarget(),
+                slowCharge: Bool = false,
                 calibrateToFull: Bool = false,
                 pauseUntil: Date? = nil,
                 mode: SaveMode = .off) {
@@ -84,6 +119,14 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.dischargeEnabled = dischargeEnabled
         self.disableChargingBeforeSleep = disableChargingBeforeSleep
         self.preventIdleSleep = preventIdleSleep
+        self.keepAwake = keepAwake
+        self.keepAwakeRequiresTask = keepAwakeRequiresTask
+        self.keepAwakeProcesses = keepAwakeProcesses
+        self.keepAwakeMinCpu = keepAwakeMinCpu
+        self.keepAwakeMaxTempC = keepAwakeMaxTempC
+        self.schedules = schedules
+        self.readyBy = readyBy
+        self.slowCharge = slowCharge
         self.calibrateToFull = calibrateToFull
         self.pauseUntil = pauseUntil
         self.mode = mode
@@ -107,6 +150,14 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         dischargeEnabled = try c.decodeIfPresent(Bool.self, forKey: .dischargeEnabled) ?? false
         disableChargingBeforeSleep = try c.decodeIfPresent(Bool.self, forKey: .disableChargingBeforeSleep) ?? false
         preventIdleSleep = try c.decodeIfPresent(Bool.self, forKey: .preventIdleSleep) ?? false
+        keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false
+        keepAwakeRequiresTask = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeRequiresTask) ?? false
+        keepAwakeProcesses = try c.decodeIfPresent([String].self, forKey: .keepAwakeProcesses) ?? []
+        keepAwakeMinCpu = try c.decodeIfPresent(Double.self, forKey: .keepAwakeMinCpu) ?? 0
+        keepAwakeMaxTempC = try c.decodeIfPresent(Double.self, forKey: .keepAwakeMaxTempC) ?? 0
+        schedules = try c.decodeIfPresent([ChargeSchedule].self, forKey: .schedules) ?? []
+        readyBy = try c.decodeIfPresent(ReadyByTarget.self, forKey: .readyBy) ?? ReadyByTarget()
+        slowCharge = try c.decodeIfPresent(Bool.self, forKey: .slowCharge) ?? false
         calibrateToFull = try c.decodeIfPresent(Bool.self, forKey: .calibrateToFull) ?? false
         pauseUntil = try c.decodeIfPresent(Date.self, forKey: .pauseUntil)
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off

@@ -64,6 +64,22 @@ final class ChargeLimitStore: ObservableObject {
     @Published private(set) var discharging = false
     @Published var disableChargingBeforeSleep = false
     @Published var preventIdleSleep = false
+    /// "Always Active": keep the Mac awake with the lid closed (on AC power).
+    @Published var keepAwake = false
+    /// Keep-awake only while a matching task runs, then sleep.
+    @Published var keepAwakeRequiresTask = false
+    /// Process names that keep the Mac awake (comma-free list).
+    @Published var keepAwakeProcesses: [String] = []
+    /// Any process at/above this %CPU counts as busy (0 = names only).
+    @Published var keepAwakeMinCpu: Double = 0
+    /// Release keep-awake above this °C (0 = no guardrail).
+    @Published var keepAwakeMaxTempC: Double = 0
+    /// Recurring charge/hold/discharge windows.
+    @Published var schedules: [ChargeSchedule] = []
+    /// Once-daily "ready by" top-up target.
+    @Published var readyBy = ReadyByTarget()
+    /// Gentle (duty-cycled) charging near the top.
+    @Published var slowCharge = false
     /// One-shot calibration to 100% is in progress (auto-clears when full).
     @Published private(set) var calibrating = false
     /// When charging is scheduled to resume (nil = not paused).
@@ -115,6 +131,14 @@ final class ChargeLimitStore: ObservableObject {
         cfg.dischargeEnabled = dischargeEnabled
         cfg.disableChargingBeforeSleep = disableChargingBeforeSleep
         cfg.preventIdleSleep = preventIdleSleep
+        cfg.keepAwake = keepAwake
+        cfg.keepAwakeRequiresTask = keepAwakeRequiresTask
+        cfg.keepAwakeProcesses = keepAwakeProcesses
+        cfg.keepAwakeMinCpu = keepAwakeMinCpu
+        cfg.keepAwakeMaxTempC = keepAwakeMaxTempC
+        cfg.schedules = schedules
+        cfg.readyBy = readyBy
+        cfg.slowCharge = slowCharge
         currentConfig = cfg
         Task.detached {
             let result = try? ControlClient.send(.setConfig(cfg))
@@ -165,6 +189,39 @@ final class ChargeLimitStore: ObservableObject {
         powerToggles[toggle.rawValue] ?? false
     }
 
+    // MARK: - Charging schedules
+
+    func addSchedule(_ schedule: ChargeSchedule = ChargeSchedule()) {
+        schedules.append(schedule)
+        apply()
+    }
+
+    func updateSchedule(_ schedule: ChargeSchedule) {
+        guard let i = schedules.firstIndex(where: { $0.id == schedule.id }) else { return }
+        schedules[i] = schedule
+        apply()
+    }
+
+    /// Update the schedule in place if it exists, otherwise append it.
+    func updateOrAddSchedule(_ schedule: ChargeSchedule) {
+        if let i = schedules.firstIndex(where: { $0.id == schedule.id }) {
+            schedules[i] = schedule
+        } else {
+            schedules.append(schedule)
+        }
+        apply()
+    }
+
+    func removeSchedule(_ schedule: ChargeSchedule) {
+        schedules.removeAll { $0.id == schedule.id }
+        apply()
+    }
+
+    /// Whichever schedule window is active right now, if any.
+    var activeSchedule: ChargeSchedule? {
+        schedules.first { $0.isActive(at: Date()) }
+    }
+
     /// Set a sleep/idle power feature (routed through the root daemon).
     func setPowerToggle(_ toggle: PowerToggle, _ on: Bool) {
         Task.detached {
@@ -200,6 +257,14 @@ final class ChargeLimitStore: ObservableObject {
         discharging = r.discharging
         disableChargingBeforeSleep = r.config.disableChargingBeforeSleep
         preventIdleSleep = r.config.preventIdleSleep
+        keepAwake = r.config.keepAwake
+        keepAwakeRequiresTask = r.config.keepAwakeRequiresTask
+        keepAwakeProcesses = r.config.keepAwakeProcesses
+        keepAwakeMinCpu = r.config.keepAwakeMinCpu
+        keepAwakeMaxTempC = r.config.keepAwakeMaxTempC
+        schedules = r.config.schedules
+        readyBy = r.config.readyBy
+        slowCharge = r.config.slowCharge
         calibrating = r.config.calibrateToFull
         pauseUntil = r.config.pauseUntil
 

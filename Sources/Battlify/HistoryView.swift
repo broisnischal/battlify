@@ -37,12 +37,74 @@ struct HistoryView: View {
                     }
                 }
 
+                wearSection
                 lidSessionsSection
             }
             .padding(18)
         }
         .scrollIndicators(.hidden)
         .frame(width: 560, height: 540)
+    }
+
+    // MARK: - Wear attribution
+
+    @ViewBuilder
+    private var wearSection: some View {
+        let r = model.wearReport
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("What's Aging Your Battery")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                if r.hasData {
+                    Text("last 30 days").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if !r.hasData {
+                Text("Not enough history yet. Battlify records a sample every 5 minutes — check back after a day or two of use.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(r.contributors.enumerated()), id: \.element.id) { i, c in
+                        if i > 0 { Divider() }
+                        wearRow(c)
+                    }
+                }
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+
+    private func wearRow(_ c: WearContributor) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: wearIcon(c.severity))
+                .foregroundStyle(wearColor(c.severity))
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(c.title).font(.callout.weight(.medium))
+                Text(c.detail).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    private func wearIcon(_ s: WearContributor.Severity) -> String {
+        switch s {
+        case .ok: return "checkmark.circle.fill"
+        case .minor: return "exclamationmark.circle.fill"
+        case .significant: return "exclamationmark.triangle.fill"
+        }
+    }
+    private func wearColor(_ s: WearContributor.Severity) -> Color {
+        switch s {
+        case .ok: return .green
+        case .minor: return .yellow
+        case .significant: return .orange
+        }
     }
 
     // MARK: - Lid-closed sessions

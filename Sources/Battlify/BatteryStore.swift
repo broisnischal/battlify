@@ -16,6 +16,8 @@ extension Notification.Name {
 @MainActor
 final class BatteryStore: ObservableObject {
     @Published private(set) var snapshot: BatterySnapshot = .unknown
+    /// Live power flow (adapter/battery/system watts). Updated with the snapshot.
+    @Published private(set) var powerFlow: PowerFlow = .unknown
 
     private var timer: Timer?
     private var runLoopSource: CFRunLoopSource?
@@ -54,6 +56,7 @@ final class BatteryStore: ObservableObject {
 
     func refresh() {
         snapshot = BatteryMonitor.read()
+        powerFlow = PowerMonitor.read()
     }
 
     private func startPolling() {

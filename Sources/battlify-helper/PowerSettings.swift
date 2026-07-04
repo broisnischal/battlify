@@ -44,4 +44,15 @@ enum PowerSettings {
     static func set(_ toggle: PowerToggle, _ on: Bool) -> Bool {
         Shell.run("/usr/bin/pmset", [toggle.scope.rawValue, toggle.rawValue, on ? "1" : "0"]) != nil
     }
+
+    /// Disable *all* sleep — idle and lid-close (clamshell) — so the Mac stays
+    /// fully awake with the lid shut. This is the only supported way to keep
+    /// running with the lid closed; no public IOPMAssertion prevents clamshell
+    /// sleep. Requires root, and does NOT persist across reboots (the daemon
+    /// re-applies it from config on startup). Applied to all power sources here;
+    /// the daemon gates *when* it's on (AC only).
+    @discardableResult
+    static func setDisableSleep(_ on: Bool) -> Bool {
+        Shell.run("/usr/bin/pmset", ["-a", "disablesleep", on ? "1" : "0"]) != nil
+    }
 }

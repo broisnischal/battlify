@@ -22,6 +22,7 @@ struct BattlifyApp: App {
     @StateObject private var actions = SystemActions()
     @StateObject private var settings = AppSettings()
     @StateObject private var notifier = NotificationManager()
+    @StateObject private var network = NetworkProfileStore()
 
     var body: some Scene {
         MenuBarExtra {
@@ -36,6 +37,8 @@ struct BattlifyApp: App {
                 .environmentObject(actions)
                 .environmentObject(settings)
                 .environmentObject(notifier)
+                .environmentObject(network)
+                .onAppear { network.chargeLimit = chargeLimit }
         } label: {
             // Kept in its own observing view (below) so it re-renders reliably
             // when the snapshot changes — a label closure that reads the store
@@ -56,6 +59,7 @@ struct BattlifyApp: App {
                 .environmentObject(updater)
                 .environmentObject(settings)
                 .environmentObject(notifier)
+                .environmentObject(network)
         }
         .windowResizability(.contentSize)
 

@@ -8,6 +8,8 @@ import BattlifyKit
 final class HistoryViewModel: ObservableObject {
     @Published private(set) var samples: [BatterySample] = []
     @Published private(set) var lidSessions: [LidSession] = []
+    /// 30-day wear attribution, independent of the chart's `range`.
+    @Published private(set) var wearReport: WearReport = .empty
     @Published var range: HistoryRange = .day
 
     enum HistoryRange: String, CaseIterable, Identifiable {
@@ -49,9 +51,18 @@ final class HistoryViewModel: ObservableObject {
             merged += HistoryStore.load(since: since, from: BattlifyPaths.userHistoryFile)
             merged.sort { $0.t < $1.t }
             let sessions = LidSessionStore.recent(limit: 30).filter { $0.closedAt >= since }
+
+            // Wear attribution always looks back 30 days, regardless of the chart range.
+            let wearSince = Date().addingTimeInterval(-30 * 86_400)
+            var wearSamples = HistoryStore.load(since: wearSince, from: BattlifyPaths.historyFile)
+            wearSamples += HistoryStore.load(since: wearSince, from: BattlifyPaths.userHistoryFile)
+            wearSamples.sort { $0.t < $1.t }
+            let report = WearAnalysis.analyze(samples: wearSamples, now: Date())
+
             await MainActor.run {
                 self.samples = merged
                 self.lidSessions = sessions
+                self.wearReport = report
             }
         }
     }
