@@ -235,9 +235,13 @@ struct SettingsView: View {
                                   isOn: bind(\.preventIdleSleep))
                         divider
                         toggleRow("Always Active (keep awake with lid closed)",
-                                  "Terminal jobs and background tasks keep running with the lid shut. The display and keyboard backlight switch off while the lid is closed to save power. On AC power only — releases when you unplug. Heavy work with the lid closed runs hot, so keep it ventilated.",
+                                  "Terminal jobs and background tasks keep running with the lid shut. The display and keyboard backlight switch off while the lid is closed to save power. On AC power by default — it releases when you unplug unless you turn on “Also keep awake on battery” below. Heavy work with the lid closed runs hot, so keep it ventilated.",
                                   isOn: bind(\.keepAwake))
                         if chargeLimit.keepAwake {
+                            divider
+                            toggleRow("Also keep awake on battery",
+                                      "Keep running with the lid closed even when unplugged. The battery drains quickly and a closed Mac can run hot — set a temperature guardrail below. Off by default.",
+                                      isOn: bind(\.keepAwakeOnBattery))
                             divider
                             toggleRow("Only while a task is running",
                                       "Stay awake only while a matching process runs, then let the Mac sleep — so an overnight build or download finishes and then it rests.",
