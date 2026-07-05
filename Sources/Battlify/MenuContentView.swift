@@ -131,6 +131,8 @@ struct MenuContentView: View {
                     .font(.system(size: 17, weight: .semibold, design: .rounded))
                     .foregroundColor(.secondary))
                     .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(snap.percentage)))
+                    .animation(.spring(response: 0.45, dampingFraction: 0.9), value: snap.percentage)
                 Spacer()
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(statusLine(snap)).font(.caption)
@@ -158,27 +160,11 @@ struct MenuContentView: View {
 
     /// Signature element: a charge bar that also marks where the limit sits.
     private func chargeGauge(_ snap: BatterySnapshot) -> some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let frac = max(0, min(1, CGFloat(snap.percentage) / 100))
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.10)).frame(height: 8)
-                Capsule().fill(chargeColor(snap))
-                    .frame(width: max(8, w * frac), height: 8)
-                if chargeLimit.limitEnabled {
-                    let x = w * CGFloat(chargeLimit.limit) / 100
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.65))
-                        .frame(width: 2, height: 15)
-                        .position(x: min(max(1, x), w - 1), y: 7.5)
-                }
-            }
-            .frame(height: 15)
-        }
-        .frame(height: 15)
-        .help(chargeLimit.limitEnabled
-              ? "Charge \(snap.percentage)%. The marker shows your \(chargeLimit.limit)% limit."
-              : "Charge \(snap.percentage)%.")
+        ChargeGauge(percentage: snap.percentage,
+                    color: chargeColor(snap),
+                    limitEnabled: chargeLimit.limitEnabled,
+                    limit: chargeLimit.limit,
+                    charging: snap.isCharging)
     }
 
     private func limitCaption(_ snap: BatterySnapshot) -> String {
@@ -452,9 +438,8 @@ struct MenuContentView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableCardButtonStyle())
         .help(help)
     }
 
@@ -550,6 +535,86 @@ struct MenuContentView: View {
     private func formatMinutes(_ minutes: Int) -> String {
         let h = minutes / 60, m = minutes % 60
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+    }
+}
+
+/// The charge bar. Its own view so it can hold the charging-pulse state. Motion
+/// is all in-place (fill width, colour, opacity) so it never changes layout —
+/// the popover never resizes mid-animation. The pulse only runs while charging
+/// AND the popover is open (the view is destroyed on close), so there's no idle
+/// cost — important for a battery app.
+private struct ChargeGauge: View {
+    let percentage: Int
+    let color: Color
+    let limitEnabled: Bool
+    let limit: Int
+    let charging: Bool
+
+    @State private var pulsing = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let frac = max(0, min(1, CGFloat(percentage) / 100))
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.10)).frame(height: 8)
+                Capsule().fill(color)
+                    .frame(width: max(8, w * frac), height: 8)
+                    // Gentle breathing glow while charging (GPU-only opacity anim).
+                    .opacity(charging && pulsing ? 0.55 : 1.0)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.85), value: percentage)
+                    .animation(.easeInOut(duration: 0.35), value: charging)
+                    .animation(charging ? .easeInOut(duration: 1.15).repeatForever(autoreverses: true)
+                                        : .default,
+                               value: pulsing)
+                if limitEnabled {
+                    let x = w * CGFloat(limit) / 100
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.65))
+                        .frame(width: 2, height: 15)
+                        .position(x: min(max(1, x), w - 1), y: 7.5)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: limit)
+                        .transition(.opacity)
+                }
+            }
+            .frame(height: 15)
+        }
+        .frame(height: 15)
+        .onAppear { pulsing = charging }
+        .onChange(of: charging) { _, now in pulsing = now }
+        .help(limitEnabled
+              ? "Charge \(percentage)%. The marker shows your \(limit)% limit."
+              : "Charge \(percentage)%.")
+    }
+}
+
+/// Card button with press + hover micro-interaction. Scale/brightness only —
+/// no layout change — so rows don't reflow. Uses a nested view so the style can
+/// track hover state.
+private struct PressableCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Card(configuration: configuration)
+    }
+
+    private struct Card: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.quaternary.opacity(hovering ? 0.7 : 0.4))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(hovering ? 0.12 : 0), lineWidth: 1)
+                )
+                .scaleEffect(configuration.isPressed ? 0.94 : (hovering ? 1.03 : 1.0))
+                .animation(.spring(response: 0.3, dampingFraction: 0.65), value: configuration.isPressed)
+                .animation(.easeOut(duration: 0.15), value: hovering)
+                .onHover { hovering = $0 }
+        }
     }
 }
 

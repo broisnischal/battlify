@@ -922,10 +922,13 @@ struct BatteryStylePicker: View {
     @Binding var selection: BatteryIconStyle
     let percentage: Int
 
+    @State private var hovering: BatteryIconStyle?
+
     var body: some View {
         HStack(spacing: 8) {
             ForEach(BatteryIconStyle.allCases) { style in
                 let isSelected = style == selection
+                let isHovering = hovering == style
                 VStack(spacing: 6) {
                     Image(nsImage: BatteryIconRenderer.image(
                         style: style, percentage: previewPct, charging: false,
@@ -940,17 +943,24 @@ struct BatteryStylePicker: View {
                 .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.06))
+                        .fill(isSelected ? Color.accentColor.opacity(0.14)
+                              : Color.secondary.opacity(isHovering ? 0.12 : 0.06))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
                 )
+                .scaleEffect(isSelected ? 1.0 : (isHovering ? 1.04 : 1.0))
                 .contentShape(Rectangle())
-                .onTapGesture { selection = style }
+                .onHover { hovering = $0 ? style : (hovering == style ? nil : hovering) }
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.7)) { selection = style }
+                }
                 .help("\(style.displayName) battery")
             }
         }
+        .animation(.easeOut(duration: 0.15), value: hovering)
+        .animation(.spring(response: 0.32, dampingFraction: 0.7), value: selection)
     }
 
     // Show a representative level so the styles are easy to tell apart even at 0%.
