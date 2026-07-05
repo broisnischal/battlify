@@ -257,9 +257,16 @@ final class Daemon: @unchecked Sendable {
 
     private func tick() {
         var cfg = ConfigStore.load()
-        let snap = BatteryMonitor.read()
+        var snap = BatteryMonitor.read()
         let level = snap.percentage
         let now = Date()
+
+        // Prefer the raw SMC `AC-W` reading for physical adapter presence: it
+        // survives force-discharge (when the OS-visible power state flips to
+        // "battery"), so discharge/LED/keep-awake decisions gated on
+        // `onExternalPower` stay stable while we're draining to the limit. Falls
+        // back to IOKit's ExternalConnected/providing-source when AC-W is absent.
+        if let ac = charge.isACPresent() { snap.isExternalConnected = ac }
 
         recordHistoryIfDue(snap)
 
@@ -408,7 +415,9 @@ final class Daemon: @unchecked Sendable {
     /// doesn't survive a reboot, the first tick after startup re-applies it
     /// (`lastDisableSleep` starts nil, forcing a write).
     private func updateKeepAwake(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
-        var want = cfg.keepAwake && snap.isPluggedIn
+        // onExternalPower keeps this stable through a force-discharge (which reads
+        // as "on battery"); it still releases on a genuine unplug.
+        var want = cfg.keepAwake && snap.onExternalPower
 
         // Task-gated: only hold while a matching task is actually running, so the
         // Mac sleeps once the work finishes instead of staying awake forever.
@@ -463,7 +472,10 @@ final class Daemon: @unchecked Sendable {
     /// a limit being enforced, and running on wall power (so we never keep the Mac
     /// awake — and draining — on battery). Released as soon as any of those drop.
     private func updateIdleSleepAssertion(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
-        let want = cfg.preventIdleSleep && cfg.chargeLimitEnabled && snap.isPluggedIn
+        // onExternalPower (not isPluggedIn) so a force-discharge — which reads as
+        // "on battery" — doesn't drop the assertion and let the Mac idle-sleep,
+        // freezing the daemon before it can finish draining to the limit.
+        let want = cfg.preventIdleSleep && cfg.chargeLimitEnabled && snap.onExternalPower
         if want && idleSleepAssertion == 0 {
             var id: IOPMAssertionID = 0
             let ok = IOPMAssertionCreateWithName(
@@ -492,7 +504,14 @@ final class Daemon: @unchecked Sendable {
             && !cfg.calibrateToFull   // calibration is charging up, don't fight it
             && snap.percentage > cfg.chargeLimit
         // … or an active "run on battery" schedule window.
-        let shouldDischarge = snap.isPluggedIn && (limitDischarge || scheduleDischarge)
+        //
+        // Gate on physical adapter presence, NOT isPluggedIn: cutting the adapter
+        // makes macOS report "Battery Power", so isPluggedIn would flip false the
+        // very next tick and we'd restore the adapter — oscillating on/off every
+        // tick and never actually draining. `onExternalPower` stays true while the
+        // cable is connected, so discharge runs continuously until it hits the
+        // limit (or the cable is genuinely unplugged).
+        let shouldDischarge = snap.onExternalPower && (limitDischarge || scheduleDischarge)
 
         let adapterOn = (try? charge.isAdapterEnabled()) ?? true
         if shouldDischarge {
@@ -525,9 +544,9 @@ final class Daemon: @unchecked Sendable {
             target = .off
         case .status:
             if settling { target = .off }               // waiting after wake
-            else if !snap.isPluggedIn { target = .system }
+            else if !snap.onExternalPower { target = .system }  // truly unplugged
             else if desired { target = .orange }        // charging
-            else { target = .green }                    // holding at the limit
+            else { target = .green }                    // holding / discharging to limit
         }
 
         // Re-assert if the actual LED drifted (macOS re-manages it) or changed —
