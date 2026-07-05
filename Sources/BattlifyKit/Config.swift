@@ -54,8 +54,14 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// "Always Active": keep the Mac fully awake with the lid closed (via
     /// `pmset disablesleep`) so terminal jobs and background tasks keep running.
     /// Applied only while on AC power — it auto-releases when unplugged to avoid
-    /// draining the battery and overheating a closed, unventilated Mac.
+    /// draining the battery and overheating a closed, unventilated Mac, unless
+    /// `keepAwakeOnBattery` is set.
     public var keepAwake: Bool
+    /// Opt-in: also keep awake with the lid closed while on battery. Off by
+    /// default because a closed, unventilated Mac kept awake on battery drains
+    /// fast and can run hot — the thermal guardrail (`keepAwakeMaxTempC`) still
+    /// applies as a safety net.
+    public var keepAwakeOnBattery: Bool
     /// When true, keep-awake only holds while a matching task is running (see
     /// `keepAwakeProcesses` / `keepAwakeMinCpu`); the Mac sleeps once the work is
     /// done. When false, keep-awake stays on until you turn it off.
@@ -103,6 +109,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 disableChargingBeforeSleep: Bool = false,
                 preventIdleSleep: Bool = false,
                 keepAwake: Bool = false,
+                keepAwakeOnBattery: Bool = false,
                 keepAwakeRequiresTask: Bool = false,
                 keepAwakeProcesses: [String] = [],
                 keepAwakeMinCpu: Double = 0,
@@ -128,6 +135,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.disableChargingBeforeSleep = disableChargingBeforeSleep
         self.preventIdleSleep = preventIdleSleep
         self.keepAwake = keepAwake
+        self.keepAwakeOnBattery = keepAwakeOnBattery
         self.keepAwakeRequiresTask = keepAwakeRequiresTask
         self.keepAwakeProcesses = keepAwakeProcesses
         self.keepAwakeMinCpu = keepAwakeMinCpu
@@ -160,6 +168,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         disableChargingBeforeSleep = try c.decodeIfPresent(Bool.self, forKey: .disableChargingBeforeSleep) ?? false
         preventIdleSleep = try c.decodeIfPresent(Bool.self, forKey: .preventIdleSleep) ?? false
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false
+        keepAwakeOnBattery = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeOnBattery) ?? false
         keepAwakeRequiresTask = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeRequiresTask) ?? false
         keepAwakeProcesses = try c.decodeIfPresent([String].self, forKey: .keepAwakeProcesses) ?? []
         keepAwakeMinCpu = try c.decodeIfPresent(Double.self, forKey: .keepAwakeMinCpu) ?? 0

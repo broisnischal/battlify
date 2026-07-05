@@ -70,6 +70,8 @@ final class ChargeLimitStore: ObservableObject {
     @Published var preventIdleSleep = false
     /// "Always Active": keep the Mac awake with the lid closed (on AC power).
     @Published var keepAwake = false
+    /// Opt-in: also keep awake with the lid closed on battery (drains fast / warm).
+    @Published var keepAwakeOnBattery = false
     /// Keep-awake only while a matching task runs, then sleep.
     @Published var keepAwakeRequiresTask = false
     /// Process names that keep the Mac awake (comma-free list).
@@ -184,6 +186,7 @@ final class ChargeLimitStore: ObservableObject {
         cfg.disableChargingBeforeSleep = disableChargingBeforeSleep
         cfg.preventIdleSleep = preventIdleSleep
         cfg.keepAwake = keepAwake
+        cfg.keepAwakeOnBattery = keepAwakeOnBattery
         cfg.keepAwakeRequiresTask = keepAwakeRequiresTask
         cfg.keepAwakeProcesses = keepAwakeProcesses
         cfg.keepAwakeMinCpu = keepAwakeMinCpu
@@ -295,6 +298,7 @@ final class ChargeLimitStore: ObservableObject {
         disableChargingBeforeSleep = r.config.disableChargingBeforeSleep
         preventIdleSleep = r.config.preventIdleSleep
         keepAwake = r.config.keepAwake
+        keepAwakeOnBattery = r.config.keepAwakeOnBattery
         keepAwakeRequiresTask = r.config.keepAwakeRequiresTask
         keepAwakeProcesses = r.config.keepAwakeProcesses
         keepAwakeMinCpu = r.config.keepAwakeMinCpu

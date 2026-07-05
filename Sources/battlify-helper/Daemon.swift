@@ -415,9 +415,11 @@ final class Daemon: @unchecked Sendable {
     /// doesn't survive a reboot, the first tick after startup re-applies it
     /// (`lastDisableSleep` starts nil, forcing a write).
     private func updateKeepAwake(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
-        // onExternalPower keeps this stable through a force-discharge (which reads
-        // as "on battery"); it still releases on a genuine unplug.
-        var want = cfg.keepAwake && snap.onExternalPower
+        // On AC by default (onExternalPower keeps this stable through a
+        // force-discharge, which reads as "on battery", yet still releases on a
+        // genuine unplug). With keepAwakeOnBattery opted in, hold regardless of
+        // power source — the thermal guardrail below is the safety net.
+        var want = cfg.keepAwake && (cfg.keepAwakeOnBattery || snap.onExternalPower)
 
         // Task-gated: only hold while a matching task is actually running, so the
         // Mac sleeps once the work finishes instead of staying awake forever.
