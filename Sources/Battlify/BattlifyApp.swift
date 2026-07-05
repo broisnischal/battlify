@@ -107,10 +107,12 @@ struct MenuBarLabel: View {
         // up notification detection (which then runs via Combine, not view lifecycle).
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
         return HStack(spacing: 2) {
-            // Native SF Symbol battery, rendered as an NSImage so the state colour
+            // Custom-drawn battery whose fill tracks the exact percentage, so the
+            // level changes smoothly instead of snapping between the handful of
+            // discrete SF Symbol fills. Rendered as an NSImage so the state colour
             // actually shows in the menu bar (SwiftUI's `.foregroundStyle` is
             // overridden there by the template treatment for status-item labels).
-            Image(nsImage: MenuBarLabel.glyph(snap.menuBarSymbol, tint: tint))
+            Image(nsImage: MenuBarLabel.batteryGlyph(percentage: snap.percentage, tint: tint))
             // A separate bolt only while actually charging (not merely plugged in).
             if snap.isCharging {
                 Image(nsImage: MenuBarLabel.glyph("bolt.fill", tint: tint))
@@ -173,6 +175,57 @@ struct MenuBarLabel: View {
         }
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(config) ?? NSImage()
+        image.isTemplate = tint.isNeutral
+        glyphCache[key] = image
+        return image
+    }
+
+    /// Draw a battery whose inner fill width is proportional to `percentage`, so
+    /// the level tracks the real charge smoothly instead of snapping between the
+    /// five fixed SF Symbol fills (0/25/50/75/100). Neutral tint stays a template
+    /// image so macOS adapts it to the menu-bar colour; coloured states (low/warm/
+    /// charging) draw with a fixed palette colour. Cached per (percentage, tint):
+    /// at most ~101 × tints images, all tiny. Uses the flipped-image drawing
+    /// handler so it re-renders crisply at any screen scale (Retina).
+    @MainActor static func batteryGlyph(percentage: Int, tint: MenuBarTint) -> NSImage {
+        let pct = max(0, min(100, percentage))
+        let key = "batt|\(pct)|\(tint.cacheKey)"
+        if let cached = glyphCache[key] { return cached }
+
+        let color: NSColor = { if case .colored(let c) = tint { return c } else { return .black } }()
+        let lineWidth: CGFloat = 1.0
+        let bodyW: CGFloat = 21, bodyH: CGFloat = 11
+        let capW: CGFloat = 1.6, capGap: CGFloat = 0.6
+        let totalW = bodyW + lineWidth + capGap + capW
+        let totalH = bodyH + lineWidth
+
+        let image = NSImage(size: NSSize(width: totalW, height: totalH), flipped: false) { _ in
+            // Battery body outline (stroke sits inside, hence the half-lineWidth inset).
+            let bodyRect = NSRect(x: lineWidth / 2, y: lineWidth / 2, width: bodyW, height: bodyH)
+            let body = NSBezierPath(roundedRect: bodyRect, xRadius: 2.5, yRadius: 2.5)
+            body.lineWidth = lineWidth
+            color.setStroke(); body.stroke()
+
+            // Positive terminal nub on the right, vertically centred.
+            let capH = bodyH * 0.5
+            let capRect = NSRect(x: bodyRect.maxX + capGap, y: (totalH - capH) / 2, width: capW, height: capH)
+            color.setFill()
+            NSBezierPath(roundedRect: capRect, xRadius: 0.8, yRadius: 0.8).fill()
+
+            // Proportional inner fill. Keep a sliver visible for any non-zero charge
+            // so a nearly-empty battery still reads as "not quite dead".
+            let inset = lineWidth + 0.9
+            let maxFillW = bodyRect.width - inset * 2
+            let frac = CGFloat(pct) / 100
+            if frac > 0 {
+                let fillW = max(1.5, maxFillW * frac)
+                let fillRect = NSRect(x: bodyRect.minX + inset, y: bodyRect.minY + inset,
+                                      width: min(fillW, maxFillW), height: bodyRect.height - inset * 2)
+                color.setFill()
+                NSBezierPath(roundedRect: fillRect, xRadius: 1.2, yRadius: 1.2).fill()
+            }
+            return true
+        }
         image.isTemplate = tint.isNeutral
         glyphCache[key] = image
         return image
