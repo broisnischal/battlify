@@ -543,6 +543,11 @@ struct SettingsView: View {
             helperCard
 
             card("Menu Bar") {
+                pickerRow("Pick how the battery looks in the menu bar. The fill tracks your exact charge.") {
+                    BatteryStylePicker(selection: $settings.batteryIconStyle,
+                                       percentage: battery.snapshot.percentage)
+                }
+                divider
                 toggleRow("Show battery percentage",
                           "Turn off to show just the icon.",
                           isOn: $settings.showMenuBarPercentage)
@@ -908,4 +913,46 @@ struct SettingsView: View {
         let drop = s.dropPercent == 0 ? "no drop" : "−\(s.dropPercent)%"
         return "\(ago) · \(drop)"
     }
+}
+
+/// A row of selectable tiles, one per battery icon style, each previewing the
+/// glyph at the current charge. Mirrors the menu-bar rendering so what you pick
+/// is what you get.
+struct BatteryStylePicker: View {
+    @Binding var selection: BatteryIconStyle
+    let percentage: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(BatteryIconStyle.allCases) { style in
+                let isSelected = style == selection
+                VStack(spacing: 6) {
+                    Image(nsImage: BatteryIconRenderer.image(
+                        style: style, percentage: previewPct, charging: false,
+                        tint: .neutral, height: 22))
+                        .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                        .frame(height: 24)
+                    Text(style.displayName)
+                        .font(.caption2)
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { selection = style }
+                .help("\(style.displayName) battery")
+            }
+        }
+    }
+
+    // Show a representative level so the styles are easy to tell apart even at 0%.
+    private var previewPct: Int { max(35, min(100, percentage)) }
 }
