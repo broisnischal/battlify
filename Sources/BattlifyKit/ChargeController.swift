@@ -24,6 +24,7 @@ public final class ChargeController {
     private let ch0i = "CH0I"
     private let ch0j = "CH0J"
     private let chie = "CHIE"
+    private let acw = "AC-W"    // raw AC/wall power present
 
     public init(smc: SMC) {
         self.smc = smc
@@ -44,6 +45,26 @@ public final class ChargeController {
     private lazy var cachedMagSafeSupported: Bool = smc.keyExists(aclc)
     private lazy var cachedChargingControlSupported: Bool =
         smc.keyExists(ch0b) || smc.keyExists(ch0c) || cachedHasChte
+    private lazy var cachedHasAcw: Bool = smc.keyExists(acw)
+
+    // MARK: - AC / wall power presence
+    //
+    // Physical wall power, read from the raw SMC `AC-W` key. Unlike the IOKit
+    // providing-source flag (and AppleSmartBattery's `ExternalConnected`), this
+    // survives force-discharge: when we disable the adapter so the Mac runs off
+    // battery, the OS-visible "on battery" state flips but `AC-W` still reports
+    // the cable as attached. This is what lets discharge run continuously to the
+    // limit instead of oscillating once the OS thinks it's unplugged.
+
+    /// Whether the raw `AC-W` power-present key is available on this Mac.
+    public var isACPowerReadSupported: Bool { cachedHasAcw }
+
+    /// True when the charger is physically connected, from `AC-W`. Returns nil if
+    /// the key isn't available (caller should fall back to IOKit power state).
+    public func isACPresent() -> Bool? {
+        guard cachedHasAcw, let b = try? smc.read(acw).bytes.first else { return nil }
+        return Int8(bitPattern: b) > 0
+    }
 
     // MARK: - Adapter / force discharge
     //
