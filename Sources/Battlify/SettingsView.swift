@@ -235,7 +235,7 @@ struct SettingsView: View {
                                   isOn: bind(\.preventIdleSleep))
                         divider
                         toggleRow("Always Active (keep awake with lid closed)",
-                                  "Terminal jobs and background tasks keep running with the lid shut. On AC power only — releases when you unplug. Heavy work with the lid closed runs hot, so keep it ventilated.",
+                                  "Terminal jobs and background tasks keep running with the lid shut. The display and keyboard backlight switch off while the lid is closed to save power. On AC power only — releases when you unplug. Heavy work with the lid closed runs hot, so keep it ventilated.",
                                   isOn: bind(\.keepAwake))
                         if chargeLimit.keepAwake {
                             divider
@@ -543,6 +543,11 @@ struct SettingsView: View {
             helperCard
 
             card("Menu Bar") {
+                pickerRow("Pick how the battery looks in the menu bar. The fill tracks your exact charge.") {
+                    BatteryStylePicker(selection: $settings.batteryIconStyle,
+                                       percentage: battery.snapshot.percentage)
+                }
+                divider
                 toggleRow("Show battery percentage",
                           "Turn off to show just the icon.",
                           isOn: $settings.showMenuBarPercentage)
@@ -908,4 +913,56 @@ struct SettingsView: View {
         let drop = s.dropPercent == 0 ? "no drop" : "−\(s.dropPercent)%"
         return "\(ago) · \(drop)"
     }
+}
+
+/// A row of selectable tiles, one per battery icon style, each previewing the
+/// glyph at the current charge. Mirrors the menu-bar rendering so what you pick
+/// is what you get.
+struct BatteryStylePicker: View {
+    @Binding var selection: BatteryIconStyle
+    let percentage: Int
+
+    @State private var hovering: BatteryIconStyle?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(BatteryIconStyle.allCases) { style in
+                let isSelected = style == selection
+                let isHovering = hovering == style
+                VStack(spacing: 6) {
+                    Image(nsImage: BatteryIconRenderer.image(
+                        style: style, percentage: previewPct, charging: false,
+                        tint: .neutral, height: 22))
+                        .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                        .frame(height: 24)
+                    Text(style.displayName)
+                        .font(.caption2)
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isSelected ? Color.accentColor.opacity(0.14)
+                              : Color.secondary.opacity(isHovering ? 0.12 : 0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
+                )
+                .scaleEffect(isSelected ? 1.0 : (isHovering ? 1.04 : 1.0))
+                .contentShape(Rectangle())
+                .onHover { hovering = $0 ? style : (hovering == style ? nil : hovering) }
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.7)) { selection = style }
+                }
+                .help("\(style.displayName) battery")
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: hovering)
+        .animation(.spring(response: 0.32, dampingFraction: 0.7), value: selection)
+    }
+
+    // Show a representative level so the styles are easy to tell apart even at 0%.
+    private var previewPct: Int { max(35, min(100, percentage)) }
 }

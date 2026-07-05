@@ -1,6 +1,7 @@
 import Foundation
 import IOKit
 import IOKit.pwr_mgt
+import BattlifyKit
 
 // kIOMessage* are C macros (iokit_common_msg(...)) not exported to Swift.
 // These are their well-known constant values from <IOKit/IOMessage.h>.
@@ -65,16 +66,5 @@ final class LidMonitor {
     }
 
     /// Reads AppleClamshellState from IOPMrootDomain (true = lid closed).
-    static func isClamshellClosed() -> Bool {
-        let service = IOServiceGetMatchingService(
-            kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
-        guard service != 0 else { return false }
-        defer { IOObjectRelease(service) }
-
-        guard let value = IORegistryEntryCreateCFProperty(
-            service, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?
-            .takeRetainedValue() as? Bool
-        else { return false }
-        return value
-    }
+    static func isClamshellClosed() -> Bool { SystemPower.isClamshellClosed() }
 }

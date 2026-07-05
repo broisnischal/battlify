@@ -33,6 +33,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         // Capture the current state as the baseline so pre-existing conditions
         // don't fire retroactively.
         evaluate(settings: settings, battery: battery, chargeLimit: chargeLimit)
+        // If notifications are already enabled from a previous launch, register with
+        // the system now so the app appears in System Settings › Notifications and
+        // can actually deliver — otherwise it stays unregistered until a transition
+        // happens to request authorization at some unpredictable moment.
+        if settings.notificationsEnabled { ensureAuthorized(promptIfDenied: false) }
         // `objectWillChange` fires *before* the value updates (on whatever thread
         // mutates it), so hop onto the main actor with a Task — that both reads the
         // settled values and is isolation-safe (unlike `assumeIsolated`, which traps
@@ -53,10 +58,16 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     }
 
     /// Called when the user turns notifications on. Requests permission if it's
-    /// undetermined; if it's already denied, points them to System Settings instead
-    /// of silently doing nothing. All hops are via `Task { @MainActor }` so nothing
-    /// runs an isolation assertion on a background queue.
+    /// undetermined; if it's already denied, points them to System Settings.
     func enableRequested() {
+        ensureAuthorized(promptIfDenied: true)
+    }
+
+    /// Register with the notification system and resolve authorization. When
+    /// `promptIfDenied` is true (an explicit user action), a denial opens System
+    /// Settings; at launch it stays silent. All hops go via `Task { @MainActor }`
+    /// so nothing runs an isolation assertion on a background queue.
+    private func ensureAuthorized(promptIfDenied: Bool) {
         center.getNotificationSettings { [weak self] settings in
             let status = settings.authorizationStatus
             Task { @MainActor in
@@ -64,10 +75,10 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
                 switch status {
                 case .notDetermined:
                     self.center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                        Task { @MainActor in if !granted { self.showDeniedAlert() } }
+                        Task { @MainActor in if !granted && promptIfDenied { self.showDeniedAlert() } }
                     }
                 case .denied:
-                    self.showDeniedAlert()
+                    if promptIfDenied { self.showDeniedAlert() }
                 default:
                     break   // already authorized
                 }
@@ -85,11 +96,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
                 guard let self else { return }
                 switch status {
                 case .authorized, .provisional:
-                    self.post("test", "Battlify", "Notifications are working. 🔋")
+                    self.post("test", "Battlify", "Notifications are working.")
                 case .notDetermined:
                     self.center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
                         Task { @MainActor in
-                            if granted { self.post("test", "Battlify", "Notifications are working. 🔋") }
+                            if granted { self.post("test", "Battlify", "Notifications are working.") }
                             else { self.showDeniedAlert() }
                         }
                     }
@@ -188,9 +199,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         content.title = title
         content.body = body
         content.sound = .default
-        center.removePendingNotificationRequests(withIdentifiers: ["battlify.\(id)"])
-        let request = UNNotificationRequest(
-            identifier: "battlify.\(id)", content: content, trigger: nil)
-        center.add(request)
+        // Group all Battlify alerts under one thread in Notification Center.
+        content.threadIdentifier = "battlify"
+        // Clear any prior alert of the same kind (pending or already shown) so they
+        // don't stack up as state flips back and forth.
+        let ident = "battlify.\(id)"
+        center.removePendingNotificationRequests(withIdentifiers: [ident])
+        center.removeDeliveredNotifications(withIdentifiers: [ident])
+        center.add(UNNotificationRequest(identifier: ident, content: content, trigger: nil))
     }
 }

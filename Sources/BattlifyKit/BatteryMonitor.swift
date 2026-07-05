@@ -101,19 +101,20 @@ public enum BatteryMonitor {
         }
 
         let design = props["DesignCapacity"] as? Int
-        // Current full-charge capacity for display (actual mAh the pack holds now).
-        let maxCap = (props["AppleRawMaxCapacity"] as? Int)
-            ?? (props["NominalChargeCapacity"] as? Int)
+        // Full-charge capacity. macOS System Settings derives "Maximum Capacity"
+        // from NominalChargeCapacity / DesignCapacity, so use that same figure for
+        // BOTH the health % and the displayed mAh — otherwise the capacity ratio
+        // (e.g. 5133/6249 = 82%) wouldn't equal the health % shown beside it (85%),
+        // which looks broken. Fall back to the raw/legacy keys only if it's absent.
+        let maxCap = (props["NominalChargeCapacity"] as? Int)
+            ?? (props["AppleRawMaxCapacity"] as? Int)
             ?? (props["MaxCapacity"] as? Int)
 
         snap.designCapacity = design
         snap.maxCapacity = maxCap
 
-        // Health: macOS System Settings derives "Maximum Capacity" from
-        // NominalChargeCapacity / DesignCapacity, so prefer that to match it.
-        let healthCap = (props["NominalChargeCapacity"] as? Int) ?? maxCap
-        if let d = design, let h = healthCap, d > 0 {
-            snap.healthPercent = Int((Double(h) / Double(d) * 100).rounded())
+        if let d = design, let m = maxCap, d > 0 {
+            snap.healthPercent = Int((Double(m) / Double(d) * 100).rounded())
         }
     }
 }

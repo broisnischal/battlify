@@ -107,14 +107,17 @@ struct MenuBarLabel: View {
         // up notification detection (which then runs via Combine, not view lifecycle).
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
         return HStack(spacing: 2) {
-            // Native SF Symbol battery, rendered as an NSImage so the state colour
-            // actually shows in the menu bar (SwiftUI's `.foregroundStyle` is
-            // overridden there by the template treatment for status-item labels).
-            Image(nsImage: MenuBarLabel.glyph(snap.menuBarSymbol, tint: tint))
-            // A separate bolt only while actually charging (not merely plugged in).
-            if snap.isCharging {
-                Image(nsImage: MenuBarLabel.glyph("bolt.fill", tint: tint))
-            }
+            // Battery glyph in the user's chosen style, drawn as an NSImage whose
+            // fill tracks the exact percentage (so the level changes smoothly, not
+            // in coarse steps) and whose colour actually shows in the menu bar —
+            // SwiftUI's `.foregroundStyle` is overridden there by the template
+            // treatment for status-item labels. The charging bolt is drawn inside
+            // the glyph by the renderer, so there's no separate bolt image.
+            Image(nsImage: BatteryIconRenderer.image(
+                style: settings.batteryIconStyle,
+                percentage: snap.percentage,
+                charging: snap.isCharging,
+                tint: tint))
             if settings.showMenuBarPercentage {
                 Text("\(snap.percentage)%")
             }
@@ -156,27 +159,6 @@ struct MenuBarLabel: View {
         return "On battery — \(snap.percentage)%"
     }
 
-    // Glyphs depend only on (symbol, tint), which change rarely, but the label
-    // re-renders on every store update (incl. the 5s power-flow poll). Cache built
-    // images so those re-renders don't rebuild NSImages. Accessed only from the
-    // main-actor view body, so the plain dictionary is safe.
-    @MainActor private static var glyphCache: [String: NSImage] = [:]
-
-    /// Build the status-item glyph. Neutral states stay as adaptive template
-    /// images (match the menu bar); meaningful states use a fixed palette colour.
-    @MainActor static func glyph(_ symbol: String, tint: MenuBarTint) -> NSImage {
-        let key = "\(symbol)|\(tint.cacheKey)"
-        if let cached = glyphCache[key] { return cached }
-        var config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-        if case .colored(let color) = tint {
-            config = config.applying(.init(paletteColors: [color]))
-        }
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(config) ?? NSImage()
-        image.isTemplate = tint.isNeutral
-        glyphCache[key] = image
-        return image
-    }
 }
 
 /// How the menu-bar glyph should be coloured.

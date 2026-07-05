@@ -1,5 +1,33 @@
 # battlify
 
+## 0.9.1
+
+### Patch Changes
+
+- 3073d57: Battery capacity mAh now matches the health percentage.
+
+  The Details view derived "Maximum capacity" (%) from `NominalChargeCapacity` (matching macOS System Settings) but printed the "Capacity" mAh from `AppleRawMaxCapacity`, so the two disagreed — e.g. 5133/6249 mAh (82%) shown right beside a Health of 85%. Both now use the same figure, so the mAh ratio equals the percentage and matches macOS. Verified every displayed value (charge %, charging/plugged state, time remaining, cycles, temperature, health, capacity, and watts) against `pmset`, `ioreg`, and `system_profiler`.
+
+- 86829c6: Premium HugeIcons menu-bar battery + selectable icon themes.
+
+  The menu-bar battery is now drawn from HugeIcons' battery geometry and you can pick from four looks in Settings › Menu Bar: **Rounded** (HugeIcons squircle, smooth proportional fill — the new default), **Bars** (squircle with discrete level bars), **Classic** (traditional rectangular battery), and **Minimal** (clean capsule). All styles fill to your exact charge and draw the charging bolt inside the glyph, and they keep the adaptive template look plus the low/warm/charging colours.
+
+- 71b305b: Always Active: turn off the display and keyboard backlight while the lid is closed.
+
+  When "Always Active" is holding the Mac awake and you close the lid, the daemon now forces the display to sleep (the keyboard backlight follows it) so background jobs keep running without the hidden panel and backlight draining power. It re-triggers each time the lid closes and resets when the lid opens or keep-awake stops holding.
+
+- 621aadc: Subtle animations and micro-interactions in the menu popover and Settings.
+
+  The charge bar now fills with a spring and the limit marker slides when values change; the big percentage rolls with a numeric-text transition; the bar gains a gentle breathing glow while charging; quick-action buttons have press + hover feedback; and the battery-style tiles lift on hover with a spring selection. All motion lives in views that only render while open (popover / Settings), so idle CPU stays at ~0% and the always-visible menu-bar icon is never animated — no background drain on a battery app.
+
+- 5f294f5: Notifications: register at launch, cleaner content, no emojis.
+
+  When notifications are enabled, the app now registers with the system at launch (via a shared authorization path) instead of waiting for an unpredictable state change, so it shows up in System Settings › Notifications and can deliver. Alerts are grouped under one thread and a same-kind alert is cleared (pending and delivered) before re-posting so they don't stack. Removed the emoji from the test-notification message; the charge alerts (limit, heat, low, full) stay plain text.
+
+- 6a600dd: Menu-bar battery icon now fills proportionally to the exact charge.
+
+  The status-item battery was drawn with SF Symbols, which only offer five fixed fills (0/25/50/75/100), so the level appeared to jump in big steps and looked unchanged for wide percentage ranges. It's now a custom-drawn battery whose inner fill width tracks the real percentage, while keeping the adaptive template look and the low/warm/charging colours.
+
 ## 0.8.4
 
 ### Patch Changes

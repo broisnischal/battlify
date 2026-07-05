@@ -14,6 +14,10 @@ final class AppSettings: ObservableObject {
     @Published var colorMenuBarIcon: Bool {
         didSet { defaults.set(colorMenuBarIcon, forKey: Keys.colorIcon) }
     }
+    /// Which battery glyph to draw in the menu bar (see `BatteryIconStyle`).
+    @Published var batteryIconStyle: BatteryIconStyle {
+        didSet { defaults.set(batteryIconStyle.rawValue, forKey: Keys.iconStyle) }
+    }
     /// Post macOS notifications for charge events (limit reached, heat pause, low
     /// battery, fully charged). Off by default so we don't prompt for permission
     /// until the user opts in.
@@ -25,6 +29,7 @@ final class AppSettings: ObservableObject {
     private enum Keys {
         static let showPct = "menubar.showPercentage"
         static let colorIcon = "menubar.colorIcon"
+        static let iconStyle = "menubar.iconStyle"
         static let notifications = "notifications.enabled"
     }
 
@@ -32,6 +37,8 @@ final class AppSettings: ObservableObject {
         // Default both on for first run (matches prior behavior).
         showMenuBarPercentage = defaults.object(forKey: Keys.showPct) as? Bool ?? true
         colorMenuBarIcon = defaults.object(forKey: Keys.colorIcon) as? Bool ?? true
+        batteryIconStyle = (defaults.string(forKey: Keys.iconStyle))
+            .flatMap(BatteryIconStyle.init(rawValue:)) ?? .rounded
         notificationsEnabled = defaults.bool(forKey: Keys.notifications)
     }
 }
