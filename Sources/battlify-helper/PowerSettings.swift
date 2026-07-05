@@ -55,4 +55,15 @@ enum PowerSettings {
     static func setDisableSleep(_ on: Bool) -> Bool {
         Shell.run("/usr/bin/pmset", ["-a", "disablesleep", on ? "1" : "0"]) != nil
     }
+
+    /// Force the display to sleep immediately, which also turns off the keyboard
+    /// backlight (it follows display sleep). Used while "Always Active" holds the
+    /// Mac awake with the lid closed: system sleep is disabled, but there's no
+    /// reason to keep the (hidden) panel and backlight powered. Display sleep is
+    /// independent of `disablesleep`, so this works even while keep-awake holds,
+    /// and with the lid shut there's no user activity to wake it back up.
+    @discardableResult
+    static func displaySleepNow() -> Bool {
+        Shell.run("/usr/bin/pmset", ["displaysleepnow"]) != nil
+    }
 }

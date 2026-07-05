@@ -53,6 +53,11 @@ final class Daemon: @unchecked Sendable {
     // (nil = not yet written this run) so we only shell out to pmset on change.
     private var keepAwakeAssertion: IOPMAssertionID = 0
     private var lastDisableSleep: Bool?
+    // While keep-awake holds with the lid shut, we force the display (and keyboard
+    // backlight) off to save power. This tracks whether we've already done so for
+    // the current lid-closed spell, so we force it once per close rather than every
+    // tick; it resets when the lid opens or keep-awake stops holding.
+    private var displayForcedOffWhileClosed = false
 
     // Charge-power duty cycle, done in long phases to avoid flicker/hardware
     // thrash: each charge/rest phase lasts at least `minChargeDwell`, and the
@@ -435,6 +440,22 @@ final class Daemon: @unchecked Sendable {
         } else if !want && keepAwakeAssertion != 0 {
             IOPMAssertionRelease(keepAwakeAssertion)
             keepAwakeAssertion = 0
+        }
+
+        // With the Mac held awake and the lid shut, the internal panel and
+        // keyboard backlight would otherwise stay powered for nothing. Force the
+        // display to sleep (the keyboard backlight follows it) once per close.
+        // With the lid down there's no input to wake it back up. Reset when the
+        // lid opens or keep-awake stops holding, so the next close re-triggers.
+        let lidClosed = want && SystemPower.isClamshellClosed()
+        if lidClosed {
+            if !displayForcedOffWhileClosed {
+                PowerSettings.displaySleepNow()
+                displayForcedOffWhileClosed = true
+                log("keep-awake: lid closed, display + keyboard backlight off")
+            }
+        } else {
+            displayForcedOffWhileClosed = false
         }
     }
 

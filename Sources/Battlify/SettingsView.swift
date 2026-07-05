@@ -235,7 +235,7 @@ struct SettingsView: View {
                                   isOn: bind(\.preventIdleSleep))
                         divider
                         toggleRow("Always Active (keep awake with lid closed)",
-                                  "Terminal jobs and background tasks keep running with the lid shut. On AC power only — releases when you unplug. Heavy work with the lid closed runs hot, so keep it ventilated.",
+                                  "Terminal jobs and background tasks keep running with the lid shut. The display and keyboard backlight switch off while the lid is closed to save power. On AC power only — releases when you unplug. Heavy work with the lid closed runs hot, so keep it ventilated.",
                                   isOn: bind(\.keepAwake))
                         if chargeLimit.keepAwake {
                             divider
