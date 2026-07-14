@@ -28,6 +28,19 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$BIN_DIR/Battlify" "$CONTENTS/MacOS/Battlify"
 chmod 755 "$CONTENTS/MacOS/Battlify"
 
+# App icon. Ship the prebuilt .icns; regenerate it from the SVG master if it's
+# missing and rsvg-convert is available (see scripts/make-icon.sh).
+ICNS="$REPO_DIR/branding/AppIcon.icns"
+if [[ ! -f "$ICNS" ]] && command -v rsvg-convert >/dev/null 2>&1; then
+    echo "==> AppIcon.icns missing — regenerating from branding/battlify-icon.svg"
+    "$REPO_DIR/scripts/make-icon.sh"
+fi
+if [[ -f "$ICNS" ]]; then
+    cp "$ICNS" "$CONTENTS/Resources/AppIcon.icns"
+else
+    echo "warning: branding/AppIcon.icns not found — app will have no custom icon"
+fi
+
 # Bundle the helper + daemon plist + installer so the app can self-install it.
 cp "$BIN_DIR/battlify-helper" "$CONTENTS/Resources/battlify-helper"
 cp "$REPO_DIR/scripts/com.battlify.helper.plist" "$CONTENTS/Resources/"
@@ -53,6 +66,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key>      <string>Battlify</string>
     <key>CFBundleIdentifier</key>       <string>$BUNDLE_ID</string>
     <key>CFBundleExecutable</key>       <string>Battlify</string>
+    <key>CFBundleIconFile</key>         <string>AppIcon</string>
+    <key>CFBundleIconName</key>         <string>AppIcon</string>
     <key>CFBundlePackageType</key>      <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key>          <string>$VERSION</string>
