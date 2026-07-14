@@ -85,9 +85,10 @@ final class UpdaterManager: ObservableObject {
         installing = true
         lastResult = nil
         let pid = ProcessInfo.processInfo.processIdentifier
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.battlify.app"
         Task.detached {
             do {
-                try await Self.performInstall(from: url, bundlePath: bundlePath, pid: pid)
+                try await Self.performInstall(from: url, bundlePath: bundlePath, pid: pid, bundleID: bundleID)
                 // The swap script now waits for us to quit, then relaunches.
                 await MainActor.run { NSApplication.shared.terminate(nil) }
             } catch {
@@ -119,7 +120,7 @@ final class UpdaterManager: ObservableObject {
     /// Downloads the DMG, mounts it, and hands off to a detached shell script that
     /// waits for this process to exit, swaps the bundle, and relaunches. Runs off
     /// the main actor — it only touches local files, not published state.
-    nonisolated private static func performInstall(from url: URL, bundlePath: String, pid: Int32) async throws {
+    nonisolated private static func performInstall(from url: URL, bundlePath: String, pid: Int32, bundleID: String) async throws {
         let fm = FileManager.default
         let tmp = NSTemporaryDirectory()
         let stamp = UUID().uuidString
@@ -176,8 +177,24 @@ final class UpdaterManager: ObservableObject {
         /bin/rmdir "\(mountPoint)" 2>/dev/null || true
         LSREG="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
         "$LSREG" -f "\(bundlePath)" 2>/dev/null || true
-        echo "launching \(bundlePath)"
-        /usr/bin/open "\(bundlePath)" || /usr/bin/open -a "\(bundlePath)"
+        # Give LaunchServices a moment to settle after the swap+re-register, then
+        # relaunch with verification: `open` occasionally reports success without
+        # actually bringing the app up (freshly-swapped bundle, lingering launch
+        # state). Retry until the process is visible, checking first so we never
+        # spawn a duplicate. `-n` forces a new instance rather than trying to
+        # activate a stale record of the app that just quit; fall back to a plain
+        # open and finally a launch by bundle id.
+        EXEC="\(bundlePath)/Contents/MacOS"
+        /bin/sleep 1
+        for i in 1 2 3 4 5 6; do
+          if /usr/bin/pgrep -f "$EXEC/" >/dev/null 2>&1; then echo "relaunch confirmed (try $i)"; break; fi
+          echo "relaunch attempt $i"
+          /usr/bin/open -n "\(bundlePath)" 2>/dev/null \
+            || /usr/bin/open "\(bundlePath)" 2>/dev/null \
+            || /usr/bin/open -b "\(bundleID)" 2>/dev/null || true
+          /bin/sleep 1.5
+        done
+        /usr/bin/pgrep -f "$EXEC/" >/dev/null 2>&1 || echo "warning: app not visibly running after relaunch attempts"
         echo "done"
         /bin/rm -f "$0"
         """
