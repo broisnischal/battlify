@@ -41,6 +41,33 @@ else
     echo "warning: branding/AppIcon.icns not found — app will have no custom icon"
 fi
 
+# Compile the asset catalog (Assets.car). This is what macOS Notification Center
+# reads to resolve the app icon — a loose .icns alone leaves the notification
+# banner icon blank. Needs actool (full Xcode; present on the CI runner). When
+# it's unavailable (e.g. Command Line Tools only), fall back to the loose .icns
+# and DON'T emit CFBundleIconName, so nothing points at a missing catalog.
+XCASSETS="$REPO_DIR/branding/Assets.xcassets"
+ICON_NAME_PLIST=""
+if [[ -d "$XCASSETS" ]] && xcrun --find actool >/dev/null 2>&1; then
+    echo "==> Compiling asset catalog with actool"
+    if xcrun actool \
+        --compile "$CONTENTS/Resources" \
+        --app-icon AppIcon \
+        --platform macosx \
+        --minimum-deployment-target 14.0 \
+        --output-partial-info-plist "$DIST/actool-partial.plist" \
+        "$XCASSETS" >/dev/null; then
+        if [[ -f "$CONTENTS/Resources/Assets.car" ]]; then
+            ICON_NAME_PLIST=$'\n    <key>CFBundleIconName</key>         <string>AppIcon</string>'
+            echo "==> Assets.car compiled — notifications will resolve the icon"
+        fi
+    else
+        echo "warning: actool failed — shipping loose .icns only (notification icon may be blank)"
+    fi
+else
+    echo "==> actool unavailable — shipping loose .icns only (notification icon needs a CI build)"
+fi
+
 # Bundle the helper + daemon plist + installer so the app can self-install it.
 cp "$BIN_DIR/battlify-helper" "$CONTENTS/Resources/battlify-helper"
 cp "$REPO_DIR/scripts/com.battlify.helper.plist" "$CONTENTS/Resources/"
@@ -66,8 +93,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key>      <string>Battlify</string>
     <key>CFBundleIdentifier</key>       <string>$BUNDLE_ID</string>
     <key>CFBundleExecutable</key>       <string>Battlify</string>
-    <key>CFBundleIconFile</key>         <string>AppIcon</string>
-    <key>CFBundleIconName</key>         <string>AppIcon</string>
+    <key>CFBundleIconFile</key>         <string>AppIcon</string>$ICON_NAME_PLIST
     <key>CFBundlePackageType</key>      <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key>          <string>$VERSION</string>
