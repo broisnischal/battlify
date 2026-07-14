@@ -99,10 +99,16 @@ struct MenuBarLabel: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var notifier: NotificationManager
 
+    /// Animation tick for the pixel style's charging sweep. Only advances while
+    /// the sweep is actually visible (pixel style + charging), so the timer task
+    /// costs nothing the rest of the time.
+    @State private var animFrame = 0
+
     var body: some View {
         let snap = battery.snapshot
         // Respect the "color icon by state" preference; otherwise stay neutral.
         let tint: MenuBarTint = settings.colorMenuBarIcon ? tint(for: snap) : .neutral
+        let animating = settings.batteryIconStyle == .pixel && snap.isCharging
         // The label renders at launch, so this is a reliable one-shot hook to wire
         // up notification detection (which then runs via Combine, not view lifecycle).
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
@@ -117,12 +123,23 @@ struct MenuBarLabel: View {
                 style: settings.batteryIconStyle,
                 percentage: snap.percentage,
                 charging: snap.isCharging,
-                tint: tint))
+                tint: tint,
+                frame: animFrame))
             if settings.showMenuBarPercentage {
                 Text("\(snap.percentage)%")
             }
         }
         .help(helpText(snap))
+        // Drive the pixel charging sweep: tick roughly every 0.6 s while it's
+        // visible. `task(id:)` cancels the loop the moment charging stops or the
+        // user picks another style, and restarts it when they come back.
+        .task(id: animating) {
+            guard animating else { animFrame = 0; return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                animFrame &+= 1
+            }
+        }
     }
 
     /// Icon tint: red warns when the battery is running warm or critically low,
