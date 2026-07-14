@@ -43,9 +43,18 @@ final class AutomationStore: ObservableObject {
     private var wifiWasOn = false
     private var bluetoothWasOn = false
 
-    // Mode to restore to on wake when super-save-on-lid-close fired.
-    private var savedMode: SaveMode?
+    // Power state captured just before a deep-save lid close, restored verbatim on
+    // wake. Deep save only touches Low Power Mode and the sleep/wake power toggles —
+    // never the charge mode/limit — so we snapshot exactly those and put them back,
+    // leaving the user's saved charge settings untouched. (Previously we re-applied
+    // a whole SaveMode on wake, which clobbered custom charge-limit/heat tweaks and
+    // reset everything to Off when the mode couldn't be read.)
+    private var savedLowPowerMode: Bool?
+    private var savedPowerToggles: [String: Bool]?
     private var deepSaveActive = false
+
+    /// The sleep/wake power toggles deep save turns off (and restores on wake).
+    private static let deepSaveToggles: [PowerToggle] = [.powerNap, .wakeOnNetwork, .tcpKeepAlive]
 
     private enum Keys {
         static let wifi = "automation.wifiOffOnLidClose"
@@ -133,9 +142,24 @@ final class AutomationStore: ObservableObject {
         completeLidSession()
 
         if deepSaveActive {
-            // Restore Low Power Mode + sleep settings immediately; radios with retry.
-            _ = try? ControlClient.send(.applyMode(savedMode ?? .off))
-            savedMode = nil
+            // Restore exactly what deep save changed — Low Power Mode + the sleep/wake
+            // toggles — to their pre-close values. We deliberately do NOT re-apply a
+            // SaveMode here: that would overwrite the user's saved charge limit/heat
+            // settings (and reset to Off if the mode was unknown). Radios restore with
+            // retry below. A nil snapshot means we never captured state, so leave the
+            // current settings alone rather than guessing.
+            if let lpm = savedLowPowerMode {
+                _ = try? ControlClient.send(.setLowPowerMode(lpm))
+            }
+            if let toggles = savedPowerToggles {
+                for toggle in Self.deepSaveToggles {
+                    if let on = toggles[toggle.rawValue] {
+                        _ = try? ControlClient.send(.setPowerToggle(toggle, on))
+                    }
+                }
+            }
+            savedLowPowerMode = nil
+            savedPowerToggles = nil
             deepSaveActive = false
             restoreRadios()
         } else if restoreOnWake {
@@ -187,9 +211,11 @@ final class AutomationStore: ObservableObject {
     /// Maximize savings as the lid closes. Calls are synchronous so they finish
     /// before the system is allowed to sleep.
     private func enterDeepSave() {
-        // Remember the current mode so we can restore it on wake.
+        // Snapshot the exact power state we're about to change so we can restore it
+        // verbatim on wake — without touching the charge mode/limit config.
         if let status = try? ControlClient.send(.getStatus) {
-            savedMode = status.config.mode
+            savedLowPowerMode = status.lowPowerModeEnabled
+            savedPowerToggles = status.powerToggles
         }
         // Radios off (works even without the daemon).
         wifiWasOn = RadioControl.isWiFiOn

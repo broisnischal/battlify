@@ -85,8 +85,12 @@ final class NetworkProfileStore: NSObject, ObservableObject {
         guard ssid != lastAppliedSSID else { return }
         lastAppliedSSID = ssid
 
+        // Only switch when a rule (or the default) resolves to a mode that isn't
+        // already active. Re-applying the current mode would overwrite any custom
+        // charge-limit/heat tweaks the user made within it — so joining a network on
+        // launch or reconnecting shouldn't silently reset their settings.
         let mode = profiles.first(where: { $0.ssid == ssid })?.mode ?? defaultMode
-        if let mode { chargeLimit?.applyMode(mode) }
+        if let mode, mode != chargeLimit?.mode { chargeLimit?.applyMode(mode) }
     }
 
     // MARK: - Persistence
