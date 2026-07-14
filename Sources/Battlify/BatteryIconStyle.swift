@@ -44,19 +44,38 @@ enum BatteryIconRenderer {
 
     /// Menu-bar / preview glyph for a style. `tint` neutral ⇒ template image that
     /// adapts to the bar; a colour ⇒ fixed palette colour. Cached per input.
-    /// `frame` is a monotonically increasing animation tick; only the pixel style
-    /// uses it (charging sweep) — for every other style it's ignored, and the
-    /// cache key stores the *resolved* fill state so the cache stays bounded no
-    /// matter how high the tick counts.
+    ///
+    /// `frame` is a monotonically increasing animation tick: while charging, the
+    /// pixel style sweeps its fill columns and every other style pulses its bolt;
+    /// with `celebrating` the glyph blinks at full fill (the "charge complete"
+    /// flash). The cache key stores the *resolved* animation state — fill count,
+    /// pulse phase, or blink on/off — so it stays bounded no matter how high the
+    /// tick counts.
     @MainActor static func image(style: BatteryIconStyle, percentage: Int,
                                  charging: Bool, tint: MenuBarTint,
-                                 height: CGFloat = 14, frame: Int = 0) -> NSImage {
+                                 height: CGFloat = 14, frame: Int = 0,
+                                 celebrating: Bool = false) -> NSImage {
         let pct = max(0, min(100, percentage))
-        let anim = style == .pixel ? pixelFillCount(pct: pct, charging: charging, frame: frame) : 0
-        let key = "\(style.rawValue)|\(pct)|\(charging)|\(tint.cacheKey)|\(height)|\(anim)"
+        let anim: Int
+        if celebrating {
+            anim = phase(frame, 2)                                          // blink on/off
+        } else if charging && style == .pixel {
+            anim = pixelFillCount(pct: pct, charging: charging, frame: frame) // sweep step
+        } else if charging {
+            anim = phase(frame, boltPulse.count)                             // bolt pulse
+        } else {
+            anim = 0
+        }
+        let key = "\(style.rawValue)|\(pct)|\(charging)|\(celebrating)|\(tint.cacheKey)|\(height)|\(anim)"
         if let cached = cache[key] { return cached }
 
-        let color: NSColor = { if case .colored(let c) = tint { return c } else { return .black } }()
+        let baseColor: NSColor = { if case .colored(let c) = tint { return c } else { return .black } }()
+        // Celebration renders the glyph at 100% with no bolt, blinking by alpha
+        // (alpha survives the template treatment, so it works monochrome too).
+        let effPct = celebrating ? 100 : pct
+        let effCharging = celebrating ? false : charging
+        let color = (celebrating && phase(frame, 2) == 1)
+            ? baseColor.withAlphaComponent(0.45) : baseColor
         let s = height / vbH
         let size = NSSize(width: vbW * s, height: vbH * s)
 
@@ -66,7 +85,7 @@ enum BatteryIconRenderer {
             cg.translateBy(x: 0, y: size.height)
             cg.scaleBy(x: s, y: -s)
             cg.translateBy(x: -vbMinX, y: -vbMinY)
-            draw(style: style, pct: pct, charging: charging, color: color, frame: frame)
+            draw(style: style, pct: effPct, charging: effCharging, color: color, frame: frame)
             return true
         }
         image.isTemplate = tint.isNeutral
@@ -83,12 +102,12 @@ enum BatteryIconRenderer {
         switch style {
         case .rounded:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
-            if charging { strokeSVG(boltPath, width: 1.7) }
+            if charging { drawBolt(color, frame: frame) }
             else { fillBar(x: 4.6, y: 9, maxW: 11.6, h: 6, r: 1.5, frac: frac) }
 
         case .bars:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
-            if charging { strokeSVG(boltPath, width: 1.7) }
+            if charging { drawBolt(color, frame: frame) }
             else { drawBars(frac: frac) }
 
         case .classic:
@@ -97,19 +116,37 @@ enum BatteryIconRenderer {
             body.lineWidth = stroke; body.stroke()
             NSBezierPath(roundedRect: NSRect(x: 19, y: 9.6, width: 1.9, height: 4.8),
                          xRadius: 0.7, yRadius: 0.7).fill()   // terminal nub
-            if charging { strokeSVG(boltPath, width: 1.7) }
+            if charging { drawBolt(color, frame: frame) }
             else { fillBar(x: 3.7, y: 8.7, maxW: 13, h: 6.6, r: 1.2, frac: frac) }
 
         case .minimal:
             let pill = NSBezierPath(roundedRect: NSRect(x: 2, y: 8, width: 18, height: 8),
                                     xRadius: 4, yRadius: 4)
             pill.lineWidth = stroke; pill.stroke()
-            if charging { strokeSVG(boltPath, width: 1.7) }
+            if charging { drawBolt(color, frame: frame) }
             else { fillBar(x: 3.6, y: 9.6, maxW: 14.8, h: 4.8, r: 2.4, frac: frac) }
 
         case .pixel:
             drawPixel(fill: pixelFillCount(pct: pct, charging: charging, frame: frame))
         }
+    }
+
+    // MARK: - Animation helpers
+
+    /// Bolt opacity cycle while charging — a slow breathe, not a hard blink.
+    private static let boltPulse: [CGFloat] = [1.0, 0.72, 0.45, 0.72]
+
+    /// Non-negative modulo, so an animation tick can never index out of range.
+    private static func phase(_ frame: Int, _ n: Int) -> Int {
+        ((frame % n) + n) % n
+    }
+
+    /// The charging bolt, pulsing with the animation tick. Restores the stroke
+    /// colour afterwards so the rest of the glyph draws at full opacity.
+    private static func drawBolt(_ color: NSColor, frame: Int) {
+        color.withAlphaComponent(boltPulse[phase(frame, boltPulse.count)]).setStroke()
+        strokeSVG(boltPath, width: 1.7)
+        color.setStroke()
     }
 
     // MARK: - Pixel style (8-bit battery)

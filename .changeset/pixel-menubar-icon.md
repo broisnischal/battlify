@@ -2,10 +2,15 @@
 "battlify": minor
 ---
 
-New "Pixel" menu-bar icon style — an animated 8-bit battery.
+Animated menu-bar battery icons.
 
-A chunky pixel-art battery glyph with notched corners joins the menu-bar style
-picker. While charging, its fill sweeps from the current level up to full — one
-column at a time, like a classic handheld — and sits still at the exact level the
-rest of the time. The animation timer only runs while the sweep is visible (Pixel
-style selected and actually charging), so it costs nothing otherwise.
+- New "Pixel" icon style: a chunky 8-bit battery with notched corners. While
+  charging, its fill sweeps from the current level up to full, one column at a
+  time — like a classic handheld.
+- Every other style's charging bolt now gently pulses while charging.
+- When charging completes — the battery reaches 100% or lands at your charge
+  limit — the icon flashes green a few times (or blinks monochrome when icon
+  coloring is off), then settles.
+- Micro-details: animations respect the system Reduce Motion setting, never run
+  while discharging (a battery saver shouldn't spend cycles on battery), and the
+  driving timer only exists while an animation is actually visible.
