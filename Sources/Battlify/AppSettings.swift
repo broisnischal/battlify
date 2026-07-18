@@ -17,10 +17,6 @@ final class AppSettings: ObservableObject {
     @Published var notificationsEnabled: Bool {
         didSet { defaults.set(notificationsEnabled, forKey: Keys.notifications) }
     }
-    /// Play the full-screen dot-matrix charging animation when the charger is plugged in.
-    @Published var chargingAnimationEnabled: Bool {
-        didSet { defaults.set(chargingAnimationEnabled, forKey: Keys.chargeAnim) }
-    }
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -28,7 +24,6 @@ final class AppSettings: ObservableObject {
         static let colorIcon = "menubar.colorIcon"
         static let iconStyle = "menubar.iconStyle"
         static let notifications = "notifications.enabled"
-        static let chargeAnim = "chargingAnimation.enabled"
     }
 
     init() {
@@ -37,6 +32,5 @@ final class AppSettings: ObservableObject {
         batteryIconStyle = (defaults.string(forKey: Keys.iconStyle))
             .flatMap(BatteryIconStyle.init(rawValue:)) ?? .rounded
         notificationsEnabled = defaults.bool(forKey: Keys.notifications)
-        chargingAnimationEnabled = defaults.object(forKey: Keys.chargeAnim) as? Bool ?? true
     }
 }

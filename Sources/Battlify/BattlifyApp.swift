@@ -24,7 +24,6 @@ struct BattlifyApp: App {
     @StateObject private var settings = AppSettings()
     @StateObject private var notifier = NotificationManager()
     @StateObject private var network = NetworkProfileStore()
-    @StateObject private var chargingOverlay = ChargingOverlay()
 
     var body: some Scene {
         MenuBarExtra {
@@ -49,7 +48,7 @@ struct BattlifyApp: App {
             // Its own observing view so it re-renders reliably — a label closure that
             // reads the store inline can render once and go stale.
             MenuBarLabel(battery: battery, chargeLimit: chargeLimit,
-                         settings: settings, notifier: notifier, chargingOverlay: chargingOverlay)
+                         settings: settings, notifier: notifier)
         }
         .menuBarExtraStyle(.window)
 
@@ -65,7 +64,6 @@ struct BattlifyApp: App {
                 .environmentObject(settings)
                 .environmentObject(notifier)
                 .environmentObject(network)
-                .environmentObject(chargingOverlay)
         }
         .windowResizability(.contentSize)
 
@@ -98,7 +96,6 @@ struct MenuBarLabel: View {
     @ObservedObject var chargeLimit: ChargeLimitStore
     @ObservedObject var settings: AppSettings
     @ObservedObject var notifier: NotificationManager
-    var chargingOverlay: ChargingOverlay
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
     /// never while discharging (a battery saver shouldn't burn cycles on battery).
@@ -119,7 +116,6 @@ struct MenuBarLabel: View {
         let animating = !reduceMotion && (snap.isCharging || celebrating)
         // The label renders at launch — a reliable hook to start notification detection.
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
-        chargingOverlay.startIfNeeded(settings: settings, battery: battery)
         return HStack(spacing: 2) {
             // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
             // labels, and the renderer draws the charging bolt inside the glyph.
