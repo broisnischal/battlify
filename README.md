@@ -85,6 +85,10 @@ that gap two ways, and you choose which:
 - **Lid / clamshell sensor** that warns you when you're docked-and-closed at a high
   charge — the worst-case aging scenario.
 - **Quick Actions** — dim or brighten the display, blank it, or sleep the Mac.
+- **Keep Awake (Caffeine)** — one tap stops the display from turning off and the Mac
+  from idle-sleeping, on battery or plugged in, until you turn it back off (or a timer
+  you set runs out). Closing the lid still sleeps, and it releases the moment you quit
+  Battlify — so it can never strand your Mac awake.
 - **Launch at login** and **in-app auto-update**, and it'll tell you if the helper
   ever falls out of date so features don't silently stop working.
 
