@@ -9,6 +9,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var license: LicenseManager
     @EnvironmentObject private var updater: UpdaterManager
     @EnvironmentObject private var actions: SystemActions
+    @EnvironmentObject private var caffeine: CaffeineManager
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near the typical full height so the popover doesn't visibly grow on
@@ -425,8 +426,64 @@ struct MenuContentView: View {
                              help: "Put the Mac to sleep now") {
                     actions.sleepNow()
                 }
+                caffeineButton
+            }
+            if caffeine.active {
+                Label(caffeineStatusText, systemImage: "cup.and.saucer.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// "Caffeine" tile: tap toggles keep-awake indefinitely; right-click for a timed
+    /// session. Tinted amber while it's holding the Mac awake. Built as a plain button
+    /// (not a Menu) so it stays the same width as the other Quick Action tiles.
+    private var caffeineButton: some View {
+        Button {
+            caffeine.toggle()
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: caffeine.active ? "cup.and.saucer.fill" : "cup.and.saucer")
+                    .font(.system(size: 15))
+                Text("Awake").font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .foregroundStyle(caffeine.active ? Color.yellow : Color.primary)
+            .background(caffeine.active
+                        ? AnyShapeStyle(Color.yellow.opacity(0.22))
+                        : AnyShapeStyle(.quaternary.opacity(0.4)),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(caffeine.active
+              ? "Keeping the Mac awake — the display won't sleep. Click to turn off; right-click for a timer."
+              : "Keep the Mac awake — display and system won't sleep. Click for on; right-click to set a timer.")
+        .contextMenu {
+            if caffeine.active {
+                Button("Turn Off") { caffeine.deactivate() }
+                Divider()
+            }
+            ForEach(CaffeineManager.Duration.allCases) { duration in
+                Button(duration.title) { caffeine.activate(duration) }
+            }
+        }
+    }
+
+    /// Caption under Quick Actions while keep-awake is on.
+    private var caffeineStatusText: String {
+        guard let until = caffeine.expiresAt else {
+            return "Keeping awake — display & system won't sleep"
+        }
+        let remaining = max(0, until.timeIntervalSinceNow)
+        let mins = Int((remaining / 60).rounded())
+        if mins >= 60 {
+            let h = mins / 60, m = mins % 60
+            return m > 0 ? "Keeping awake — \(h)h \(m)m left" : "Keeping awake — \(h)h left"
+        }
+        return "Keeping awake — \(max(1, mins))m left"
     }
 
     private func actionButton(_ title: String, systemImage: String, help: String,
