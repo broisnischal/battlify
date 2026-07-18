@@ -72,7 +72,7 @@ struct MenuContentView: View {
 
     private func updateBanner(_ update: AppUpdate) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
+            HugeIcon("download", size: 16).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Update available — v\(update.version)")
                     .font(.callout.weight(.medium))
@@ -95,7 +95,7 @@ struct MenuContentView: View {
     private var licenseBanner: some View {
         let expired = !license.isPro
         HStack(spacing: 10) {
-            Image(systemName: expired ? "lock.fill" : "sparkles")
+            HugeIcon(expired ? "lock" : "sparkles", size: 16)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(expired ? "Trial ended — controls locked" : license.statusText)
@@ -118,10 +118,7 @@ struct MenuContentView: View {
     private func header(_ snap: BatterySnapshot) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 10) {
-                Image(systemName: snap.menuBarSymbol)
-                    .font(.system(size: 19, weight: .regular))
-                    .foregroundStyle(chargeColor(snap))
-                    .frame(width: 24)
+                HugeIcon(snap.isCharging ? "charging" : "battery", size: 26).foregroundStyle(chargeColor(snap)).frame(width: 26)
                 (Text("\(snap.percentage)")
                     .font(.system(size: 32, weight: .semibold, design: .rounded))
                  + Text("%")
@@ -137,7 +134,7 @@ struct MenuContentView: View {
                         Text(eta).font(.caption2).foregroundStyle(.secondary)
                     }
                     if let watts = liveWattsLine(snap) {
-                        Label(watts, systemImage: "bolt.fill")
+                        Label { Text(watts) } icon: { HugeIcon("bolt", size: 10) }
                             .font(.caption2).foregroundStyle(.secondary)
                             .monospacedDigit()
                             .labelStyle(.titleAndIcon)
@@ -188,7 +185,7 @@ struct MenuContentView: View {
     @ViewBuilder
     private var modeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Save Mode", "gauge.with.dots.needle.50percent")
+            sectionHeader("Save Mode", "gauge")
             if chargeLimit.daemonAvailable {
                 Picker("", selection: Binding(
                     get: { chargeLimit.mode },
@@ -222,7 +219,7 @@ struct MenuContentView: View {
     private var pauseChargingControl: some View {
         if chargeLimit.isPaused {
             HStack(spacing: 8) {
-                Image(systemName: "pause.circle").foregroundStyle(.secondary)
+                HugeIcon("pause", size: 17).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Charging paused").font(.callout)
                     Text(pauseCaption()).font(.caption2).foregroundStyle(.secondary)
@@ -238,7 +235,7 @@ struct MenuContentView: View {
                 Divider()
                 Button("Pause until I resume") { chargeLimit.pauseCharging(minutes: -1) }
             } label: {
-                Label("Pause charging…", systemImage: "pause.circle")
+                Label { Text("Pause charging…") } icon: { HugeIcon("pause", size: 14) }
             }
             .menuStyle(.borderlessButton)
             .font(.callout)
@@ -250,7 +247,7 @@ struct MenuContentView: View {
     private var calibrationControl: some View {
         if chargeLimit.calibrating {
             HStack(spacing: 8) {
-                Image(systemName: "bolt.badge.clock").foregroundStyle(.secondary)
+                HugeIcon("timer", size: 17).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Charging to 100%").font(.callout)
                     Text("Limit resumes automatically once full.")
@@ -263,7 +260,7 @@ struct MenuContentView: View {
             Button {
                 chargeLimit.startCalibration()
             } label: {
-                Label("Charge to 100% once", systemImage: "bolt.badge.clock")
+                Label { Text("Charge to 100% once") } icon: { HugeIcon("timer", size: 14) }
             }
             .buttonStyle(.borderless)
             .font(.callout)
@@ -284,14 +281,14 @@ struct MenuContentView: View {
     @ViewBuilder
     private var chargeLimitSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Charge Limit", "bolt.batteryblock.fill")
+            sectionHeader("Charge Limit", "battery")
 
             if chargeLimit.daemonAvailable {
                 pauseChargingControl
 
                 if chargeLimit.daemonOutdated {
                     hintLabel("Helper is outdated — reinstall it from Settings.",
-                              systemImage: "exclamationmark.triangle.fill")
+                              systemImage: "alert")
                 }
 
                 switchRow("Limit charging", Binding(
@@ -353,12 +350,12 @@ struct MenuContentView: View {
 
                 // Live state: why charging is currently paused.
                 if chargeLimit.discharging {
-                    hintLabel("Discharging to reach the limit…", systemImage: "battery.25")
+                    hintLabel("Discharging to reach the limit…", systemImage: "batteryLow")
                 } else if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
                     switch reason {
-                    case "heat":     hintLabel("Charging paused — battery is warm", systemImage: "thermometer.high")
-                    case "limit":    hintLabel("Charging paused to hold limit", systemImage: "pause.circle.fill")
-                    case "settling": hintLabel("Settling after wake — charging resumes shortly", systemImage: "moon.zzz")
+                    case "heat":     hintLabel("Charging paused — battery is warm", systemImage: "thermometer")
+                    case "limit":    hintLabel("Charging paused to hold limit", systemImage: "pause")
+                    case "settling": hintLabel("Settling after wake — charging resumes shortly", systemImage: "sleep")
                     default:         EmptyView()
                     }
                 }
@@ -370,7 +367,7 @@ struct MenuContentView: View {
 
     @ViewBuilder
     private var helperMissingView: some View {
-        Label("Helper not installed", systemImage: "exclamationmark.triangle")
+        Label { Text("Helper not installed") } icon: { HugeIcon("alert", size: 14) }
             .font(.callout)
             .foregroundStyle(.secondary)
         Text("Charge limiting, Low Power Mode, and sleep settings need the root helper.")
@@ -401,10 +398,10 @@ struct MenuContentView: View {
     @ViewBuilder
     private var quickActionsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Quick Actions", "wand.and.rays")
+            sectionHeader("Quick Actions", "wand")
             HStack(spacing: 8) {
                 actionButton(actions.dimmed ? "Brighten" : "Dim",
-                             systemImage: actions.dimmed ? "sun.max" : "sun.min",
+                             systemImage: actions.dimmed ? "sun" : "sunLow",
                              help: actions.dimmed ? "Restore the previous brightness"
                                                   : "Dim the display to save power") {
                     actions.toggleDim()
@@ -413,14 +410,14 @@ struct MenuContentView: View {
                              help: "Turn the display off now (the Mac stays awake)") {
                     actions.turnDisplayOff()
                 }
-                actionButton("Sleep", systemImage: "powersleep",
+                actionButton("Sleep", systemImage: "sleep",
                              help: "Put the Mac to sleep now") {
                     actions.sleepNow()
                 }
                 caffeineButton
             }
             if caffeine.active {
-                Label(caffeineStatusText, systemImage: "cup.and.saucer.fill")
+                Label { Text(caffeineStatusText) } icon: { HugeIcon("coffee", size: 11) }
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -435,8 +432,7 @@ struct MenuContentView: View {
             caffeine.toggle()
         } label: {
             VStack(spacing: 4) {
-                Image(systemName: caffeine.active ? "cup.and.saucer.fill" : "cup.and.saucer")
-                    .font(.system(size: 15))
+                HugeIcon("coffee", size: 17)
                 Text("Awake").font(.caption2)
             }
             .frame(maxWidth: .infinity)
@@ -479,7 +475,7 @@ struct MenuContentView: View {
                               _ run: @escaping () -> Void) -> some View {
         Button(action: run) {
             VStack(spacing: 4) {
-                Image(systemName: systemImage).font(.system(size: 15))
+                HugeIcon(systemImage, size: 17)
                 Text(title).font(.caption2)
             }
             .frame(maxWidth: .infinity)
@@ -500,12 +496,12 @@ struct MenuContentView: View {
                 .disabled(!license.isPro)
             Spacer()
             Button { battery.refresh(); chargeLimit.refresh() } label: {
-                Image(systemName: "arrow.clockwise")
+                HugeIcon("refresh", size: 15)
             }
             .help("Refresh")
             .foregroundStyle(.secondary)
             Button { NSApplication.shared.terminate(nil) } label: {
-                Image(systemName: "power")
+                HugeIcon("power", size: 15)
             }
             .help("Quit Battlify")
             .foregroundStyle(.secondary)
@@ -524,9 +520,7 @@ struct MenuContentView: View {
 
     private func sectionHeader(_ title: String, _ icon: String) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HugeIcon(icon, size: 13, weight: 2).foregroundStyle(.secondary)
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -545,7 +539,7 @@ struct MenuContentView: View {
     }
 
     private func hintLabel(_ text: String, systemImage: String) -> some View {
-        Label(text, systemImage: systemImage)
+        Label { Text(text) } icon: { HugeIcon(systemImage, size: 12) }
             .font(.caption2)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
