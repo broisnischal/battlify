@@ -563,6 +563,12 @@ struct SettingsView: View {
                                 settings.notificationsEnabled = on
                                 if on { notifier.enableRequested() }
                             }))
+                divider
+                toggleRow("Suggest an occasional restart",
+                          "Once your Mac has been running for over a week, remind you that a restart clears memory and helps it run cooler.",
+                          isOn: Binding(
+                            get: { settings.restReminderEnabled },
+                            set: { settings.restReminderEnabled = $0 }))
                 if settings.notificationsEnabled {
                     divider
                     HStack {

@@ -10,6 +10,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var updater: UpdaterManager
     @EnvironmentObject private var actions: SystemActions
     @EnvironmentObject private var caffeine: CaffeineManager
+    @EnvironmentObject private var restReminder: RestReminder
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near full height so the popover doesn't visibly grow on first open.
@@ -19,6 +20,9 @@ struct MenuContentView: View {
 
     var body: some View {
         let snap = battery.snapshot
+        // Read unconditionally so SwiftUI reliably re-renders the popover when it flips
+        // (a read only inside the `if` below doesn't, under MenuBarExtra).
+        let restDue = restReminder.isDue
 
         // As tall as the content, but never taller than the screen.
         ScrollView {
@@ -27,6 +31,7 @@ struct MenuContentView: View {
                 Divider()
                 if let update = updater.available { updateBanner(update); Divider() }
                 if !license.isLicensed { licenseBanner; Divider() }
+                if restDue { restBanner; Divider() }
                 Group {
                     modeSection
                     Divider()
@@ -87,6 +92,38 @@ struct MenuContentView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    // MARK: - Rest reminder banner
+
+    @ViewBuilder
+    private var restBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "powersleep").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Give your Mac a rest").font(.callout.weight(.medium))
+                Text(restReminder.message)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button("Restart…") { confirmRestart() }.controlSize(.small)
+                    Button("Later") { restReminder.snooze() }.controlSize(.small)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func confirmRestart() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Restart your Mac now?"
+        alert.informativeText = "Save any open work first — your apps will be asked to close."
+        alert.addButton(withTitle: "Restart")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { restReminder.restart() }
     }
 
     // MARK: - License banner

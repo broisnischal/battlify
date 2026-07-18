@@ -17,6 +17,10 @@ final class AppSettings: ObservableObject {
     @Published var notificationsEnabled: Bool {
         didSet { defaults.set(notificationsEnabled, forKey: Keys.notifications) }
     }
+    /// Occasionally suggest a restart once the Mac has been running a long time.
+    @Published var restReminderEnabled: Bool {
+        didSet { defaults.set(restReminderEnabled, forKey: Keys.restReminder) }
+    }
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -24,6 +28,7 @@ final class AppSettings: ObservableObject {
         static let colorIcon = "menubar.colorIcon"
         static let iconStyle = "menubar.iconStyle"
         static let notifications = "notifications.enabled"
+        static let restReminder = "rest.reminderEnabled"
     }
 
     init() {
@@ -32,5 +37,6 @@ final class AppSettings: ObservableObject {
         batteryIconStyle = (defaults.string(forKey: Keys.iconStyle))
             .flatMap(BatteryIconStyle.init(rawValue:)) ?? .rounded
         notificationsEnabled = defaults.bool(forKey: Keys.notifications)
+        restReminderEnabled = defaults.object(forKey: Keys.restReminder) as? Bool ?? true
     }
 }
