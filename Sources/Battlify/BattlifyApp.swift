@@ -99,10 +99,30 @@ struct MenuBarLabel: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var notifier: NotificationManager
 
+    /// Animation tick for the menu-bar glyph: the pixel style's charging sweep,
+    /// the other styles' bolt pulse, and the charge-complete flash. The driving
+    /// task only exists while one of those is actually visible — we deliberately
+    /// never animate while discharging (a battery saver shouldn't spend cycles
+    /// when you're on battery), and Reduce Motion turns all of it off.
+    @State private var animFrame = 0
+    /// Charge-complete "success" flash in progress (a few green blinks).
+    @State private var celebrating = false
+    @State private var celebrateTicks = 0
+    /// When charging last stopped — used to tell "charging just finished" apart
+    /// from unrelated ways of arriving at the holding/full state (e.g. wake).
+    @State private var chargeStoppedAt: Date?
+
     var body: some View {
         let snap = battery.snapshot
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let celebratingNow = celebrating && !reduceMotion
         // Respect the "color icon by state" preference; otherwise stay neutral.
-        let tint: MenuBarTint = settings.colorMenuBarIcon ? tint(for: snap) : .neutral
+        // The success flash goes green only when coloring is allowed — with a
+        // monochrome icon it blinks by alpha instead (the renderer handles that).
+        let tint: MenuBarTint =
+            celebratingNow && settings.colorMenuBarIcon ? .colored(.systemGreen)
+            : settings.colorMenuBarIcon ? tint(for: snap) : .neutral
+        let animating = !reduceMotion && (snap.isCharging || celebrating)
         // The label renders at launch, so this is a reliable one-shot hook to wire
         // up notification detection (which then runs via Combine, not view lifecycle).
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
@@ -117,12 +137,52 @@ struct MenuBarLabel: View {
                 style: settings.batteryIconStyle,
                 percentage: snap.percentage,
                 charging: snap.isCharging,
-                tint: tint))
+                tint: tint,
+                frame: animFrame,
+                celebrating: celebratingNow))
             if settings.showMenuBarPercentage {
                 Text("\(snap.percentage)%")
             }
         }
         .help(helpText(snap))
+        // One shared ~0.5 s tick drives whichever animation is visible; task(id:)
+        // cancels it the moment nothing animates and restarts it when needed.
+        .task(id: animating) {
+            guard animating else { animFrame = 0; return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                animFrame &+= 1
+                if celebrating {
+                    celebrateTicks += 1
+                    if celebrateTicks >= 6 {   // ~3 s: three full blinks
+                        celebrating = false
+                        celebrateTicks = 0
+                    }
+                }
+            }
+        }
+        // Record when charging stops, *before* the completion check below reads it.
+        .onChange(of: snap.isCharging) { old, new in
+            if old && !new { chargeStoppedAt = Date() }
+        }
+        // Fire the success flash when the battery lands at full / the limit right
+        // after actually charging — not when it merely wakes up already-holding.
+        .onChange(of: chargeComplete(snap)) { _, done in
+            guard done, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+            let justCharged = snap.isCharging
+                || (chargeStoppedAt.map { Date().timeIntervalSince($0) < 120 } ?? false)
+            guard justCharged else { return }
+            celebrating = true
+            celebrateTicks = 0
+        }
+    }
+
+    /// The battery has arrived where charging was headed: truly full, or held at
+    /// the user's charge limit.
+    private func chargeComplete(_ snap: BatterySnapshot) -> Bool {
+        snap.isFullyCharged
+            || (chargeLimit.limitEnabled && !chargeLimit.chargingEnabled
+                && chargeLimit.pauseReason == "limit")
     }
 
     /// Icon tint: red warns when the battery is running warm or critically low,
