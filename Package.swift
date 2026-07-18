@@ -51,6 +51,12 @@ let package = Package(
             name: "licensetool",
             dependencies: ["BattlifyKit"],
             path: "Sources/licensetool"
+        ),
+        // Unit tests + benchmarks for the shared library (charge logic, Caffeine, …).
+        .testTarget(
+            name: "BattlifyKitTests",
+            dependencies: ["BattlifyKit"],
+            path: "Tests/BattlifyKitTests"
         )
     ]
 )

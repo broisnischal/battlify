@@ -14,3 +14,9 @@ Mac from idle-sleeping, the same thing `caffeinate -d` does.
   1 / 2 / 5 hours) that auto-releases.
 - Closing the lid still sleeps the Mac, and the assertion is released the instant
   Battlify quits — so it can never leave the Mac stuck awake.
+
+Also bootstraps the project's **first automated tests**: a `BattlifyKitTests` suite
+(swift-testing) covering the Caffeine state machine, timer expiry/cancellation, and a
+system-level integration test that asserts the real IOKit power assertion is
+registered and cleared — plus toggle benchmarks. Run with `./scripts/test.sh`; a new
+CI workflow runs them on every push/PR.

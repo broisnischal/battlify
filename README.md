@@ -193,7 +193,13 @@ sudo ./scripts/install-helper.sh   # install the root helper daemon
 
 ./scripts/package-app.sh 0.8.1     # build Battlify.app
 ./scripts/make-dmg.sh 0.8.1        # build the DMG
+
+./scripts/test.sh                  # run unit tests + benchmarks (swift-testing)
 ```
+
+`scripts/test.sh` wraps `swift test`; on machines with only the Command Line Tools
+it adds the swift-testing framework search paths automatically. CI runs it on every
+push and pull request.
 
 See [`DISTRIBUTION.md`](DISTRIBUTION.md) for signing, notarization, the GitHub
 Actions release pipeline, Gumroad setup, and the auto-update feed.
