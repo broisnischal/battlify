@@ -47,23 +47,18 @@ final class ChargingOverlay: ObservableObject {
         let w = NSWindow(contentRect: screen.frame, styleMask: .borderless,
                          backing: .buffered, defer: false)
         w.level = .screenSaver
-        w.isOpaque = true
-        w.backgroundColor = .black
+        w.isOpaque = false
+        w.backgroundColor = .clear                 // transparent: screen stays visible
+        w.ignoresMouseEvents = true                // non-blocking overlay on top of everything
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         w.hasShadow = false
 
-        let root = ChargingAnimationView(percentage: percentage)
-            .contentShape(Rectangle())
-            .onTapGesture { [weak self] in self?.dismiss() }
-        w.contentView = NSHostingView(rootView: root)
+        let host = NSHostingView(rootView: ChargingAnimationView(percentage: percentage))
+        host.layer?.backgroundColor = .clear
+        w.contentView = host
         w.setFrame(screen.frame, display: true)
         w.orderFrontRegardless()
         window = w
-
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 { self?.dismiss(); return nil }   // Esc
-            return event
-        }
 
         let work = DispatchWorkItem { [weak self] in self?.dismiss() }
         dismissWork = work
@@ -73,7 +68,9 @@ final class ChargingOverlay: ObservableObject {
     func dismiss() {
         dismissWork?.cancel(); dismissWork = nil
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }
-        window?.orderOut(nil)
+        guard let w = window else { return }
         window = nil
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.6; w.animator().alphaValue = 0 },
+                                             completionHandler: { w.orderOut(nil) })
     }
 }

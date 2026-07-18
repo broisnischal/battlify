@@ -1,116 +1,88 @@
 import SwiftUI
 
-/// Full-screen "Nothing phone" style charging animation: a dot-matrix battery that
-/// fills to the current charge, with a bright pulse sweeping up through the filled
-/// region, plus the percentage in a 5×7 dot font. Pure Canvas — no assets.
+/// A transparent flame + rising-embers charging animation that overlays the screen
+/// (the desktop stays visible — no dark takeover). Pure SwiftUI Canvas, additive glow.
 struct ChargingAnimationView: View {
     let percentage: Int
-    var accent: Color = .white
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
-            Canvas { ctx, size in
-                draw(ctx, size, t: timeline.date.timeIntervalSinceReferenceDate)
-            }
+        TimelineView(.animation) { tl in
+            Canvas { ctx, size in draw(ctx, size, tl.date.timeIntervalSinceReferenceDate) }
         }
-        .background(Color.black)
         .ignoresSafeArea()
     }
 
-    private func draw(_ ctx: GraphicsContext, _ size: CGSize, t: Double) {
-        let spacing = max(16.0, min(size.width, size.height) / 46)
-        let dot = spacing * 0.42
-        let cols = Int(size.width / spacing)
-        let rows = Int(size.height / spacing)
-        guard cols > 8, rows > 12 else { return }
-        let offX = (size.width - CGFloat(cols) * spacing) / 2 + spacing / 2
-        let offY = (size.height - CGFloat(rows) * spacing) / 2 + spacing / 2
+    private func draw(_ ctx: GraphicsContext, _ size: CGSize, _ t: Double) {
+        let cx = size.width / 2
+        let baseY = size.height
+        let flameH = size.height * 0.5
+        let flameW = min(size.width * 0.42, 520)
 
-        // Battery body in grid cells, centred, with a terminal nub on top.
-        let bw = min(16, cols - 4)
-        let bh = min(rows - 12, 24)
-        let bx = (cols - bw) / 2
-        let by = (rows - bh) / 2 - 1
-        let termW = max(4, bw / 3), termH = 1
-        let termX = bx + (bw - termW) / 2
-        let termY = by - termH
+        // warm base glow
+        let gR = flameW * 1.5
+        ctx.fill(
+            Path(ellipseIn: CGRect(x: cx - gR, y: baseY - flameH - gR * 0.4, width: gR * 2, height: gR * 1.6)),
+            with: .radialGradient(
+                Gradient(colors: [Color(red: 1, green: 0.42, blue: 0.06).opacity(0.45), .clear]),
+                center: CGPoint(x: cx, y: baseY - flameH * 0.12), startRadius: 0, endRadius: gR))
 
-        let interiorTop = by + 1, interiorBot = by + bh - 2
-        let interiorRows = interiorBot - interiorTop + 1
-        let filledRows = Int((Double(interiorRows) * Double(percentage) / 100.0).rounded())
-        let fillTopRow = interiorBot - max(0, filledRows) + 1   // rows >= this are filled
+        var g = ctx
+        g.blendMode = .plusLighter
 
-        // Pulse sweeping bottom → top through the interior every ~1.8s.
-        let period = 1.8
-        let sweep = t.truncatingRemainder(dividingBy: period) / period
-        let sweepRow = Double(interiorBot) - sweep * Double(interiorRows - 1)
-
-        func cell(_ c: Int, _ r: Int, _ brightness: Double) {
-            guard brightness > 0.05 else { return }
-            let cx = offX + CGFloat(c) * spacing, cy = offY + CGFloat(r) * spacing
-            let rect = CGRect(x: cx - dot / 2, y: cy - dot / 2, width: dot, height: dot)
-            ctx.fill(Path(ellipseIn: rect), with: .color(accent.opacity(min(1, brightness))))
+        // layered flame tongues: deep-orange → yellow → white core
+        let layers: [(w: Double, h: Double, c: Color, phase: Double, a: Double)] = [
+            (1.00, 1.00, Color(red: 0.95, green: 0.24, blue: 0.02), 0.0, 0.50),
+            (0.72, 0.93, Color(red: 1.00, green: 0.55, blue: 0.05), 1.3, 0.65),
+            (0.46, 0.82, Color(red: 1.00, green: 0.84, blue: 0.34), 2.6, 0.80),
+            (0.24, 0.64, Color(red: 1.00, green: 0.97, blue: 0.82), 3.9, 0.90),
+        ]
+        for l in layers {
+            let flick = 1 + 0.10 * sin(t * 7 + l.phase) + 0.06 * sin(t * 13 + l.phase * 2)
+            let sway = sin(t * 2.2 + l.phase) * flameW * l.w * 0.10
+            let h = flameH * l.h * flick
+            let p = flame(cx: cx + sway, baseY: baseY + 2, w: flameW * l.w, h: h, t: t, seed: l.phase)
+            g.fill(p, with: .linearGradient(
+                Gradient(colors: [l.c.opacity(l.a), l.c.opacity(l.a * 0.85), .clear]),
+                startPoint: CGPoint(x: cx, y: baseY), endPoint: CGPoint(x: cx, y: baseY - h)))
         }
 
-        for r in 0..<rows {
-            for c in 0..<cols {
-                let onBodyOutline = c >= bx && c <= bx + bw - 1 && r >= by && r <= by + bh - 1
-                    && (c == bx || c == bx + bw - 1 || r == by || r == by + bh - 1)
-                let onTerminal = c >= termX && c <= termX + termW - 1 && r >= termY && r <= termY + termH - 1
-                let interior = c > bx && c < bx + bw - 1 && r > by && r < by + bh - 1
+        embers(g, cx: cx, baseY: baseY, w: flameW, h: flameH * 1.35, t: t)
 
-                var brightness = 0.05   // faint background matrix
-                if onBodyOutline || onTerminal {
-                    brightness = 0.85
-                } else if interior && r >= fillTopRow {
-                    brightness = 0.5
-                    let d = abs(Double(r) - sweepRow)   // charging pulse
-                    if d < 1 { brightness = 1.0 } else if d < 2.2 { brightness = 0.75 }
-                } else if interior {
-                    brightness = 0.12
-                }
-                cell(c, r, brightness)
-            }
-        }
-
-        let batteryBottomY = offY + CGFloat(by + bh - 1) * spacing
-        drawText("\(percentage)%", ctx: ctx, width: size.width,
-                 cell: spacing * 1.9, dot: dot * 1.9, topY: batteryBottomY + spacing * 2.5)
+        let label = Text("\(percentage)%  ·  Charging")
+            .font(.system(size: 15, weight: .medium, design: .rounded))
+            .foregroundColor(.white.opacity(0.85))
+        ctx.draw(label, at: CGPoint(x: cx, y: size.height - 48))
     }
 
-    /// Render a string in the 5×7 dot font, centred horizontally, at an arbitrary size.
-    private func drawText(_ s: String, ctx: GraphicsContext, width: CGFloat,
-                          cell: CGFloat, dot: CGFloat, topY: CGFloat) {
-        let chars = Array(s)
-        let glyphW = 5, gap = 1
-        let totalW = CGFloat(chars.count * (glyphW + gap) - gap) * cell
-        let startX = (width - totalW) / 2 + cell / 2
-        for (i, ch) in chars.enumerated() {
-            guard let glyph = Self.font[ch] else { continue }
-            let gx = i * (glyphW + gap)
-            for (row, bits) in glyph.enumerated() {
-                for col in 0..<glyphW where (bits & (1 << (glyphW - 1 - col))) != 0 {
-                    let cx = startX + CGFloat(gx + col) * cell
-                    let cy = topY + CGFloat(row) * cell + cell / 2
-                    let rect = CGRect(x: cx - dot / 2, y: cy - dot / 2, width: dot, height: dot)
-                    ctx.fill(Path(ellipseIn: rect), with: .color(accent))
-                }
-            }
-        }
+    private func flame(cx: Double, baseY: Double, w: Double, h: Double, t: Double, seed: Double) -> Path {
+        var p = Path()
+        let half = w / 2
+        let tipX = cx + sin(t * 3.1 + seed) * w * 0.16
+        p.move(to: CGPoint(x: cx - half, y: baseY))
+        p.addQuadCurve(to: CGPoint(x: tipX - w * 0.08, y: baseY - h * 0.55),
+                       control: CGPoint(x: cx - half * 0.9 + sin(t * 4 + seed) * w * 0.06, y: baseY - h * 0.35))
+        p.addQuadCurve(to: CGPoint(x: tipX, y: baseY - h),
+                       control: CGPoint(x: tipX - w * 0.16, y: baseY - h * 0.84))
+        p.addQuadCurve(to: CGPoint(x: tipX + w * 0.08, y: baseY - h * 0.55),
+                       control: CGPoint(x: tipX + w * 0.16, y: baseY - h * 0.84))
+        p.addQuadCurve(to: CGPoint(x: cx + half, y: baseY),
+                       control: CGPoint(x: cx + half * 0.9 + sin(t * 4 + seed + 1) * w * 0.06, y: baseY - h * 0.35))
+        p.closeSubpath()
+        return p
     }
 
-    /// 5×7 dot font, 7 rows per glyph; the low 5 bits are the columns (MSB = left).
-    private static let font: [Character: [UInt8]] = [
-        "0": [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E],
-        "1": [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E],
-        "2": [0x0E, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1F],
-        "3": [0x1F, 0x01, 0x02, 0x06, 0x01, 0x11, 0x0E],
-        "4": [0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02],
-        "5": [0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E],
-        "6": [0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E],
-        "7": [0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-        "8": [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E],
-        "9": [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C],
-        "%": [0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13],
-    ]
+    private func embers(_ ctx: GraphicsContext, cx: Double, baseY: Double, w: Double, h: Double, t: Double) {
+        for i in 0..<70 {
+            let seed = Double(i) * 12.9898
+            func rnd(_ k: Double) -> Double { abs((sin(seed * k) * 43758.5453).truncatingRemainder(dividingBy: 1)) }
+            let life = 2.0 + rnd(1) * 2.5
+            let prog = (t + rnd(2) * life).truncatingRemainder(dividingBy: life) / life
+            let x = cx + (rnd(3) - 0.5) * w * 0.9 + sin(t * 1.5 + seed) * w * 0.08
+            let y = baseY - prog * h
+            let a = (1 - prog) * (0.45 + rnd(4) * 0.5)
+            let r = (1.0 + rnd(5) * 2.0) * (1 - prog * 0.5)
+            ctx.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                     with: .color(Color(red: 1, green: 0.5 + rnd(6) * 0.4, blue: 0.12).opacity(a)))
+        }
+    }
 }
