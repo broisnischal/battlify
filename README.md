@@ -225,9 +225,11 @@ effect.
 
 ## License
 
-Battlify is **source-available** under the [Battlify License](LICENSE): do almost
-anything with the source, with protections against malicious or rip-off
-redistributions of the *app itself*.
+Battlify is **source-available** under the [PolyForm Noncommercial License
+1.0.0](LICENSE). Use it, modify it, and contribute back freely for any
+noncommercial purpose — but you may not sell it or use it commercially (including
+paid products, hosted services, or enterprise support). All commercial rights are
+reserved by the author.
 
 ## Credits
 
