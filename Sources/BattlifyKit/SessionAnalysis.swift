@@ -1,7 +1,6 @@
 import Foundation
 
-/// A contiguous run of samples in one power state — either charging or running
-/// on battery. Derived from the sample history; nothing new is recorded.
+/// A contiguous run of samples in one power state (charging or on battery).
 public struct ChargeSpan: Codable, Sendable, Identifiable {
     public enum Kind: String, Codable, Sendable { case charging, discharging }
 
@@ -37,8 +36,8 @@ public struct DailySummary: Codable, Sendable, Identifiable {
     public var day: Date            // start of the calendar day
     public var minPct: Int
     public var maxPct: Int
-    public var chargingTime: TimeInterval   // time observed charging
-    public var batteryTime: TimeInterval    // time observed on battery
+    public var chargingTime: TimeInterval
+    public var batteryTime: TimeInterval
     public var avgTemp: Double?
     public var peakTemp: Double?
     /// Time spent at or above the high-charge threshold (a wear driver).
@@ -60,11 +59,10 @@ public struct DailySummary: Codable, Sendable, Identifiable {
     }
 }
 
-/// Derives sessions and daily rollups from a sorted list of `BatterySample`s.
-/// All computation is pure so it can run off the main thread and be unit-tested.
+/// Derives sessions and daily rollups from sorted `BatterySample`s. Pure — runs off-thread.
 public enum SessionAnalysis {
-    /// A gap larger than this between adjacent samples (nominally 5 min apart)
-    /// means the Mac was asleep/off — it breaks a run and isn't counted as time.
+    /// A gap larger than this (samples are ~5 min apart) means the Mac was asleep/off;
+    /// it breaks a run and isn't counted as time.
     public static let maxGap: TimeInterval = 20 * 60
     /// Charge level considered "high" for wear-tracking purposes.
     public static let highChargeThreshold = 80

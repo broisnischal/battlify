@@ -1,8 +1,7 @@
 import Foundation
 
-/// A bundle of settings applied together by a save mode. `powerNap`,
-/// `wakeOnNetwork`, and `tcpKeepAlive` are the *feature* states (true = active /
-/// using power), matching their pmset values.
+/// A bundle of settings applied together by a save mode. `powerNap`, `wakeOnNetwork`,
+/// and `tcpKeepAlive` are *feature* states (true = active/using power), matching pmset.
 public struct SaveProfile: Sendable, Equatable {
     public var chargeLimitEnabled: Bool
     public var chargeLimit: Int
@@ -19,9 +18,9 @@ public struct SaveProfile: Sendable, Equatable {
 
 /// One-tap battery profiles.
 public enum SaveMode: String, Codable, Sendable, CaseIterable, Identifiable {
-    case off          // no saving — back to normal macOS behavior
-    case normal       // balanced everyday saving
-    case superSaver   // maximum battery life
+    case off
+    case normal
+    case superSaver
 
     public var id: String { rawValue }
 

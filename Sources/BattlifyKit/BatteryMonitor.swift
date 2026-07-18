@@ -4,14 +4,12 @@ import IOKit.ps
 
 /// A snapshot of the system's battery state at a point in time.
 public struct BatterySnapshot: Equatable, Sendable {
-    public var percentage: Int          // current charge 0...100
+    public var percentage: Int
     public var isCharging: Bool
     public var isPluggedIn: Bool        // external power *providing* (macOS' view)
-    /// Physical adapter presence, from AppleSmartBattery's `ExternalConnected`.
-    /// Unlike `isPluggedIn`, this stays true during force-discharge: when we cut
-    /// the adapter so the Mac runs off battery, macOS reports "Battery Power" and
-    /// `isPluggedIn` flips to false even though the cable is still connected.
-    /// Falls back to `isPluggedIn` when the hardware key is unavailable.
+    /// Physical adapter presence (AppleSmartBattery `ExternalConnected`). Stays true
+    /// during force-discharge, when we cut the adapter and macOS flips `isPluggedIn`
+    /// to false. Falls back to `isPluggedIn` when the key is unavailable.
     public var isExternalConnected: Bool
     public var isFullyCharged: Bool
     public var timeToEmpty: Int?        // minutes, nil if unknown/charging
@@ -23,9 +21,8 @@ public struct BatterySnapshot: Equatable, Sendable {
     public var maxCapacity: Int?        // mAh (current full-charge capacity)
     public var powerSource: String      // "Battery Power" / "AC Power"
 
-    /// True when the charger is physically connected, regardless of whether macOS
-    /// is currently drawing from it. Use this for AC-power gating (discharge, LED,
-    /// keep-awake) so force-discharge doesn't read as "unplugged".
+    /// Charger physically connected, regardless of whether macOS draws from it. Use
+    /// for AC-power gating so force-discharge doesn't read as "unplugged".
     public var onExternalPower: Bool { isExternalConnected || isPluggedIn }
 
     public static let unknown = BatterySnapshot(
@@ -36,9 +33,8 @@ public struct BatterySnapshot: Equatable, Sendable {
     )
 }
 
-/// Reads battery information from IOKit. Two sources are used:
-/// - `IOPSCopyPowerSourcesInfo` for the live high-level state (%, charging, time estimates)
-/// - the `AppleSmartBattery` IORegistry entry for hardware detail (cycles, temp, capacities)
+/// Reads battery state from IOKit: `IOPSCopyPowerSourcesInfo` for live state and the
+/// `AppleSmartBattery` IORegistry entry for hardware detail (cycles, temp, capacities).
 public enum BatteryMonitor {
 
     public static func read() -> BatterySnapshot {
@@ -55,7 +51,6 @@ public enum BatteryMonitor {
               let sources = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef]
         else { return }
 
-        // Overall provider: "AC Power" or "Battery Power"
         if let providing = IOPSGetProvidingPowerSourceType(blob)?.takeRetainedValue() as String? {
             snap.powerSource = providing
             snap.isPluggedIn = (providing == kIOPMACPowerKey)
@@ -89,8 +84,7 @@ public enum BatteryMonitor {
             }
         }
 
-        // Baseline physical-presence from the providing source; readSmartBattery
-        // overrides it with the hardware `ExternalConnected` key when available.
+        // Baseline; readSmartBattery overrides with the hardware `ExternalConnected` key.
         snap.isExternalConnected = snap.isPluggedIn
     }
 
@@ -108,8 +102,8 @@ public enum BatteryMonitor {
               let props = propsRef?.takeRetainedValue() as? [String: Any]
         else { return }
 
-        // Physical adapter presence — true even while force-discharging (adapter
-        // inhibited), unlike the providing-source flag. Overrides the baseline.
+        // Physical adapter presence — true even while force-discharging, unlike the
+        // providing-source flag. Overrides the baseline.
         if let ext = props["ExternalConnected"] as? Bool {
             snap.isExternalConnected = ext
         }
@@ -123,11 +117,9 @@ public enum BatteryMonitor {
         }
 
         let design = props["DesignCapacity"] as? Int
-        // Full-charge capacity. macOS System Settings derives "Maximum Capacity"
-        // from NominalChargeCapacity / DesignCapacity, so use that same figure for
-        // BOTH the health % and the displayed mAh — otherwise the capacity ratio
-        // (e.g. 5133/6249 = 82%) wouldn't equal the health % shown beside it (85%),
-        // which looks broken. Fall back to the raw/legacy keys only if it's absent.
+        // Use NominalChargeCapacity for both health % and displayed mAh: it's what
+        // macOS derives "Maximum Capacity" from, so the ratio matches the health %
+        // shown beside it. Fall back to legacy keys only if absent.
         let maxCap = (props["NominalChargeCapacity"] as? Int)
             ?? (props["AppleRawMaxCapacity"] as? Int)
             ?? (props["MaxCapacity"] as? Int)

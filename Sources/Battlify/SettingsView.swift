@@ -2,8 +2,7 @@ import SwiftUI
 import AppKit
 import BattlifyKit
 
-/// Detached preferences window. Everything that's "set once and forget" lives
-/// here so the menu-bar dropdown stays focused on the day-to-day controls.
+/// Detached preferences window for the "set once and forget" controls.
 struct SettingsView: View {
     @EnvironmentObject private var battery: BatteryStore
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
@@ -21,9 +20,8 @@ struct SettingsView: View {
     @State private var editingSchedule: ChargeSchedule?
     @State private var editingIsNew = false
 
-    /// The Settings tabs. A hand-rolled tab bar (below) is used instead of
-    /// SwiftUI's `TabView`, which on recent macOS collapses into an overflow
-    /// "Navigation Tab Bar" popup instead of showing real tabs.
+    /// Hand-rolled tab bar instead of `TabView`, which on recent macOS collapses
+    /// into an overflow popup instead of showing real tabs.
     private enum Tab: String, CaseIterable, Identifiable {
         case charging, schedule, sleepPower, general, about
         var id: String { rawValue }
@@ -166,9 +164,8 @@ struct SettingsView: View {
         .scrollIndicators(.hidden)
     }
 
-    /// Opens the license window — the one place to activate or, once purchased,
-    /// remove/deactivate the license. Always available so a licensed user can
-    /// still manage it after the trial banner is gone.
+    /// Always available so a licensed user can still manage the license after the
+    /// trial banner is gone.
     private var licenseRow: some View {
         Button {
             NSApp.activate(ignoringOtherApps: true)
@@ -399,7 +396,6 @@ struct SettingsView: View {
         }
     }
 
-    /// One row in the schedules list: label, window/day summary, live "active" badge.
     private func scheduleRow(_ s: ChargeSchedule) -> some View {
         Button {
             editingIsNew = false
@@ -644,7 +640,6 @@ struct SettingsView: View {
         .scrollIndicators(.hidden)
     }
 
-    /// Dims Pro-only content when the license isn't active.
     @ViewBuilder
     private func proGate<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 20) { content() }
@@ -664,7 +659,6 @@ struct SettingsView: View {
 
     private var divider: some View { Divider().padding(.leading, 12) }
 
-    /// A card of pmset-backed power toggles belonging to one category.
     private func powerToggleCard(_ title: String, category: PowerToggle.Category) -> some View {
         let toggles = PowerToggle.allCases.filter { $0.category == category }
         return card(title) {
@@ -679,7 +673,6 @@ struct SettingsView: View {
 
     // MARK: - Helper management
 
-    /// Status + install / reinstall / uninstall for the root helper daemon.
     private var helperCard: some View {
         card("Helper") {
             VStack(alignment: .leading, spacing: 10) {
@@ -780,7 +773,7 @@ struct SettingsView: View {
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
-    /// Charge-power slider (0–100%). Applies on release so dragging doesn't spam the daemon.
+    /// Applies on release so dragging doesn't spam the daemon.
     private var chargePowerRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -808,7 +801,6 @@ struct SettingsView: View {
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
-    /// Live watts split: how much is currently flowing into the battery vs. the Mac.
     @ViewBuilder
     private var liveSplitReadout: some View {
         let f = battery.powerFlow
@@ -882,7 +874,6 @@ struct SettingsView: View {
 
     // MARK: - Helpers
 
-    /// The keep-awake process list as editable comma-separated text.
     private var keepAwakeProcessText: Binding<String> {
         Binding(
             get: { chargeLimit.keepAwakeProcesses.joined(separator: ", ") },
@@ -895,7 +886,7 @@ struct SettingsView: View {
             })
     }
 
-    /// Binding into a Bool on the charge store that re-applies the policy on change.
+    /// Binding that re-applies the policy on change.
     private func bind(_ keyPath: ReferenceWritableKeyPath<ChargeLimitStore, Bool>) -> Binding<Bool> {
         Binding(
             get: { chargeLimit[keyPath: keyPath] },
@@ -919,9 +910,7 @@ struct SettingsView: View {
     }
 }
 
-/// A row of selectable tiles, one per battery icon style, each previewing the
-/// glyph at the current charge. Mirrors the menu-bar rendering so what you pick
-/// is what you get.
+/// Mirrors the menu-bar rendering so what you pick is what you get.
 struct BatteryStylePicker: View {
     @Binding var selection: BatteryIconStyle
     let percentage: Int

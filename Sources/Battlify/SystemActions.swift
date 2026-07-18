@@ -10,10 +10,8 @@ private func DisplayServicesGetBrightness(_ id: CGDirectDisplayID, _ b: UnsafeMu
 @_silgen_name("DisplayServicesSetBrightness")
 private func DisplayServicesSetBrightness(_ id: CGDirectDisplayID, _ b: Float) -> Int32
 
-/// Quick power-saving actions: dim the display, turn it off, or sleep the Mac.
 @MainActor
 final class SystemActions: ObservableObject {
-    /// True when we've dimmed the display (so the menu can offer "Restore").
     @Published private(set) var dimmed = false
 
     private var savedBrightness: Float?
@@ -43,11 +41,8 @@ final class SystemActions: ObservableObject {
     // MARK: - Display off / sleep (pmset, no root needed for *now actions)
 
     func turnDisplayOff() {
-        // Delay briefly before sleeping the display. The click (or trackpad tap)
-        // that triggered this — plus the popover closing — counts as user activity;
-        // sleeping in the same instant lets that lingering input wake the display
-        // right back up. A short gap lets it settle, so the display stays off until
-        // the *next* key press or trackpad tap.
+        // Delay before sleeping: the triggering click plus the popover closing count as
+        // user activity and would wake the display right back up.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.run("/usr/bin/pmset", ["displaysleepnow"])
         }

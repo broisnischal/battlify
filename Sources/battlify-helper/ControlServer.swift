@@ -1,9 +1,7 @@
 import Foundation
 import BattlifyKit
 
-/// Unix-domain-socket server the daemon runs so the GUI can query status and push
-/// config changes. Each connection carries one newline-delimited JSON request and
-/// receives one JSON response. Runs its accept loop on a background thread.
+/// Unix-domain-socket server: one newline-delimited JSON request/response per connection.
 final class ControlServer {
     private let path: String
     private let handler: @Sendable (ControlRequest) -> ControlResponse
@@ -39,8 +37,7 @@ final class ControlServer {
         }
         guard bound == 0 else { perror("bind"); close(fd); return }
 
-        // Personal-tool permissions: any local user may toggle the charge limit.
-        // (The only capability exposed is battery charge control.)
+        // any local user may toggle the charge limit (the only capability exposed)
         chmod(path, 0o666)
 
         guard listen(fd, 8) == 0 else { perror("listen"); close(fd); return }
@@ -70,9 +67,7 @@ final class ControlServer {
         if let req = try? JSONDecoder().decode(ControlRequest.self, from: reqData) {
             resp = handler(req)
         } else {
-            // Unrecognized request (e.g. a newer GUI talking to an older daemon).
-            // Still reply — with our protocol version — so the client can detect
-            // the skew instead of seeing a silent hang / dropped connection.
+            // reply anyway so a version-skewed client sees an error, not a hang
             resp = ControlResponse(
                 ok: false, config: .default, batteryPercent: 0,
                 chargingEnabled: false, schemeDescription: "",

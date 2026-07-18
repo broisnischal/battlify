@@ -3,12 +3,9 @@ import Combine
 import CryptoKit
 import BattlifyKit
 
-/// Second copy of the trial-usage ledger, outside UserDefaults, so a plain
-/// `defaults delete com.battlify.app` doesn't grant a fresh 30 days — usage is
-/// the union of both stores, and each re-populates the other. The day list is
-/// HMAC'd with a key derived from this Mac's hardware UUID, so hand-editing the
-/// file (or copying an empty one from another machine) just invalidates it,
-/// which reads as an empty set and loses nothing from UserDefaults.
+/// Second copy of the trial ledger outside UserDefaults, so `defaults delete` doesn't
+/// grant a fresh 30 days — usage is the union of both stores. HMAC'd with a key derived
+/// from the hardware UUID, so hand-editing or copying the file just invalidates it.
 private enum TrialVault {
     private struct Ledger: Codable {
         var d: [String]   // "yyyy-MM-dd" days the app was used
@@ -48,11 +45,9 @@ private enum TrialVault {
 }
 
 /// Licensing:
-///  - **Use-based 30-day trial**: a free day is only counted on days you actually
-///    use Battlify (not calendar days), so the trial isn't "wasted" while idle.
-///    Usage is double-booked (UserDefaults + TrialVault) to survive casual resets.
-///  - **$2.99 one-time** license, verified offline with an embedded Ed25519 public
-///    key — no phone-home, works without a network. Keys are bound to one Mac.
+///  - Use-based 30-day trial: a day counts only when Battlify is used, double-booked
+///    (UserDefaults + TrialVault) to survive casual resets.
+///  - $2.99 one-time license, verified offline with an embedded Ed25519 key, bound to one Mac.
 @MainActor
 final class LicenseManager: ObservableObject {
     enum State: Equatable {
@@ -76,10 +71,8 @@ final class LicenseManager: ObservableObject {
 
     let trialDays = 30
 
-    /// This Mac's device code — shown in the UI so the buyer can enter it at
-    /// checkout; the storefront signs it into the license, binding it to this Mac.
-    /// Empty string (never nil) on IOKit failure so device-bound licenses are
-    /// still rejected rather than silently accepted.
+    /// This Mac's device code — the buyer enters it at checkout and the storefront signs
+    /// it into the license. Empty (never nil) on IOKit failure so licenses still reject.
     nonisolated static let deviceCode = DeviceIdentity.deviceCode() ?? ""
     var deviceCode: String { Self.deviceCode }
 
@@ -129,7 +122,7 @@ final class LicenseManager: ObservableObject {
     // MARK: - State
 
     func refresh() {
-        // A valid, non-expired stored license wins.
+        // A valid stored license wins.
         if let key = defaults.string(forKey: Keys.licenseKey),
            let info = try? License.verify(key, deviceID: Self.deviceCode) {
             state = .licensed(name: info.name.isEmpty ? info.email : info.name)

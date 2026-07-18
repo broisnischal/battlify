@@ -1,9 +1,8 @@
 import Foundation
 import AppKit
 
-/// Installs/uninstalls the root helper daemon from inside the packaged app, using
-/// a one-time admin authorization prompt (osascript "with administrator privileges").
-/// Only works from a built .app bundle (the scripts live in Resources).
+/// Installs/uninstalls the root helper via a one-time admin prompt (osascript). Only
+/// works from a built .app bundle (the scripts live in Resources).
 enum HelperInstaller {
     static var canInstall: Bool { bundledScript("install-helper-bundled.sh") != nil }
 

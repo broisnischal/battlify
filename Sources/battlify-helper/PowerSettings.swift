@@ -1,15 +1,12 @@
 import Foundation
 import BattlifyKit
 
-/// Reads and writes system sleep/idle power settings via `pmset`. Writing needs
-/// root (the daemon has it). These persist system-wide, so they don't need
-/// continuous enforcement — set once and macOS remembers.
+/// Reads/writes system sleep/idle settings via `pmset` (writing needs root). These
+/// persist system-wide, so set once — no continuous enforcement.
 enum PowerSettings {
 
-    /// Current values for the keys we expose, parsed from `pmset -g custom`.
-    /// Each toggle is read from the section that matches its scope (battery-only
-    /// toggles like `lessbright` are read from "Battery Power:"; AC-only from
-    /// "AC Power:"; all-source toggles from the battery section).
+    /// Current values for the exposed keys, parsed from `pmset -g custom`; each toggle
+    /// is read from the section matching its scope (battery/AC).
     static func readToggles() -> [String: Bool] {
         guard let out = Shell.run("/usr/bin/pmset", ["-g", "custom"]) else { return [:] }
         var battery: [String: String] = [:]
@@ -45,23 +42,16 @@ enum PowerSettings {
         Shell.run("/usr/bin/pmset", [toggle.scope.rawValue, toggle.rawValue, on ? "1" : "0"]) != nil
     }
 
-    /// Disable *all* sleep — idle and lid-close (clamshell) — so the Mac stays
-    /// fully awake with the lid shut. This is the only supported way to keep
-    /// running with the lid closed; no public IOPMAssertion prevents clamshell
-    /// sleep. Requires root, and does NOT persist across reboots (the daemon
-    /// re-applies it from config on startup). Applied to all power sources here;
-    /// the daemon gates *when* it's on (AC only).
+    /// Disable *all* sleep — idle and clamshell — the only way to keep running with the
+    /// lid shut (no IOPMAssertion prevents clamshell sleep). Requires root; does NOT
+    /// persist across reboots, so the daemon re-applies it on startup.
     @discardableResult
     static func setDisableSleep(_ on: Bool) -> Bool {
         Shell.run("/usr/bin/pmset", ["-a", "disablesleep", on ? "1" : "0"]) != nil
     }
 
-    /// Force the display to sleep immediately, which also turns off the keyboard
-    /// backlight (it follows display sleep). Used while "Always Active" holds the
-    /// Mac awake with the lid closed: system sleep is disabled, but there's no
-    /// reason to keep the (hidden) panel and backlight powered. Display sleep is
-    /// independent of `disablesleep`, so this works even while keep-awake holds,
-    /// and with the lid shut there's no user activity to wake it back up.
+    /// Force the display to sleep now (the keyboard backlight follows). Display sleep is
+    /// independent of `disablesleep`, so it works while keep-awake holds the Mac awake with the lid shut.
     @discardableResult
     static func displaySleepNow() -> Bool {
         Shell.run("/usr/bin/pmset", ["displaysleepnow"]) != nil

@@ -2,7 +2,7 @@ import Foundation
 
 /// One periodic battery measurement, stored as a line of JSON in history.jsonl.
 public struct BatterySample: Codable, Sendable, Identifiable {
-    public var t: Date          // timestamp
+    public var t: Date
     public var pct: Int         // charge %
     public var charging: Bool
     public var temp: Double?    // °C
@@ -17,8 +17,7 @@ public struct BatterySample: Codable, Sendable, Identifiable {
     }
 }
 
-/// Append-only JSON-lines history store. The daemon appends (it always runs and
-/// can write under /Library); the GUI reads.
+/// Append-only JSON-lines history store: the daemon appends (runs as root under /Library), the GUI reads.
 public enum HistoryStore {
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
@@ -70,9 +69,8 @@ public enum HistoryStore {
 
     /// Trim the file to the most recent `keep` samples, to bound growth.
     public static func trim(keep: Int = 4000, at url: URL = BattlifyPaths.historyFile) {
-        // Cheap size guard: a sample line is well under 200 bytes, so if the file
-        // is smaller than keep×200 it can't hold more than `keep` samples — skip
-        // the full read+parse (this runs after every append, ~every 5 min).
+        // Cheap size guard: a line is < 200 bytes, so a file under keep×200 can't hold
+        // more than `keep` samples — skip the full read+parse (runs after every append).
         if let size = try? FileManager.default
             .attributesOfItem(atPath: url.path)[.size] as? Int,
            size < keep * 200 {

@@ -2,11 +2,9 @@ import Foundation
 import CryptoKit
 import IOKit
 
-/// Stable per-Mac identifier used to bind a license to one machine.
-///
-/// The raw IOPlatformUUID survives OS reinstalls and never leaves the machine:
-/// what the user sees (and what the storefront signs into the license) is a
-/// short code derived from its hash, e.g. "7F3A-92C1-D04B".
+/// Stable per-Mac identifier used to bind a license to one machine. The raw
+/// IOPlatformUUID never leaves the machine; the user sees a short hash-derived code
+/// like "7F3A-92C1-D04B".
 public enum DeviceIdentity {
     /// The hardware UUID (IOPlatformUUID) of this Mac, or nil if IOKit fails.
     public static func hardwareUUID() -> String? {
@@ -19,8 +17,7 @@ public enum DeviceIdentity {
         )?.takeRetainedValue() as? String
     }
 
-    /// Short device code shown to the user and embedded in the license payload,
-    /// formatted "XXXX-XXXX-XXXX". Deterministic for a given Mac.
+    /// Short device code shown to the user and embedded in the license, "XXXX-XXXX-XXXX".
     public static func deviceCode() -> String? {
         guard let uuid = hardwareUUID() else { return nil }
         let digest = SHA256.hash(data: Data("battlify:\(uuid.uppercased())".utf8))

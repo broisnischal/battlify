@@ -2,8 +2,8 @@ import Foundation
 import Combine
 import BattlifyKit
 
-/// GUI-side history: records samples to the user's history file while the app runs,
-/// and loads merged samples (system daemon file + user file) for charting.
+/// GUI-side history: records samples to the user file, and loads merged samples
+/// (daemon + user files) for charting.
 @MainActor
 final class HistoryViewModel: ObservableObject {
     @Published private(set) var samples: [BatterySample] = []
@@ -18,7 +18,6 @@ final class HistoryViewModel: ObservableObject {
     @Published private(set) var wearReport: WearReport = .empty
     @Published var range: HistoryRange = .day
 
-    /// Threshold (charge %) above which time counts as "high charge".
     let highChargeThreshold = SessionAnalysis.highChargeThreshold
 
     enum HistoryRange: String, CaseIterable, Identifiable {
@@ -39,7 +38,6 @@ final class HistoryViewModel: ObservableObject {
 
     init() {
         refresh()
-        // Record our own sample every 5 minutes while running.
         let t = Timer(timeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -48,8 +46,7 @@ final class HistoryViewModel: ObservableObject {
         recordTimer = t
     }
 
-    /// Record the current reading, then load — in one task so the load can't race
-    /// ahead of the append. Called on window appear so the newest sample shows.
+    /// Record then load in one task so the load can't race ahead of the append.
     func refresh() {
         let snap = BatteryMonitor.read()
         let sample = BatterySample(t: Date(), pct: snap.percentage,
@@ -62,18 +59,16 @@ final class HistoryViewModel: ObservableObject {
         }
     }
 
-    /// Reload the current range without recording a new sample (used by the range
-    /// picker and after clearing history).
+    /// Reload the current range without recording a new sample.
     func reload() {
         let since = Date().addingTimeInterval(-range.interval)
         Task.detached { await self.performLoad(since: since) }
     }
 
-    /// Load merged samples + derived data for `since` and publish on the main
-    /// actor. Runs off the main thread (nonisolated) so file I/O never blocks UI.
+    /// Runs off the main thread (nonisolated) so file I/O never blocks the UI.
     private nonisolated func performLoad(since: Date) async {
-        // Wear attribution needs 30 days, which is a superset of any chart range,
-        // so read each file once for 30 days and derive the chart window in memory.
+        // Wear needs 30 days (a superset of any chart range), so read each file
+        // once and derive the chart window in memory.
         let wearSince = Date().addingTimeInterval(-30 * 86_400)
         var all = HistoryStore.load(since: wearSince, from: BattlifyPaths.historyFile)
         all += HistoryStore.load(since: wearSince, from: BattlifyPaths.userHistoryFile)
@@ -82,8 +77,6 @@ final class HistoryViewModel: ObservableObject {
         let merged = all.filter { $0.t >= since }   // the chart window
         let sessions = LidSessionStore.recent(limit: 30).filter { $0.closedAt >= since }
 
-        // Charging / on-battery runs and per-day rollups, derived from the
-        // same samples (newest first for display).
         let spans = SessionAnalysis.spans(from: merged)
         let charge = spans
             .filter { $0.kind == .charging && $0.duration >= 180 }
@@ -107,9 +100,8 @@ final class HistoryViewModel: ObservableObject {
 
     // MARK: - Clearing history
 
-    /// Erase the charge-sample history: the user-written file directly, and the
-    /// root-owned daemon file via the helper. The chart, sessions, wear analysis
-    /// and daily rollups are all derived from these samples, so they clear too.
+    /// Erase charge samples: the user file directly, the root-owned daemon file
+    /// via the helper. All derived views clear with them.
     func clearChartHistory() {
         Task.detached {
             HistoryStore.clear(at: BattlifyPaths.userHistoryFile)
@@ -126,8 +118,6 @@ final class HistoryViewModel: ObservableObject {
         }
     }
 
-    /// Erase everything: samples (chart, charge/discharge sessions, wear, daily)
-    /// and lid sessions.
     func clearAll() {
         Task.detached {
             HistoryStore.clear(at: BattlifyPaths.userHistoryFile)

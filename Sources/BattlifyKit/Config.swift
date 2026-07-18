@@ -4,10 +4,8 @@ import Foundation
 public enum MagSafeLEDMode: String, Codable, Sendable, CaseIterable, Identifiable {
     /// macOS controls the LED (default — Battlify doesn't touch it).
     case system
-    /// Reflect charge status: orange charging, green holding at the limit, and
-    /// off for a short "settling" window right after the Mac wakes.
+    /// Reflect charge status: orange charging, green holding, off during the post-wake settling window.
     case status
-    /// Force the LED off at all times.
     case off
 
     public var id: String { rawValue }
@@ -21,81 +19,59 @@ public enum MagSafeLEDMode: String, Codable, Sendable, CaseIterable, Identifiabl
     }
 }
 
-/// Persistent settings shared between the GUI (writer) and the root daemon (reader).
-/// Stored as JSON at a system-wide path so the root daemon can read it regardless
-/// of which user is logged in.
+/// Persistent settings shared between the GUI (writer) and root daemon (reader).
+/// Stored as JSON at a system-wide path so the daemon can read it for any logged-in user.
 public struct BattlifyConfig: Codable, Equatable, Sendable {
-    /// Whether charge limiting is active.
     public var chargeLimitEnabled: Bool
-    /// Upper charge threshold (%). Charging stops at/above this.
+    /// Upper charge threshold (%); charging stops at/above this.
     public var chargeLimit: Int
-    /// Hysteresis: charging resumes once below (chargeLimit - resumeMargin).
-    /// Prevents rapid on/off toggling around the threshold.
+    /// Hysteresis: charging resumes below (chargeLimit - resumeMargin), avoiding toggle thrash.
     public var resumeMargin: Int
     /// Pause charging when the battery is too warm (heat accelerates wear).
     public var heatAwareEnabled: Bool
     /// Temperature (°C) at/above which charging pauses.
     public var maxChargeTempC: Double
-    /// Drive the MagSafe LED from charge status (orange charging, green holding).
-    /// Legacy flag, kept for older daemon/GUI compatibility; `magSafeLedMode` is
-    /// authoritative and is derived from this when a config predates the mode.
+    /// Legacy LED flag, kept for older daemon/GUI compat; `magSafeLedMode` is authoritative.
     public var magSafeLedEnabled: Bool
-    /// How the MagSafe LED behaves (Auto / Show status / Off).
     public var magSafeLedMode: MagSafeLEDMode
-    /// Force-discharge (run off battery while plugged) to bring the level down to
-    /// the limit when you plug in above it.
+    /// Force-discharge (run off battery while plugged) to bring the level down to the limit.
     public var dischargeEnabled: Bool
-    /// Cut charging just before the Mac sleeps so macOS can't top the battery up
-    /// past the limit overnight (the daemon is frozen during sleep and can't).
+    /// Cut charging before sleep so macOS can't top up past the limit while the daemon is frozen.
     public var disableChargingBeforeSleep: Bool
-    /// Hold a power assertion (while plugged in) so the Mac won't idle-sleep,
-    /// keeping the charge limit continuously enforced.
+    /// Hold a power assertion (while plugged) so idle-sleep can't interrupt limit enforcement.
     public var preventIdleSleep: Bool
-    /// "Always Active": keep the Mac fully awake with the lid closed (via
-    /// `pmset disablesleep`) so terminal jobs and background tasks keep running.
-    /// Applied only while on AC power — it auto-releases when unplugged to avoid
-    /// draining the battery and overheating a closed, unventilated Mac, unless
-    /// `keepAwakeOnBattery` is set.
+    /// "Always Active": keep the Mac awake with the lid closed (`pmset disablesleep`).
+    /// AC-only by default — auto-releases when unplugged (a closed Mac awake on battery
+    /// runs hot and drains fast) unless `keepAwakeOnBattery` is set.
     public var keepAwake: Bool
-    /// Opt-in: also keep awake with the lid closed while on battery. Off by
-    /// default because a closed, unventilated Mac kept awake on battery drains
-    /// fast and can run hot — the thermal guardrail (`keepAwakeMaxTempC`) still
-    /// applies as a safety net.
+    /// Opt-in: also keep awake with the lid closed on battery. Off by default (drains
+    /// fast, runs hot); the `keepAwakeMaxTempC` guardrail still applies.
     public var keepAwakeOnBattery: Bool
-    /// When true, keep-awake only holds while a matching task is running (see
-    /// `keepAwakeProcesses` / `keepAwakeMinCpu`); the Mac sleeps once the work is
-    /// done. When false, keep-awake stays on until you turn it off.
+    /// When true, keep-awake holds only while a matching task runs (see
+    /// `keepAwakeProcesses` / `keepAwakeMinCpu`); when false, it holds until turned off.
     public var keepAwakeRequiresTask: Bool
-    /// Process names (matched case-insensitively as a substring of the command)
-    /// that keep the Mac awake while running, e.g. ["ffmpeg", "npm", "docker"].
+    /// Process names (case-insensitive substring match) that keep the Mac awake, e.g. ["ffmpeg", "npm"].
     public var keepAwakeProcesses: [String]
-    /// If > 0, any process using at least this %CPU also counts as "busy" and
-    /// keeps the Mac awake (0 = ignore CPU, match names only).
+    /// If > 0, any process using ≥ this %CPU also counts as "busy" (0 = names only).
     public var keepAwakeMinCpu: Double
-    /// Thermal guardrail for keep-awake: if the battery/system runs at/above this
-    /// °C while keep-awake is holding, release it (let the Mac sleep) to protect a
-    /// closed, unventilated machine. 0 = no guardrail.
+    /// Thermal guardrail: release keep-awake at/above this °C to protect a closed Mac. 0 = off.
     public var keepAwakeMaxTempC: Double
 
     /// Recurring charging windows (charge/hold/discharge on a weekly timetable).
     public var schedules: [ChargeSchedule]
     /// Once-daily "ready by" top-up target.
     public var readyBy: ReadyByTarget
-    /// Gentle charging: duty-cycle charging on/off to hold a lower average charge
-    /// power, reducing heat and wear near the top. Off = charge at full rate.
-    /// Legacy on/off flag; superseded by `chargePower` (kept in sync for older daemons).
+    /// Legacy gentle-charging on/off flag; superseded by `chargePower` (kept in sync
+    /// for older daemons).
     public var slowCharge: Bool
-    /// Charge power as a percentage (0–100) of full rate, realized by duty-cycling
-    /// the on/off charge switch. 100 = full rate; 0 = hold (no charging). Since the
-    /// hardware has no charge-current dial, this is an average, not a true split.
+    /// Charge power 0–100% of full rate via duty-cycling the on/off switch (the hardware
+    /// has no current dial, so it's an average). 100 = full rate; 0 = hold.
     public var chargePower: Int
-    /// One-shot calibration: temporarily ignore the limit and charge to 100%,
-    /// then auto-clear once full. Batteries benefit from an occasional full cycle.
+    /// One-shot calibration: ignore the limit, charge to 100%, then auto-clear. Gives
+    /// the battery an occasional full cycle.
     public var calibrateToFull: Bool
-    /// Charging is paused until this time (nil = not paused; distantFuture =
-    /// paused indefinitely until the user resumes).
+    /// Charging paused until this time (nil = not paused; distantFuture = until resumed).
     public var pauseUntil: Date?
-    /// The last-applied save mode.
     public var mode: SaveMode
 
     public init(chargeLimitEnabled: Bool = false,
@@ -127,9 +103,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.heatAwareEnabled = heatAwareEnabled
         self.maxChargeTempC = maxChargeTempC
         self.magSafeLedEnabled = magSafeLedEnabled
-        // New installs default the LED to Status (orange charging / green holding
-        // at the limit). Configs written before `magSafeLedMode` existed migrate
-        // from the legacy flag in `init(from:)`, so upgraders keep their choice.
+        // New installs default to Status; older configs migrate from the legacy flag
+        // in `init(from:)`.
         self.magSafeLedMode = magSafeLedMode ?? .status
         self.dischargeEnabled = dischargeEnabled
         self.disableChargingBeforeSleep = disableChargingBeforeSleep
@@ -151,8 +126,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
 
     public static let `default` = BattlifyConfig()
 
-    // Version-tolerant decoding: missing keys fall back to defaults so configs
-    // written by older versions keep loading.
+    // Version-tolerant decoding: missing keys fall back to defaults.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         chargeLimitEnabled = try c.decodeIfPresent(Bool.self, forKey: .chargeLimitEnabled) ?? false
@@ -187,9 +161,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
 }
 
 public enum BattlifyPaths {
-    /// System-wide config directory, readable by root daemon and writable by
-    /// the GUI (the installer makes it group/everyone-writable, or the GUI
-    /// writes via the helper). Kept under /Library for daemon visibility.
+    /// System-wide config dir under /Library for daemon visibility. Made writable by
+    /// the GUI via the installer (or the helper).
     public static let configDirectory =
         URL(fileURLWithPath: "/Library/Application Support/Battlify", isDirectory: true)
 
@@ -200,8 +173,7 @@ public enum BattlifyPaths {
     public static let historyFile =
         configDirectory.appendingPathComponent("history.jsonl")
 
-    /// Per-user config dir, used by the GUI when it records history itself
-    /// (e.g. when the root daemon isn't installed).
+    /// Per-user config dir, used when the GUI records history itself (no root daemon).
     public static var userConfigDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Battlify", isDirectory: true)

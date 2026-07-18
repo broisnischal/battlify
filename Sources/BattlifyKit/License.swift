@@ -8,9 +8,8 @@ public struct LicenseInfo: Codable, Sendable, Equatable {
     public var issuedAt: Date
     public var expiresAt: Date?   // nil = perpetual
     public var product: String
-    /// Device code the license is bound to (see DeviceIdentity.deviceCode()).
-    /// Required by verify(): a license without one is rejected (.missingDevice),
-    /// so pre-device-locking keys must be re-issued from the storefront.
+    /// Device code the license is bound to. Required — `verify()` rejects unbound
+    /// tokens (.missingDevice), so pre-device-locking keys must be re-issued.
     public var deviceID: String?
 
     enum CodingKeys: String, CodingKey {
@@ -50,23 +49,20 @@ public enum LicenseError: Error, CustomStringConvertible {
     }
 }
 
-/// Offline license verification with Ed25519. The seller holds the private key and
-/// mints signed license tokens; the app embeds only the public key and verifies
-/// locally — no phone-home, hard to forge, works offline.
+/// Offline license verification with Ed25519: the seller signs tokens with the private
+/// key, the app embeds only the public key and verifies locally — no phone-home.
 ///
 /// Token format:  base64url(payloadJSON) "." base64url(signature)
 public enum License {
     public static let product = "battlify"
 
-    /// Embedded Ed25519 PUBLIC key (base64, 32 bytes). The matching PRIVATE key
-    /// lives on the storefront/license server (battlify-releases/app) as the
-    /// LICENSE_SIGNING_PRIVATE_KEY env var, which signs licenses after checkout.
+    /// Embedded Ed25519 public key (base64, 32 bytes). The private key lives on the
+    /// license server as LICENSE_SIGNING_PRIVATE_KEY.
     public static let publicKeyBase64 = "+H12xfer/QAvW5xSQhB0L2rehNFuwm3SpwW3r66Bujc="
 
     /// Every license must carry a device binding — unbound tokens are rejected.
-    /// - Parameter deviceID: this machine's device code, compared against the
-    ///   one in the license. Pass nil only from seller-side tooling where the
-    ///   token isn't being redeemed (skips the match, not the binding check).
+    /// - Parameter deviceID: this machine's code, matched against the license. Pass
+    ///   nil only from seller-side tooling (skips the match, not the binding check).
     public static func verify(_ token: String,
                               now: Date = Date(),
                               deviceID: String? = nil,

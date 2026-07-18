@@ -10,16 +10,13 @@ struct NetworkProfile: Codable, Identifiable, Equatable {
     var mode: SaveMode
 }
 
-/// Auto-switches the save mode based on the current Wi-Fi network. E.g. hold 80%
-/// at home, charge to full on unknown/travel networks. Reading the joined SSID
-/// needs Location permission on modern macOS, so the permission is only requested
-/// once the user turns this on.
+/// Auto-switches the save mode by Wi-Fi network (e.g. hold 80% at home). Reading the
+/// SSID needs Location permission on modern macOS, requested only when enabled.
 @MainActor
 final class NetworkProfileStore: NSObject, ObservableObject {
     @Published var enabled: Bool { didSet { persist(); reconfigure() } }
     @Published private(set) var currentSSID: String?
     @Published private(set) var locationAuthorized = false
-    /// SSID → mode rules.
     @Published var profiles: [NetworkProfile] { didSet { persist() } }
     /// Mode to apply on any network without a specific rule (nil = leave as-is).
     @Published var defaultMode: SaveMode? { didSet { persist() } }
@@ -48,7 +45,6 @@ final class NetworkProfileStore: NSObject, ObservableObject {
         reconfigure()
     }
 
-    /// Add a rule for the current network (or a typed SSID).
     func addProfile(ssid: String, mode: SaveMode) {
         let name = ssid.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
@@ -85,10 +81,8 @@ final class NetworkProfileStore: NSObject, ObservableObject {
         guard ssid != lastAppliedSSID else { return }
         lastAppliedSSID = ssid
 
-        // Only switch when a rule (or the default) resolves to a mode that isn't
-        // already active. Re-applying the current mode would overwrite any custom
-        // charge-limit/heat tweaks the user made within it — so joining a network on
-        // launch or reconnecting shouldn't silently reset their settings.
+        // Only switch to a mode that isn't already active — re-applying the current mode
+        // would overwrite the user's custom charge-limit/heat tweaks within it.
         let mode = profiles.first(where: { $0.ssid == ssid })?.mode ?? defaultMode
         if let mode, mode != chargeLimit?.mode { chargeLimit?.applyMode(mode) }
     }

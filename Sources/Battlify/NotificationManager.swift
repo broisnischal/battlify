@@ -4,9 +4,8 @@ import AppKit
 import UserNotifications
 import BattlifyKit
 
-/// Posts macOS notifications on charge-state transitions (limit reached, heat
-/// pause, low battery, fully charged). Edge-triggered — it tracks the last state
-/// and only fires when something actually changes, so it never spams.
+/// Posts macOS notifications on charge-state transitions. Edge-triggered — tracks
+/// the last state and only fires on change, so it never spams.
 @MainActor
 final class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
@@ -23,25 +22,19 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         center.delegate = self
     }
 
-    /// Subscribe to the stores so transitions are detected via Combine — reliably,
-    /// unlike SwiftUI `onChange`/`onAppear` on a status-item label, which don't
-    /// fire dependably. Idempotent; call it once from the always-rendered label.
+    /// Detect transitions via Combine — SwiftUI onChange/onAppear on a status-item
+    /// label don't fire dependably. Idempotent; call once from the always-rendered label.
     func startIfNeeded(settings: AppSettings, battery: BatteryStore, chargeLimit: ChargeLimitStore) {
         guard !started else { return }
         started = true
         settingsRef = settings; batteryRef = battery; chargeLimitRef = chargeLimit
-        // Capture the current state as the baseline so pre-existing conditions
-        // don't fire retroactively.
+        // Baseline the current state so pre-existing conditions don't fire retroactively.
         evaluate(settings: settings, battery: battery, chargeLimit: chargeLimit)
-        // If notifications are already enabled from a previous launch, register with
-        // the system now so the app appears in System Settings › Notifications and
-        // can actually deliver — otherwise it stays unregistered until a transition
-        // happens to request authorization at some unpredictable moment.
+        // If already enabled from a previous launch, register now so the app appears in
+        // System Settings › Notifications and can deliver, instead of at some random transition.
         if settings.notificationsEnabled { ensureAuthorized(promptIfDenied: false) }
-        // `objectWillChange` fires *before* the value updates (on whatever thread
-        // mutates it), so hop onto the main actor with a Task — that both reads the
-        // settled values and is isolation-safe (unlike `assumeIsolated`, which traps
-        // on macOS 26 when the callback isn't on the main actor's executor).
+        // objectWillChange fires before the value updates, so hop to the main actor with
+        // a Task to read settled values. assumeIsolated would trap on macOS 26 off-main.
         Publishers.Merge(
             battery.objectWillChange.map { _ in () },
             chargeLimit.objectWillChange.map { _ in () }
@@ -57,16 +50,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         evaluate(settings: settings, battery: battery, chargeLimit: chargeLimit)
     }
 
-    /// Called when the user turns notifications on. Requests permission if it's
-    /// undetermined; if it's already denied, points them to System Settings.
+    /// User turned notifications on — request permission, or point to Settings if denied.
     func enableRequested() {
         ensureAuthorized(promptIfDenied: true)
     }
 
-    /// Register with the notification system and resolve authorization. When
-    /// `promptIfDenied` is true (an explicit user action), a denial opens System
-    /// Settings; at launch it stays silent. All hops go via `Task { @MainActor }`
-    /// so nothing runs an isolation assertion on a background queue.
+    /// Resolve authorization. When promptIfDenied (explicit user action) a denial opens
+    /// Settings; at launch it stays silent. Hops via Task { @MainActor } to stay isolation-safe.
     private func ensureAuthorized(promptIfDenied: Bool) {
         center.getNotificationSettings { [weak self] settings in
             let status = settings.authorizationStatus
@@ -86,9 +76,8 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         }
     }
 
-    /// Post an immediate test notification so the user can confirm permission works.
-    /// Resolves authorization first (posting before the prompt is answered drops
-    /// the notification), and explains how to fix it if permission is off.
+    /// Post a test notification. Resolves authorization first — posting before the
+    /// prompt is answered drops the notification.
     func sendTest() {
         center.getNotificationSettings { [weak self] settings in
             let status = settings.authorizationStatus
@@ -111,7 +100,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         }
     }
 
-    /// Guide the user to enable notifications when the system has them turned off.
     private func showDeniedAlert() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
@@ -141,26 +129,21 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// Battery %, at or below which (on battery) we warn about low charge.
     private let lowThreshold = 20
 
-    /// Ask for notification permission (once). Call when the user turns the
-    /// setting on so the system prompt appears at an expected moment.
+    /// Ask for notification permission, once.
     func requestAuthorization() {
         guard !authRequested else { return }
         authRequested = true
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    /// Evaluate current state and fire notifications for any new transitions.
-    /// Safe to call on every relevant state change — it's idempotent.
+    /// Evaluate current state and fire notifications for new transitions. Idempotent.
     func evaluate(settings: AppSettings, battery: BatteryStore, chargeLimit: ChargeLimitStore) {
         let snap = battery.snapshot
-        // Only treat charging as "paused" when it's actually off, and surface the
-        // reason the daemon reported.
         let reason = chargeLimit.chargingEnabled ? nil : chargeLimit.pauseReason
         let low = !snap.isPluggedIn && snap.percentage <= lowThreshold
         let full = snap.isFullyCharged
 
-        // Always advance the baseline so events that happen while notifications are
-        // off (or before the first evaluation) don't fire retroactively when re-enabled.
+        // Always advance the baseline so events while off don't fire retroactively later.
         defer {
             lastReason = reason
             lastLow = low
@@ -192,8 +175,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         }
     }
 
-    /// Deliver a notification, replacing any prior one of the same category so
-    /// they don't stack up.
+    /// Deliver a notification, replacing any prior one of the same category.
     private func post(_ id: String, _ title: String, _ body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -201,8 +183,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         content.sound = .default
         // Group all Battlify alerts under one thread in Notification Center.
         content.threadIdentifier = "battlify"
-        // Clear any prior alert of the same kind (pending or already shown) so they
-        // don't stack up as state flips back and forth.
         let ident = "battlify.\(id)"
         center.removePendingNotificationRequests(withIdentifiers: [ident])
         center.removeDeliveredNotifications(withIdentifiers: [ident])

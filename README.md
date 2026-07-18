@@ -85,6 +85,10 @@ that gap two ways, and you choose which:
 - **Lid / clamshell sensor** that warns you when you're docked-and-closed at a high
   charge — the worst-case aging scenario.
 - **Quick Actions** — dim or brighten the display, blank it, or sleep the Mac.
+- **Keep Awake (Caffeine)** — one tap stops the display from turning off and the Mac
+  from idle-sleeping, on battery or plugged in, until you turn it back off (or a timer
+  you set runs out). Closing the lid still sleeps, and it releases the moment you quit
+  Battlify — so it can never strand your Mac awake.
 - **Launch at login** and **in-app auto-update**, and it'll tell you if the helper
   ever falls out of date so features don't silently stop working.
 
@@ -189,7 +193,13 @@ sudo ./scripts/install-helper.sh   # install the root helper daemon
 
 ./scripts/package-app.sh 0.8.1     # build Battlify.app
 ./scripts/make-dmg.sh 0.8.1        # build the DMG
+
+./scripts/test.sh                  # run unit tests + benchmarks (swift-testing)
 ```
+
+`scripts/test.sh` wraps `swift test`; on machines with only the Command Line Tools
+it adds the swift-testing framework search paths automatically. CI runs it on every
+push and pull request.
 
 See [`DISTRIBUTION.md`](DISTRIBUTION.md) for signing, notarization, the GitHub
 Actions release pipeline, Gumroad setup, and the auto-update feed.
@@ -215,9 +225,11 @@ effect.
 
 ## License
 
-Battlify is **source-available** under the [Battlify License](LICENSE): do almost
-anything with the source, with protections against malicious or rip-off
-redistributions of the *app itself*.
+Battlify is **source-available** under the [PolyForm Noncommercial License
+1.0.0](LICENSE). Use it, modify it, and contribute back freely for any
+noncommercial purpose — but you may not sell it or use it commercially (including
+paid products, hosted services, or enterprise support). All commercial rights are
+reserved by the author.
 
 ## Credits
 
