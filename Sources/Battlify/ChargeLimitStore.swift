@@ -245,50 +245,55 @@ final class ChargeLimitStore: ObservableObject {
         command(.setPowerToggle(toggle, on))
     }
 
+    /// Assign only when the value actually changed, so a status poll that returns
+    /// identical state doesn't fire a burst of objectWillChange (and needless redraws).
+    private func set<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<ChargeLimitStore, T>, _ newValue: T) {
+        if self[keyPath: keyPath] != newValue { self[keyPath: keyPath] = newValue }
+    }
+
     private func ingest(_ response: ControlResponse?) {
         guard let r = response else {
-            daemonAvailable = false
+            set(\.daemonAvailable, false)
             return
         }
-        daemonAvailable = true
-        daemonProtocolVersion = r.daemonProtocolVersion
-        daemonBuildVersion = r.daemonBuildVersion
+        set(\.daemonAvailable, true)
+        set(\.daemonProtocolVersion, r.daemonProtocolVersion)
+        set(\.daemonBuildVersion, r.daemonBuildVersion)
         autoUpdateHelperIfNeeded()
-        currentConfig = r.config
-        schemeDescription = r.schemeDescription
+        set(\.currentConfig, r.config)
+        set(\.schemeDescription, r.schemeDescription)
         let wasChargingEnabled = chargingEnabled
-        chargingEnabled = r.chargingEnabled
-        lowPowerMode = r.lowPowerModeEnabled
-        powerToggles = r.powerToggles
-        pauseReason = r.pauseReason
-        mode = r.config.mode
-        limitEnabled = r.config.chargeLimitEnabled
-        limit = r.config.chargeLimit
-        resumeMargin = r.config.resumeMargin
-        heatAwareEnabled = r.config.heatAwareEnabled
-        maxChargeTempC = r.config.maxChargeTempC
-        magSafeLedMode = r.config.magSafeLedMode
-        magSafeSupported = r.magSafeSupported
-        dischargeEnabled = r.config.dischargeEnabled
-        dischargeSupported = r.dischargeSupported
-        discharging = r.discharging
-        disableChargingBeforeSleep = r.config.disableChargingBeforeSleep
-        preventIdleSleep = r.config.preventIdleSleep
-        keepAwake = r.config.keepAwake
-        keepAwakeOnBattery = r.config.keepAwakeOnBattery
-        keepAwakeRequiresTask = r.config.keepAwakeRequiresTask
-        keepAwakeProcesses = r.config.keepAwakeProcesses
-        keepAwakeMinCpu = r.config.keepAwakeMinCpu
-        keepAwakeMaxTempC = r.config.keepAwakeMaxTempC
-        schedules = r.config.schedules
-        readyBy = r.config.readyBy
-        slowCharge = r.config.slowCharge
-        chargePower = r.config.chargePower
-        calibrating = r.config.calibrateToFull
-        pauseUntil = r.config.pauseUntil
+        set(\.chargingEnabled, r.chargingEnabled)
+        set(\.lowPowerMode, r.lowPowerModeEnabled)
+        set(\.powerToggles, r.powerToggles)
+        set(\.pauseReason, r.pauseReason)
+        set(\.mode, r.config.mode)
+        set(\.limitEnabled, r.config.chargeLimitEnabled)
+        set(\.limit, r.config.chargeLimit)
+        set(\.resumeMargin, r.config.resumeMargin)
+        set(\.heatAwareEnabled, r.config.heatAwareEnabled)
+        set(\.maxChargeTempC, r.config.maxChargeTempC)
+        set(\.magSafeLedMode, r.config.magSafeLedMode)
+        set(\.magSafeSupported, r.magSafeSupported)
+        set(\.dischargeEnabled, r.config.dischargeEnabled)
+        set(\.dischargeSupported, r.dischargeSupported)
+        set(\.discharging, r.discharging)
+        set(\.disableChargingBeforeSleep, r.config.disableChargingBeforeSleep)
+        set(\.preventIdleSleep, r.config.preventIdleSleep)
+        set(\.keepAwake, r.config.keepAwake)
+        set(\.keepAwakeOnBattery, r.config.keepAwakeOnBattery)
+        set(\.keepAwakeRequiresTask, r.config.keepAwakeRequiresTask)
+        set(\.keepAwakeProcesses, r.config.keepAwakeProcesses)
+        set(\.keepAwakeMinCpu, r.config.keepAwakeMinCpu)
+        set(\.keepAwakeMaxTempC, r.config.keepAwakeMaxTempC)
+        set(\.schedules, r.config.schedules)
+        set(\.readyBy, r.config.readyBy)
+        set(\.slowCharge, r.config.slowCharge)
+        set(\.chargePower, r.config.chargePower)
+        set(\.calibrating, r.config.calibrateToFull)
+        set(\.pauseUntil, r.config.pauseUntil)
 
-        // When charging toggles, tell the battery store to re-read so the menu-bar icon
-        // updates instead of waiting for the next slow poll.
+        // charging toggled → nudge the battery store so the menu-bar icon updates now
         if wasChargingEnabled != chargingEnabled {
             NotificationCenter.default.post(name: .battlifyChargeStateChanged, object: nil)
         }

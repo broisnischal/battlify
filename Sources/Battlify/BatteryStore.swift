@@ -19,12 +19,12 @@ final class BatteryStore: ObservableObject {
 
     private var timer: Timer?
     private var powerTimer: Timer?
+    private var powerViewers = 0
     private var runLoopSource: CFRunLoopSource?
 
     init() {
         refresh()
         startPolling()
-        startPowerFlowPolling()
         startPowerSourceNotifications()
         // Refresh right after the Mac wakes so the menu isn't stale.
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -65,14 +65,28 @@ final class BatteryStore: ObservableObject {
         timer = t
     }
 
-    /// Power flow gets no IOKit notification, so poll on a short timer; the read is cheap.
-    private func startPowerFlowPolling() {
+    /// Live watts only show in the open popover and the Details window, so poll for
+    /// them only while one is visible (call from `.onAppear`). Off-screen this saves
+    /// a 5s IOKit read + publish + menu-bar re-render for the app's whole lifetime.
+    func beginPowerFlowObserving() {
+        powerViewers += 1
+        guard powerTimer == nil else { return }
+        powerFlow = PowerMonitor.read()
         let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.powerFlow = PowerMonitor.read() }
         }
         t.tolerance = 1
         RunLoop.main.add(t, forMode: .common)
         powerTimer = t
+    }
+
+    /// Call from `.onDisappear`.
+    func endPowerFlowObserving() {
+        powerViewers = max(0, powerViewers - 1)
+        if powerViewers == 0 {
+            powerTimer?.invalidate()
+            powerTimer = nil
+        }
     }
 
     private func startPowerSourceNotifications() {

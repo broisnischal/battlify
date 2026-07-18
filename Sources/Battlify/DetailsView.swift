@@ -23,8 +23,8 @@ struct DetailsView: View {
         }
         .scrollIndicators(.hidden)
         .frame(width: 380, height: 600)
-        .onAppear { processes.beginObserving() }
-        .onDisappear { processes.endObserving() }
+        .onAppear { processes.beginObserving(); battery.beginPowerFlowObserving() }
+        .onDisappear { processes.endObserving(); battery.endPowerFlowObserving() }
     }
 
     // MARK: - Power flow

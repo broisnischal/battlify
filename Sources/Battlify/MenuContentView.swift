@@ -50,9 +50,11 @@ struct MenuContentView: View {
         // Re-sync every time the menu opens so it never shows stale state.
         .onAppear {
             battery.refresh()
+            battery.beginPowerFlowObserving()
             chargeLimit.refresh()
             license.refresh()
         }
+        .onDisappear { battery.endPowerFlowObserving() }
     }
 
     private var maxPopoverHeight: CGFloat {

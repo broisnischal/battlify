@@ -52,6 +52,19 @@ public enum LidSessionStore {
         } else {
             try? line.write(to: file, options: .atomic)
         }
+        trim()
+    }
+
+    /// Cap the file so it can't grow unbounded. Size-guarded so the common small-file
+    /// case skips the full read/parse entirely.
+    private static func trim(keep: Int = 2000) {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size]) as? Int,
+              size > keep * 200 else { return }
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        guard lines.count > keep else { return }
+        let kept = lines.suffix(keep).joined(separator: "\n") + "\n"
+        try? Data(kept.utf8).write(to: file, options: .atomic)
     }
 
     /// Delete the lid-sessions file. Best-effort; a missing file is success.

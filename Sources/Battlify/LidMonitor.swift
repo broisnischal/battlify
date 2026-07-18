@@ -43,6 +43,17 @@ final class LidMonitor {
                            .commonModes)
     }
 
+    deinit {
+        if let notifyPort {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(),
+                                  IONotificationPortGetRunLoopSource(notifyPort).takeUnretainedValue(),
+                                  .commonModes)
+        }
+        if notifierObject != 0 { IODeregisterForSystemPower(&notifierObject) }
+        if rootPort != 0 { IOServiceClose(rootPort) }
+        if let notifyPort { IONotificationPortDestroy(notifyPort) }
+    }
+
     private func handle(_ messageType: natural_t, _ argument: UnsafeMutableRawPointer?) {
         switch messageType {
         case UInt32(kIOMessageCanSystemSleep):

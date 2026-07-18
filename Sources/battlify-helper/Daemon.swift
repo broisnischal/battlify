@@ -54,7 +54,9 @@ final class Daemon: @unchecked Sendable {
     private var pmsetCacheAt: Date?
     private var pmsetCacheLPM = false
     private var pmsetCacheToggles: [String: Bool] = [:]
-    private let pmsetCacheTTL: TimeInterval = 5
+    // Longer than the GUI's 30s status poll so periodic refreshes hit the cache
+    // instead of forking two `pmset` each time; we invalidate on any change we make.
+    private let pmsetCacheTTL: TimeInterval = 60
 
     init() {
         charge = ChargeController(smc: smc)
