@@ -1,5 +1,14 @@
 # battlify
 
+## 0.12.0
+
+### Minor Changes
+
+- 11b112e: Give the UI a premium refresh with **HugeIcons**. A lightweight HugeIcons renderer
+  (real stroke icons from `@hugeicons/core-free-icons`, drawn as SwiftUI shapes — no
+  runtime dependency) now powers the menu popover and the Settings window (tab bar +
+  About). Also shortened the "Display Off" Quick Action to "Off".
+
 ## 0.11.0
 
 ### Minor Changes
