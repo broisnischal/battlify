@@ -437,18 +437,12 @@ struct MenuContentView: View {
         }
     }
 
-    /// "Caffeine" tile: tap toggles keep-awake indefinitely; press-and-hold opens a
-    /// timer menu. Tinted amber while it's holding the Mac awake.
+    /// "Caffeine" tile: tap toggles keep-awake indefinitely; right-click for a timed
+    /// session. Tinted amber while it's holding the Mac awake. Built as a plain button
+    /// (not a Menu) so it stays the same width as the other Quick Action tiles.
     private var caffeineButton: some View {
-        Menu {
-            if caffeine.active {
-                Button("Turn Off", systemImage: "cup.and.saucer") { caffeine.deactivate() }
-                Divider()
-                Text("Keep awake…")
-            }
-            ForEach(CaffeineManager.Duration.allCases) { duration in
-                Button(duration.title) { caffeine.activate(duration) }
-            }
+        Button {
+            caffeine.toggle()
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: caffeine.active ? "cup.and.saucer.fill" : "cup.and.saucer")
@@ -458,17 +452,24 @@ struct MenuContentView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
             .foregroundStyle(caffeine.active ? Color.yellow : Color.primary)
-            .background(caffeine.active ? Color.yellow.opacity(0.22) : Color.primary.opacity(0.06),
+            .background(caffeine.active
+                        ? AnyShapeStyle(Color.yellow.opacity(0.22))
+                        : AnyShapeStyle(.quaternary.opacity(0.4)),
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        } primaryAction: {
-            caffeine.toggle()
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize(horizontal: false, vertical: true)
+        .buttonStyle(.plain)
         .help(caffeine.active
-              ? "Keeping the Mac awake — the display won't sleep. Tap to turn off; hold for a timer."
-              : "Keep the Mac awake — display and system won't sleep. Tap for on; hold to set a timer.")
+              ? "Keeping the Mac awake — the display won't sleep. Click to turn off; right-click for a timer."
+              : "Keep the Mac awake — display and system won't sleep. Click for on; right-click to set a timer.")
+        .contextMenu {
+            if caffeine.active {
+                Button("Turn Off") { caffeine.deactivate() }
+                Divider()
+            }
+            ForEach(CaffeineManager.Duration.allCases) { duration in
+                Button(duration.title) { caffeine.activate(duration) }
+            }
+        }
     }
 
     /// Caption under Quick Actions while keep-awake is on.
