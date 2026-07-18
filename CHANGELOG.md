@@ -1,5 +1,86 @@
 # battlify
 
+## 0.11.0
+
+### Minor Changes
+
+- d506d35: Add **Keep Awake (Caffeine)** mode — a one-tap "never off, never sleeps" toggle.
+
+  A new tile in the menu's Quick Actions keeps the display from turning off and the
+  Mac from idle-sleeping, the same thing `caffeinate -d` does.
+
+  - Works on battery _and_ wall power (unlike the AC-gated "Always Active" keep-awake).
+  - Needs no root and no helper daemon — it's a user-space `PreventUserIdleDisplaySleep`
+    power assertion held by the app, so it works even before the helper is installed.
+  - Tap to hold indefinitely, or press-and-hold the tile for a timed session (30 min /
+    1 / 2 / 5 hours) that auto-releases.
+  - Closing the lid still sleeps the Mac, and the assertion is released the instant
+    Battlify quits — so it can never leave the Mac stuck awake.
+
+  Also bootstraps the project's **first automated tests**: a `BattlifyKitTests` suite
+  (swift-testing) covering the Caffeine state machine, timer expiry/cancellation, and a
+  system-level integration test that asserts the real IOKit power assertion is
+  registered and cleared — plus toggle benchmarks. Run with `./scripts/test.sh`; a new
+  CI workflow runs them on every push/PR.
+
+- d506d35: Animated menu-bar battery icons.
+
+  - New "Pixel" icon style: a chunky 8-bit battery with notched corners. While
+    charging, its fill sweeps from the current level up to full, one column at a
+    time — like a classic handheld.
+  - Every other style's charging bolt now gently pulses while charging.
+  - When charging completes — the battery reaches 100% or lands at your charge
+    limit — the icon flashes green a few times (or blinks monochrome when icon
+    coloring is off), then settles.
+  - Micro-details: animations respect the system Reduce Motion setting, never run
+    while discharging (a battery saver shouldn't spend cycles on battery), and the
+    driving timer only exists while an animation is actually visible.
+
+### Patch Changes
+
+- d506d35: Fix Always Active leaving the internal display and keyboard backlight on with the lid
+  closed. Keeping the Mac awake with the lid shut skips macOS's normal clamshell
+  display-off, and the previous one-shot display sleep didn't hold. Battlify now
+  re-issues a forced display sleep while the lid is shut and Always Active is holding —
+  so the panel and keyboard backlight go dark and stay dark — and it never runs when an
+  external display is attached, so a docked monitor is untouched.
+- d506d35: Relicense under the PolyForm Noncommercial License 1.0.0. You may use, modify, and
+  contribute to Battlify freely for noncommercial purposes; selling it or using it
+  commercially (paid products, hosted services, enterprise support) is not permitted. All
+  commercial rights are reserved by the author.
+- d506d35: Performance: cut needless background wakeups. Live-watts polling now runs only while
+  the popover or Details window is open (instead of every 5 seconds for the app's whole
+  life), the daemon caches its `pmset` reads longer so periodic status polls stop forking
+  processes, and status refreshes only publish state that actually changed. Lower energy
+  impact with no change in behaviour.
+- d506d35: Fix the helper installer failing intermittently on reinstall/auto-update.
+
+  The install scripts unloaded the LaunchDaemon (`launchctl bootout`) and immediately
+  reloaded it (`launchctl bootstrap`). `bootout` is asynchronous, so bootstrapping
+  before the old job finished tearing down races and fails with `Bootstrap failed: 5:
+Input/output error` — and because the scripts run under `set -e`, that aborted the
+  install and made the app report "Install cancelled or failed." This bit the common
+  path now that the app auto-reinstalls the helper whenever it's out of date.
+
+  - Wait for the old daemon instance to fully unload before bootstrapping, then retry
+    bootstrap while the label frees up (and treat an already-loaded service as
+    success, kickstarting it onto the new binary).
+  - `launchctl enable` the service before bootstrap, so a service left disabled by a
+    prior failed install can still load.
+  - Strip the quarantine flag from the installed helper binary, so the (not-yet-
+    notarized) daemon isn't killed by Gatekeeper right after install.
+
+  Applies to both the app-bundled installer and `scripts/install-helper.sh`.
+
+- d506d35: Make the app relaunch reliably after an in-app update.
+
+  The post-update relaunch fired a single `open` and assumed it worked. It now
+  re-registers the swapped bundle, waits briefly for Launch Services to settle, then
+  relaunches with `open -n` and verifies the process actually came up — retrying a
+  few times (checking first, so it never spawns a duplicate) and falling back to a
+  launch by bundle id. If the app still isn't visible it logs a warning instead of
+  silently giving up.
+
 ## 0.10.1
 
 ### Patch Changes
