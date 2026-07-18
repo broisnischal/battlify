@@ -1,8 +1,8 @@
 import SwiftUI
 import BattlifyKit
 
-/// Minute-of-day ⇄ Date helpers so SwiftUI's `DatePicker` (which works in Dates)
-/// can edit our stored minutes-from-midnight values.
+/// Minute-of-day ⇄ Date helpers so `DatePicker` can edit our stored
+/// minutes-from-midnight values.
 enum ClockTime {
     static func date(fromMinute minute: Int) -> Date {
         let cal = Calendar.current
@@ -15,7 +15,6 @@ enum ClockTime {
     }
 }
 
-/// A compact S–M–T–W–T–F–S selector for a `Weekdays` set.
 struct WeekdayPicker: View {
     @Binding var days: Weekdays
     private let bits: [(String, Weekdays)] = [
@@ -46,8 +45,8 @@ struct WeekdayPicker: View {
     }
 }
 
-/// Modal editor for one recurring charge schedule. Edits a local copy; commits via
-/// `onSave` (or discards on Cancel). `onDelete` is nil when adding a new one.
+/// Modal editor for one charge schedule. Edits a local copy, committed via
+/// `onSave`; `onDelete` is nil when adding.
 struct ScheduleEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ChargeSchedule
@@ -151,8 +150,8 @@ struct ScheduleEditorView: View {
         return "\(h) h \(m) min"
     }
 
-    /// A label + control row with the label in a fixed left column, so every
-    /// field's control lines up in the same value column.
+    /// Label in a fixed left column so every field's control lines up in the
+    /// same value column.
     @ViewBuilder
     private func row<Content: View>(_ label: String,
                                     alignment: VerticalAlignment = .center,

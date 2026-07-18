@@ -1,9 +1,8 @@
 import Foundation
 import BattlifyKit
 
-// battlify-helper: the privileged component. Writing SMC keys requires root, so
-// this binary is meant to be run as root (via sudo for testing, or as a
-// LaunchDaemon in production). The GUI never writes SMC directly.
+// battlify-helper: the privileged component. Writing SMC keys requires root, so this
+// runs as root (sudo for testing, LaunchDaemon in production). The GUI never writes SMC.
 
 let args = Array(CommandLine.arguments.dropFirst())
 let command = args.first ?? "help"
@@ -71,8 +70,7 @@ case "disable":
     catch { FileHandle.standardError.write(Data("error: \(error)\n".utf8)); exit(1) }
 
 case "limit":
-    // Set the limit and turn limiting on. GUI normally does this by writing the
-    // config, but the CLI is handy for testing.
+    // Set the limit and enable limiting; the GUI normally does this via config, but the CLI helps testing.
     requireRoot()
     guard let n = args.dropFirst().first.flatMap({ Int($0) }), (20...100).contains(n) else {
         FileHandle.standardError.write(Data("usage: battlify-helper limit <20-100>\n".utf8))

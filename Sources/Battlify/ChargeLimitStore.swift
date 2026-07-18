@@ -3,20 +3,17 @@ import Combine
 import AppKit
 import BattlifyKit
 
-/// GUI-side state for charge limiting. Talks to the root daemon over the control
-/// socket. All socket I/O happens off the main thread; published state is updated
-/// back on the main actor.
+/// GUI-side charge-limit state. Socket I/O to the root daemon runs off the main
+/// thread; published state is updated back on the main actor.
 @MainActor
 final class ChargeLimitStore: ObservableObject {
-    /// Whether the daemon is reachable (installed + running).
     @Published private(set) var daemonAvailable = false
-    /// Protocol version the running daemon reports (0 = pre-versioning / very old).
+    /// Protocol version the daemon reports (0 = pre-versioning).
     @Published private(set) var daemonProtocolVersion = 0
-    /// Behaviour/build version the running daemon reports (0 = predates it).
+    /// Build version the daemon reports (0 = predates it).
     @Published private(set) var daemonBuildVersion = 0
-    /// The installed helper is older than this build ships — either its protocol
-    /// (newer requests would be ignored) or its behaviour (e.g. a fixed charge
-    /// cycle). Triggers an automatic update (see `autoUpdateHelperIfNeeded`).
+    /// Installed helper is older than this build (protocol or behaviour). Triggers an
+    /// automatic update (see autoUpdateHelperIfNeeded).
     var daemonOutdated: Bool {
         daemonAvailable && (daemonProtocolVersion < ControlProtocol.version
                             || daemonBuildVersion < HelperBuild.version)
@@ -24,32 +21,27 @@ final class ChargeLimitStore: ObservableObject {
     @Published private(set) var schemeDescription = ""
     @Published private(set) var chargingEnabled = true
     @Published private(set) var lowPowerMode = false
-    /// Current sleep/idle power-feature states, keyed by pmset key.
+    /// Sleep/idle power-feature states, keyed by pmset key.
     @Published private(set) var powerToggles: [String: Bool] = [:]
 
-    /// Currently selected save mode (mirrors the daemon's config).
     @Published private(set) var mode: SaveMode = .off
-    /// Why charging is paused, if it is ("limit"/"heat"/nil).
+    /// Why charging is paused ("limit"/"heat"/nil).
     @Published private(set) var pauseReason: String?
 
     /// Mirror of the daemon's config. Edits are pushed via `apply`.
     @Published var limitEnabled = false
     @Published var limit = 80
-    /// Charging resumes once the level drops to `limit - resumeMargin`, so the
-    /// battery cycles within the band [limit - resumeMargin, limit] instead of
-    /// sitting pinned at the limit. `recharge` is the friendly lower bound.
+    /// Charging resumes at limit - resumeMargin, so the battery cycles in a band
+    /// instead of sitting pinned at the limit.
     @Published var resumeMargin = 5
     var recharge: Int { limit - resumeMargin }
-    /// GUI toggle: whether the user has opted into a custom recharge range. When
-    /// off the daemon uses a small default hysteresis and the range slider hides.
+    /// Whether the user opted into a custom recharge range; off = default hysteresis.
     @Published var rangeEnabled: Bool = UserDefaults.standard.bool(forKey: "chargeRange.enabled") {
         didSet { UserDefaults.standard.set(rangeEnabled, forKey: "chargeRange.enabled") }
     }
-    /// Default hysteresis when a custom range isn't in use.
     private let defaultMargin = 5
 
-    /// Turn the recharge range on/off. Enabling seeds a sensible band; disabling
-    /// reverts to the default hysteresis. Persists to the daemon.
+    /// Enabling seeds a sensible band; disabling reverts to default hysteresis.
     func setRangeEnabled(_ on: Bool) {
         rangeEnabled = on
         if on {
@@ -74,20 +66,17 @@ final class ChargeLimitStore: ObservableObject {
     @Published var keepAwakeOnBattery = false
     /// Keep-awake only while a matching task runs, then sleep.
     @Published var keepAwakeRequiresTask = false
-    /// Process names that keep the Mac awake (comma-free list).
     @Published var keepAwakeProcesses: [String] = []
     /// Any process at/above this %CPU counts as busy (0 = names only).
     @Published var keepAwakeMinCpu: Double = 0
     /// Release keep-awake above this °C (0 = no guardrail).
     @Published var keepAwakeMaxTempC: Double = 0
-    /// Recurring charge/hold/discharge windows.
     @Published var schedules: [ChargeSchedule] = []
     /// Once-daily "ready by" top-up target.
     @Published var readyBy = ReadyByTarget()
     /// Gentle (duty-cycled) charging near the top. Legacy; derived from chargePower.
     @Published var slowCharge = false
-    /// Charge power as a % (0–100) of full rate, via duty cycling. 100 = full,
-    /// 0 = don't charge (all adapter power to the Mac).
+    /// Charge power as % of full rate via duty cycling (100 = full, 0 = don't charge).
     @Published var chargePower = 100
     /// One-shot calibration to 100% is in progress (auto-clears when full).
     @Published private(set) var calibrating = false
@@ -108,8 +97,7 @@ final class ChargeLimitStore: ObservableObject {
         t.tolerance = 15   // periodic status sync; exact timing doesn't matter
         RunLoop.main.add(t, forMode: .common)
         refreshTimer = t
-        // After wake, the daemon may have changed things (deep-save restore);
-        // re-sync promptly instead of waiting for the next poll.
+        // After wake the daemon may have changed things (deep-save restore); re-sync promptly.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -118,12 +106,11 @@ final class ChargeLimitStore: ObservableObject {
         }
     }
 
-    /// Config writes currently in flight. While > 0 the periodic getStatus refresh
-    /// must not ingest, or a stale response could clobber the user's fresh edit.
+    /// Config writes in flight. While > 0 the periodic refresh must not ingest, or a
+    /// stale response could clobber a fresh edit.
     private var pendingWrites = 0
 
-    /// Pull current status from the daemon (skipped while a write is outstanding —
-    /// that write's own response is authoritative).
+    /// Pull status from the daemon (skipped while a write is outstanding).
     func refresh() {
         guard pendingWrites == 0 else { return }
         Task.detached {
@@ -138,8 +125,7 @@ final class ChargeLimitStore: ObservableObject {
         ingest(response)
     }
 
-    /// Send a config-changing request and ingest its authoritative response,
-    /// holding off the periodic refresh until it lands (see `pendingWrites`).
+    /// Send a config-changing request and ingest its authoritative response.
     private func command(_ request: ControlRequest) {
         pendingWrites += 1
         Task.detached {
@@ -155,10 +141,8 @@ final class ChargeLimitStore: ObservableObject {
 
     private var didAttemptHelperUpdate = false
 
-    /// When the running helper is older than this app ships (protocol or behaviour),
-    /// update it once per launch via the bundled admin-authorized installer, so
-    /// daemon fixes take effect without a manual reinstall. Only from a packaged
-    /// .app; a cancelled prompt falls back to the Settings "outdated" banner.
+    /// Update an outdated helper once per launch via the bundled installer, so daemon
+    /// fixes apply without a manual reinstall. Packaged .app only; cancel falls back to the banner.
     private func autoUpdateHelperIfNeeded() {
         guard daemonOutdated, HelperInstaller.canInstall, !didAttemptHelperUpdate else { return }
         didAttemptHelperUpdate = true
@@ -171,8 +155,7 @@ final class ChargeLimitStore: ObservableObject {
         }
     }
 
-    /// Push the current GUI settings to the daemon, preserving fields the menu
-    /// doesn't directly edit (mode).
+    /// Push GUI settings to the daemon, preserving fields the menu doesn't edit (mode).
     func apply() {
         var cfg = currentConfig
         cfg.chargeLimitEnabled = limitEnabled
@@ -199,7 +182,6 @@ final class ChargeLimitStore: ObservableObject {
         command(.setConfig(cfg))
     }
 
-    /// Toggle Low Power Mode (routed through the root daemon).
     func setLowPowerMode(_ on: Bool) {
         command(.setLowPowerMode(on))
     }
@@ -218,14 +200,12 @@ final class ChargeLimitStore: ObservableObject {
         command(.calibrateToFull(on))
     }
 
-    /// Apply a preset save mode (daemon-controlled parts). Returns immediately;
-    /// state refreshes when the daemon replies.
+    /// Apply a preset save mode; state refreshes when the daemon replies.
     func applyMode(_ newMode: SaveMode) {
         mode = newMode // optimistic
         command(.applyMode(newMode))
     }
 
-    /// True when the given sleep/idle power feature is currently active.
     func isPowerToggleOn(_ toggle: PowerToggle) -> Bool {
         powerToggles[toggle.rawValue] ?? false
     }
@@ -243,7 +223,6 @@ final class ChargeLimitStore: ObservableObject {
         apply()
     }
 
-    /// Update the schedule in place if it exists, otherwise append it.
     func updateOrAddSchedule(_ schedule: ChargeSchedule) {
         if let i = schedules.firstIndex(where: { $0.id == schedule.id }) {
             schedules[i] = schedule
@@ -258,12 +237,10 @@ final class ChargeLimitStore: ObservableObject {
         apply()
     }
 
-    /// Whichever schedule window is active right now, if any.
     var activeSchedule: ChargeSchedule? {
         schedules.first { $0.isActive(at: Date()) }
     }
 
-    /// Set a sleep/idle power feature (routed through the root daemon).
     func setPowerToggle(_ toggle: PowerToggle, _ on: Bool) {
         command(.setPowerToggle(toggle, on))
     }
@@ -310,9 +287,8 @@ final class ChargeLimitStore: ObservableObject {
         calibrating = r.config.calibrateToFull
         pauseUntil = r.config.pauseUntil
 
-        // When charging is turned on/off (e.g. you raised the limit and it starts
-        // charging), tell the battery store to re-read promptly so the menu-bar
-        // icon/colour reflects it instead of waiting for the next slow poll.
+        // When charging toggles, tell the battery store to re-read so the menu-bar icon
+        // updates instead of waiting for the next slow poll.
         if wasChargingEnabled != chargingEnabled {
             NotificationCenter.default.post(name: .battlifyChargeStateChanged, object: nil)
         }

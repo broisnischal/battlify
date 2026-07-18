@@ -1,14 +1,9 @@
 import Foundation
 import IOKit
 
-/// A snapshot of live power flow, in watts.
-///
-///   adapter ──▶ [ system ]
-///           └─▶ [ battery ]   (or battery ──▶ system when unplugged)
-///
-/// `batteryWatts` is signed: positive = power flowing *into* the battery
-/// (charging), negative = flowing *out* (discharging). `systemWatts` is the
-/// estimated draw of everything else (SoC, display, peripherals).
+/// A snapshot of live power flow, in watts. `batteryWatts` is signed: positive =
+/// into the battery (charging), negative = out (discharging). `systemWatts` is the
+/// estimated draw of everything else.
 public struct PowerFlow: Equatable, Sendable {
     /// Power drawn from the wall adapter (nil when unplugged / unknown).
     public var adapterWatts: Double?
@@ -54,12 +49,10 @@ public enum PowerMonitor {
         let voltage = Double((props["Voltage"] as? Int) ?? 0) / 1000.0        // volts
         let amperageRaw = (props["InstantAmperage"] as? Int)
             ?? (props["Amperage"] as? Int) ?? 0
-        // Amperage is a signed value packed as unsigned in some firmwares; treat
-        // the top bit as sign for 64-bit values.
+        // Amperage is signed but packed as unsigned in some firmwares (see signedMilliamps).
         let amperage = Double(signedMilliamps(amperageRaw)) / 1000.0          // amps
         flow.batteryWatts = (voltage * amperage)
 
-        // Adapter details (present while plugged in).
         if let adapter = props["AdapterDetails"] as? [String: Any] {
             if let w = adapter["Watts"] as? Int, w > 0 {
                 flow.adapterWatts = Double(w)
@@ -76,9 +69,8 @@ public enum PowerMonitor {
             }
         }
 
-        // System draw ≈ what the adapter delivers minus what goes into the battery.
-        // adapter = system + batteryWatts  ⇒  system = adapter − batteryWatts.
-        // Unplugged: the battery powers the system, so system = |dischargeWatts|.
+        // System draw = adapter − batteryWatts (what the adapter delivers minus what
+        // charges the battery). Unplugged: system = |dischargeWatts|.
         if let adapterW = flow.adapterWatts {
             flow.systemWatts = max(0, adapterW - flow.batteryWatts)
         } else if !flow.isPluggedIn {
@@ -88,9 +80,8 @@ public enum PowerMonitor {
         return flow
     }
 
-    /// Interpret a raw amperage integer as signed milliamps. IOKit sometimes
-    /// returns the value as a large unsigned integer (two's-complement of a
-    /// negative), so fold values above the 32-bit range back to negative.
+    /// Interpret raw amperage as signed milliamps: IOKit sometimes returns a negative
+    /// as a large unsigned (two's-complement), so fold values above 32-bit range back.
     private static func signedMilliamps(_ raw: Int) -> Int {
         if raw > Int(Int32.max) { return raw - (1 << 32) }
         return raw

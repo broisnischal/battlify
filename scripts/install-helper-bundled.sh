@@ -1,7 +1,6 @@
 #!/bin/bash
-# Installs the Battlify helper daemon from a packaged .app bundle.
-# This script lives in Battlify.app/Contents/Resources and copies the prebuilt
-# helper next to it — it does NOT rebuild. Invoked by the app with admin rights.
+# Installs the prebuilt helper from Battlify.app/Contents/Resources. Run as root
+# by the app; does not rebuild.
 set -euo pipefail
 
 RES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,38 +19,29 @@ if [[ ! -x "$BIN_SRC" ]]; then
     exit 1
 fi
 
-# Reload the LaunchDaemon robustly. `launchctl bootout` is asynchronous, so
-# bootstrapping straight after it races the old job's teardown and fails with
-# "Bootstrap failed: 5: Input/output error" — which, under `set -e`, aborts the
-# install and makes the app report failure. This is the common case now that the
-# app auto-reinstalls the helper whenever it's out of date. So: enable first (a
-# previously disabled service can't bootstrap), wait for the old instance to fully
-# unload, then bootstrap with a short retry while the label frees up.
+# `launchctl bootout` is async: bootstrapping right after it races the old job's
+# teardown and fails with "Bootstrap failed: 5". Enable first (a disabled service
+# won't bootstrap), wait for the old instance to unload, then bootstrap with retry.
 reload_daemon() {
     local plist="$1" label="$2"
     local errfile; errfile="$(mktemp)"
 
-    # A prior `launchctl disable` (or a failed earlier install) would make
-    # bootstrap fail until the service is re-enabled.
     launchctl enable "system/$label" 2>/dev/null || true
 
-    # Tear down any running instance and WAIT for it to actually go away.
     if launchctl print "system/$label" >/dev/null 2>&1; then
         launchctl bootout "system/$label" 2>/dev/null || true
-        for _ in $(seq 1 50); do   # up to ~5s
+        for _ in $(seq 1 50); do   # wait up to ~5s for unload
             launchctl print "system/$label" >/dev/null 2>&1 || break
             sleep 0.1
         done
     fi
 
-    # Bootstrap, retrying transient failures while the old job finishes unloading.
     for _ in $(seq 1 10); do
         if launchctl bootstrap system "$plist" 2>"$errfile"; then
             rm -f "$errfile"
             return 0
         fi
-        # If it ended up loaded anyway (we won the race), make sure it's running
-        # the freshly installed binary and call it done.
+        # already loaded (we lost the race) — restart onto the new binary and stop
         if launchctl print "system/$label" >/dev/null 2>&1; then
             launchctl kickstart -k "system/$label" 2>/dev/null || true
             rm -f "$errfile"
@@ -68,9 +58,7 @@ reload_daemon() {
 
 install -d /usr/local/bin
 install -m 755 "$BIN_SRC" "$BIN_DST"
-# The DMG isn't notarized yet, so the bundled helper can carry a quarantine flag.
-# A quarantined binary run as a LaunchDaemon is killed by Gatekeeper, so strip it
-# from the installed copy — otherwise the daemon "installs" but never starts.
+# strip quarantine, or Gatekeeper kills the LaunchDaemon (build isn't notarized)
 xattr -c "$BIN_DST" 2>/dev/null || true
 
 install -m 644 "$PLIST_SRC" "$PLIST_DST"

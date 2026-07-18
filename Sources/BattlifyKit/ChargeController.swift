@@ -15,7 +15,6 @@ public enum MagSafeLED: UInt8, Sendable {
 public final class ChargeController {
     private let smc: SMC
 
-    // Key names.
     private let ch0b = "CH0B"
     private let ch0c = "CH0C"
     private let chte = "CHTE"
@@ -30,10 +29,9 @@ public final class ChargeController {
         self.smc = smc
     }
 
-    // Which SMC keys this Mac exposes is fixed for the process lifetime, so resolve
-    // each `keyExists` probe once (lazily, after the SMC is open) and cache it —
-    // the daemon tick would otherwise issue a dozen redundant IOKit calls every 10s.
-    // Accesses are serialized by the daemon's lock, so lazy init is safe here.
+    // Key presence is fixed for the process lifetime, so cache each `keyExists` probe
+    // once — avoids a dozen redundant IOKit calls every daemon tick. The daemon's lock
+    // serializes access, so lazy init is safe.
     private lazy var cachedAdapterKey: String? = {
         if smc.keyExists(ch0i) { return ch0i }
         if smc.keyExists(ch0j) { return ch0j }
@@ -49,14 +47,10 @@ public final class ChargeController {
 
     // MARK: - AC / wall power presence
     //
-    // Physical wall power, read from the raw SMC `AC-W` key. Unlike the IOKit
-    // providing-source flag (and AppleSmartBattery's `ExternalConnected`), this
-    // survives force-discharge: when we disable the adapter so the Mac runs off
-    // battery, the OS-visible "on battery" state flips but `AC-W` still reports
-    // the cable as attached. This is what lets discharge run continuously to the
-    // limit instead of oscillating once the OS thinks it's unplugged.
+    // Raw SMC `AC-W`. Unlike the IOKit providing-source flag, this survives
+    // force-discharge — `AC-W` still reads the cable as attached while the OS thinks
+    // it's on battery, which lets discharge run to the limit instead of oscillating.
 
-    /// Whether the raw `AC-W` power-present key is available on this Mac.
     public var isACPowerReadSupported: Bool { cachedHasAcw }
 
     /// True when the charger is physically connected, from `AC-W`. Returns nil if
@@ -68,9 +62,8 @@ public final class ChargeController {
 
     // MARK: - Adapter / force discharge
     //
-    // Disabling the power adapter makes the Mac run off the battery even while
-    // plugged in — i.e. actively discharge. Used to bring the level *down* to the
-    // charge limit when you plug in above it.
+    // Disabling the adapter runs the Mac off battery while plugged in — used to bring
+    // the level down to the limit when you plug in above it.
 
     private var adapterKey: String? { cachedAdapterKey }
 
@@ -96,7 +89,6 @@ public final class ChargeController {
 
     // MARK: - MagSafe LED
 
-    /// Whether this Mac has a controllable MagSafe charge LED.
     public var isMagSafeSupported: Bool { cachedMagSafeSupported }
 
     public func setMagSafeLED(_ state: MagSafeLED) throws {
@@ -110,7 +102,6 @@ public final class ChargeController {
         return MagSafeLED(rawValue: raw)
     }
 
-    /// True when this Mac uses the legacy CH0B/CH0C charging scheme.
     private var usesLegacyKeys: Bool { cachedUsesLegacyKeys }
 
     public var isChargingControlSupported: Bool { cachedChargingControlSupported }
@@ -143,7 +134,6 @@ public final class ChargeController {
         }
     }
 
-    /// Human-readable description of the scheme in use, for diagnostics.
     public var schemeDescription: String {
         if usesLegacyKeys { return "legacy (CH0B/CH0C)" }
         if cachedHasChte { return "tahoe (CHTE)" }

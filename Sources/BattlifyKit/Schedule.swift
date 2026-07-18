@@ -91,9 +91,8 @@ public struct ChargeSchedule: Codable, Sendable, Identifiable, Equatable {
 
     public var endMinute: Int { startMinute + durationMinutes } // may exceed 1440
 
-    /// Whether this schedule is active at `date`. Handles windows that wrap past
-    /// midnight by checking the start day for the pre-midnight part and the
-    /// previous day for the post-midnight tail.
+    /// Whether this schedule is active at `date`, handling windows that wrap past
+    /// midnight (the post-midnight tail belongs to the previous day's start).
     public func isActive(at date: Date, calendar: Calendar = .current) -> Bool {
         guard enabled else { return false }
         let comps = calendar.dateComponents([.hour, .minute], from: date)

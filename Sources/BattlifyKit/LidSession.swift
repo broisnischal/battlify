@@ -1,7 +1,6 @@
 import Foundation
 
-/// A period during which the lid was closed: the charge when it closed, the
-/// charge when it reopened, and how much drained in between.
+/// A lid-closed period: charge at close, charge at open, and the drain in between.
 public struct LidSession: Codable, Sendable, Identifiable {
     public var closedAt: Date
     public var closeCharge: Int

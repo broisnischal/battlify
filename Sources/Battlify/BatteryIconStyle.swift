@@ -1,12 +1,10 @@
 import AppKit
 
-/// Selectable look for the menu-bar battery glyph. `rounded` and `bars` use
-/// HugeIcons' actual battery geometry (squircle body + rounded terminal + bolt);
-/// `classic` and `minimal` are drawn to complement them. All fill proportionally
-/// to the real charge (except `bars`, which is intentionally stepped).
+/// Selectable menu-bar battery glyph styles; all fill to the real charge except
+/// `bars`, which is intentionally stepped.
 enum BatteryIconStyle: String, CaseIterable, Identifiable, Codable {
-    case rounded   // HugeIcons squircle, smooth proportional fill (premium default)
-    case bars      // HugeIcons squircle with discrete level bars (authentic set look)
+    case rounded   // HugeIcons squircle, smooth proportional fill
+    case bars      // HugeIcons squircle with discrete level bars
     case classic   // traditional horizontal battery, smooth fill
     case minimal   // clean capsule/pill, no terminal, smooth fill
     case pixel     // chunky 8-bit battery; the fill sweeps upward while charging
@@ -24,33 +22,26 @@ enum BatteryIconStyle: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-/// Renders `BatteryIconStyle` into cached `NSImage`s sized for the menu bar (or
-/// larger, for settings previews). Drawing is done in HugeIcons' 24×24 viewBox
-/// and scaled to the requested height, so every style stays pixel-aligned and
-/// re-renders crisply at any screen scale.
+/// Renders `BatteryIconStyle` into cached `NSImage`s. Drawing is in a 24×24
+/// viewBox scaled to the requested height, so it stays crisp at any screen scale.
 enum BatteryIconRenderer {
     // HugeIcons battery paths (viewBox 0 0 24 24), taken from @hugeicons/core-free-icons.
     private static let bodyPath = "M2 12C2 9.17157 2 7.75736 2.87868 6.87868C3.75736 6 5.17157 6 8 6H13C15.8284 6 17.2426 6 18.1213 6.87868C19 7.75736 19 9.17157 19 12C19 14.8284 19 16.2426 18.1213 17.1213C17.2426 18 15.8284 18 13 18H8C5.17157 18 3.75736 18 2.87868 17.1213C2 16.2426 2 14.8284 2 12Z"
     private static let terminalPath = "M19 9.5L20.0272 9.6712C20.7085 9.78475 21.0491 9.84152 21.3076 10.0067C21.5618 10.1691 21.7612 10.4044 21.8796 10.6819C22 10.964 22 11.3093 22 12C22 12.6907 22 13.036 21.8796 13.3181C21.7612 13.5956 21.5618 13.8309 21.3076 13.9933C21.0491 14.1585 20.7085 14.2153 20.0272 14.3288L19 14.5"
     private static let boltPath = "M10.8282 9L9.08572 11.1749C8.89899 11.4079 9.03283 11.7433 9.33733 11.8053L11.1627 12.1773C11.4873 12.2434 11.6111 12.6147 11.3842 12.8413L9.22216 15"
 
-    // Content bounds inside the 24×24 viewBox (battery + terminal + half stroke),
-    // shared by every style so switching styles never shifts the menu-bar layout.
+    // Content bounds in the viewBox, shared by every style so switching styles
+    // never shifts the menu-bar layout.
     private static let vbMinX: CGFloat = 1.1, vbMinY: CGFloat = 5.1
     private static let vbW: CGFloat = 21.8, vbH: CGFloat = 13.8
     private static let stroke: CGFloat = 1.5
 
     @MainActor private static var cache: [String: NSImage] = [:]
 
-    /// Menu-bar / preview glyph for a style. `tint` neutral ⇒ template image that
-    /// adapts to the bar; a colour ⇒ fixed palette colour. Cached per input.
-    ///
-    /// `frame` is a monotonically increasing animation tick: while charging, the
-    /// pixel style sweeps its fill columns and every other style pulses its bolt;
-    /// with `celebrating` the glyph blinks at full fill (the "charge complete"
-    /// flash). The cache key stores the *resolved* animation state — fill count,
-    /// pulse phase, or blink on/off — so it stays bounded no matter how high the
-    /// tick counts.
+    /// Menu-bar / preview glyph. `tint` neutral ⇒ template image; a colour ⇒
+    /// fixed palette colour. `frame` is a monotonically increasing animation tick;
+    /// the cache key stores the *resolved* animation state (fill count, pulse
+    /// phase, or blink) so it stays bounded no matter how high the tick counts.
     @MainActor static func image(style: BatteryIconStyle, percentage: Int,
                                  charging: Bool, tint: MenuBarTint,
                                  height: CGFloat = 14, frame: Int = 0,
@@ -70,8 +61,8 @@ enum BatteryIconRenderer {
         if let cached = cache[key] { return cached }
 
         let baseColor: NSColor = { if case .colored(let c) = tint { return c } else { return .black } }()
-        // Celebration renders the glyph at 100% with no bolt, blinking by alpha
-        // (alpha survives the template treatment, so it works monochrome too).
+        // Celebration renders at 100% with no bolt, blinking by alpha (which
+        // survives the template treatment, so it works monochrome too).
         let effPct = celebrating ? 100 : pct
         let effCharging = celebrating ? false : charging
         let color = (celebrating && phase(frame, 2) == 1)
@@ -115,7 +106,7 @@ enum BatteryIconRenderer {
                                     xRadius: 2.2, yRadius: 2.2)
             body.lineWidth = stroke; body.stroke()
             NSBezierPath(roundedRect: NSRect(x: 19, y: 9.6, width: 1.9, height: 4.8),
-                         xRadius: 0.7, yRadius: 0.7).fill()   // terminal nub
+                         xRadius: 0.7, yRadius: 0.7).fill()
             if charging { drawBolt(color, frame: frame) }
             else { fillBar(x: 3.7, y: 8.7, maxW: 13, h: 6.6, r: 1.2, frac: frac) }
 
@@ -141,8 +132,8 @@ enum BatteryIconRenderer {
         ((frame % n) + n) % n
     }
 
-    /// The charging bolt, pulsing with the animation tick. Restores the stroke
-    /// colour afterwards so the rest of the glyph draws at full opacity.
+    /// Restores the stroke colour afterward so the rest of the glyph draws at
+    /// full opacity.
     private static func drawBolt(_ color: NSColor, frame: Int) {
         color.withAlphaComponent(boltPulse[phase(frame, boltPulse.count)]).setStroke()
         strokeSVG(boltPath, width: 1.7)
@@ -151,16 +142,13 @@ enum BatteryIconRenderer {
 
     // MARK: - Pixel style (8-bit battery)
 
-    /// How many of the pixel glyph's fill columns are lit for a charge level and
-    /// animation frame. While charging below full, the fill sweeps from the
-    /// current level up to full — one column per frame — then wraps back, like a
-    /// classic handheld's charge animation. Pure, so the renderer can also use it
-    /// to normalize an ever-growing frame tick into a bounded cache key.
+    /// Lit fill columns for a charge level and frame. While charging below full,
+    /// the fill sweeps up one column per frame then wraps. Pure, so the renderer
+    /// also uses it to bound an ever-growing frame tick into the cache key.
     static func pixelFillCount(pct: Int, charging: Bool, frame: Int) -> Int {
         let frac = CGFloat(max(0, min(100, pct))) / 100
         var n = Int((frac * CGFloat(pixelColumns)).rounded())
-        // Keep one column lit for any non-zero charge (matches the other styles'
-        // "not dead yet" sliver).
+        // Keep one column lit for any non-zero charge (the "not dead yet" sliver).
         if frac > 0.02 && n == 0 { n = 1 }
         n = min(pixelColumns, n)
         guard charging, n < pixelColumns else { return n }
@@ -169,22 +157,18 @@ enum BatteryIconRenderer {
 
     private static let pixelColumns = 6
 
-    /// Chunky 8-bit battery. The outline is four straight bars whose corner cells
-    /// are left empty — the classic pixel-art notched corner — plus a blocky
-    /// terminal. The charge is `fill` fat columns with 1-px gutters. Everything is
-    /// axis-aligned rects with square corners so it stays crisp when scaled.
+    /// Chunky 8-bit battery: outline of four bars with empty corner cells (the
+    /// pixel-art notched corner), a blocky terminal, then `fill` fat columns.
+    /// Axis-aligned square-corner rects so it stays crisp when scaled.
     private static func drawPixel(fill: Int) {
         let u: CGFloat = 1.5                    // one "pixel" cell in viewBox units
         let x0: CGFloat = 2, y0: CGFloat = 6    // body origin
         let w: CGFloat = 16.5, h: CGFloat = 12  // body 11×8 cells
-        // Outline with notched corners.
         NSBezierPath(rect: NSRect(x: x0 + u, y: y0, width: w - 2 * u, height: u)).fill()
         NSBezierPath(rect: NSRect(x: x0 + u, y: y0 + h - u, width: w - 2 * u, height: u)).fill()
         NSBezierPath(rect: NSRect(x: x0, y: y0 + u, width: u, height: h - 2 * u)).fill()
         NSBezierPath(rect: NSRect(x: x0 + w - u, y: y0 + u, width: u, height: h - 2 * u)).fill()
-        // Terminal: one cell wide, three tall, vertically centered.
         NSBezierPath(rect: NSRect(x: x0 + w, y: y0 + (h - 3 * u) / 2, width: u, height: 3 * u)).fill()
-        // Fill columns.
         guard fill > 0 else { return }
         for k in 0..<min(fill, pixelColumns) {
             let x = 3.75 + CGFloat(k) * 2.25
@@ -203,7 +187,6 @@ enum BatteryIconRenderer {
                      xRadius: radius, yRadius: radius).fill()
     }
 
-    /// HugeIcons-style discrete level bars (0–4) at the set's own x positions.
     private static func drawBars(frac: CGFloat) {
         var n = Int((frac * 4).rounded())
         if frac > 0.02 && n == 0 { n = 1 }
@@ -225,9 +208,8 @@ enum BatteryIconRenderer {
     }
 }
 
-/// Minimal SVG path → NSBezierPath parser. Supports the absolute commands used by
-/// the HugeIcons battery set (M, L, H, V, C, Z). Coordinates are kept in the
-/// source viewBox space; callers apply scaling via the graphics context.
+/// Minimal SVG path → NSBezierPath parser (absolute M, L, H, V, C, Z).
+/// Coordinates stay in viewBox space; callers scale via the graphics context.
 private enum SVGPath {
     static func parse(_ d: String) -> NSBezierPath {
         let nums = tokenize(d)

@@ -4,23 +4,20 @@ import Foundation
 /// spoken over a Unix domain socket as newline-delimited JSON.
 
 /// System sleep/idle power features that drain battery while the lid is closed.
-/// Raw values are the corresponding `pmset` keys. A value of 1 means the feature
-/// is active (and using power); turning it off saves battery during sleep.
+/// Raw values are the matching `pmset` keys.
 public enum PowerToggle: String, Codable, Sendable, CaseIterable {
     case powerNap = "powernap"
     case wakeOnNetwork = "womp"
     case tcpKeepAlive = "tcpkeepalive"
     case dimOnBattery = "lessbright"
 
-    /// Where a toggle belongs in the UI (and, incidentally, which pmset power
-    /// source it applies to).
+    /// Where a toggle belongs in the UI.
     public enum Category: Sendable {
         case sleepWake       // features that keep the Mac busy during sleep
         case batteryOptions  // macOS "Battery > Options" style tweaks
     }
 
-    /// Which pmset power source this toggle writes to / is read from.
-    /// `-a` = all, `-b` = battery only, `-c` = AC only.
+    /// Which pmset power source this toggle applies to.
     public enum Scope: String, Sendable {
         case all = "-a"
         case battery = "-b"
@@ -34,8 +31,7 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// `dimOnBattery` is meaningful only on battery, so it's scoped to `-b`;
-    /// the rest apply to every power source.
+    /// `dimOnBattery` is battery-only (`-b`); the rest apply to all sources.
     public var scope: Scope {
         switch self {
         case .dimOnBattery: return .battery
@@ -75,9 +71,8 @@ public enum ControlRequest: Codable, Sendable {
     case prepareForSleep
     /// Start (true) or cancel (false) a one-shot charge-to-100% calibration.
     case calibrateToFull(Bool)
-    /// Delete the daemon-written sample history file (`/Library/.../history.jsonl`).
-    /// The GUI can't remove it itself — the directory is root-owned — so it asks
-    /// the daemon, which runs as root.
+    /// Delete the daemon-written history file. The GUI can't (root-owned dir), so it
+    /// asks the daemon.
     case clearSamples
 }
 
@@ -90,21 +85,15 @@ public struct ControlResponse: Codable, Sendable {
     public var lowPowerModeEnabled: Bool
     /// Current state of each PowerToggle, keyed by its raw pmset key.
     public var powerToggles: [String: Bool]
-    /// Why charging is currently paused, if it is: "limit", "heat", "paused"
-    /// (a user-scheduled pause), or nil.
+    /// Why charging is paused: "limit", "heat", "paused", or nil.
     public var pauseReason: String?
-    /// Whether this Mac has a controllable MagSafe charge LED.
     public var magSafeSupported: Bool
-    /// Whether this Mac supports force-discharge (adapter control).
     public var dischargeSupported: Bool
-    /// True while actively force-discharging to reach the limit.
     public var discharging: Bool
     public var message: String?
-    /// Protocol version the responding daemon was built with (see `ControlProtocol`).
-    /// Absent from older daemons, which decode to 0 → treated as outdated.
+    /// Protocol version of the responding daemon. Older daemons omit it → decode to 0 → outdated.
     public var daemonProtocolVersion: Int
-    /// Behaviour/build version of the running daemon (see `HelperBuild`). Bumps for
-    /// pure behaviour fixes that don't change the protocol, so the GUI can update a
+    /// Behaviour/build version of the daemon (see `HelperBuild`). Lets the GUI update a
     /// helper that's protocol-current but behaviour-stale. Older daemons decode to 0.
     public var daemonBuildVersion: Int
 
@@ -133,8 +122,7 @@ public struct ControlResponse: Codable, Sendable {
         self.daemonBuildVersion = daemonBuildVersion
     }
 
-    // Version-tolerant decoding so GUI/daemon version skew doesn't break the
-    // connection (missing newer fields fall back to defaults).
+    // Version-tolerant decoding: missing newer fields fall back to defaults.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         ok = try c.decodeIfPresent(Bool.self, forKey: .ok) ?? false
@@ -159,11 +147,8 @@ public enum ControlSocket {
 }
 
 public enum ControlProtocol {
-    /// Bumped whenever the request/response contract gains something the running
-    /// daemon must understand. The GUI compares this to the value the daemon
-    /// reports (`ControlResponse.daemonProtocolVersion`) so it can warn when the
-    /// installed helper is too old — e.g. one that predates `pauseCharging` and
-    /// would silently ignore it.
+    /// Bumped when the request/response contract gains something the daemon must
+    /// understand; the GUI warns when the installed helper reports an older version.
     ///   v2: added `pauseCharging`.
     ///   v3: MagSafe LED mode (Auto/Status/Off) + post-wake settling.
     ///   v4: prepareForSleep, calibrateToFull, prevent-idle-sleep.
@@ -175,10 +160,8 @@ public enum ControlProtocol {
 }
 
 public enum HelperBuild {
-    /// Bumped whenever the daemon's *behaviour* changes in a way that warrants
-    /// updating an already-installed helper, even when the request/response
-    /// protocol is unchanged. The GUI updates the helper when the running daemon
-    /// reports a lower value than this (see `ChargeLimitStore.helperOutdated`).
+    /// Bumped when the daemon's *behaviour* changes enough to warrant updating an
+    /// installed helper even though the protocol is unchanged (see `ChargeLimitStore.helperOutdated`).
     ///   v1: gentle 2-min charge-power duty cycle (replaces the 10s toggle that
     ///       flickered the charge indicators), + shutdown/perf hardening.
     ///   v2: fix force-discharge oscillation — gate discharge/LED/keep-awake on
@@ -202,8 +185,7 @@ public enum ControlError: Error, CustomStringConvertible {
     }
 }
 
-/// Synchronous client. Connects, sends one request, reads one response, closes.
-/// Designed to be called off the main thread.
+/// Synchronous client: connect, send one request, read one response, close.
 public enum ControlClient {
     public static func send(_ request: ControlRequest,
                             socketPath: String = ControlSocket.path) throws -> ControlResponse {
@@ -211,8 +193,7 @@ public enum ControlClient {
         guard fd >= 0 else { throw ControlError.ioError("socket() failed") }
         defer { close(fd) }
 
-        // Bound send/recv so a wedged daemon can never hang the caller (some paths,
-        // e.g. sleep handling, call this synchronously on the main thread).
+        // Bound send/recv so a wedged daemon can't hang the caller (some call synchronously).
         var tv = timeval(tv_sec: 5, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
@@ -238,12 +219,10 @@ public enum ControlClient {
         }
         guard connected == 0 else { throw ControlError.notConnected }
 
-        // Send request as one JSON line.
         var line = try JSONEncoder().encode(request)
         line.append(0x0A) // newline
         try writeAll(fd, line)
 
-        // Read response until newline.
         let respData = try readLine(fd)
         guard let resp = try? JSONDecoder().decode(ControlResponse.self, from: respData) else {
             throw ControlError.decodeError

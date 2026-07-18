@@ -3,19 +3,17 @@ import IOKit
 import IOKit.pwr_mgt
 import BattlifyKit
 
-// kIOMessage* are C macros (iokit_common_msg(...)) not exported to Swift.
-// These are their well-known constant values from <IOKit/IOMessage.h>.
+// kIOMessage* are C macros not exported to Swift; these are their constant values
+// from <IOKit/IOMessage.h>.
 private let kIOMessageCanSystemSleep: UInt32 = 0xE000_0270
 private let kIOMessageSystemWillSleep: UInt32 = 0xE000_0280
 private let kIOMessageSystemHasPoweredOn: UInt32 = 0xE000_0300
 
-/// Observes system sleep/wake via IOKit and reports whether a sleep was caused by
-/// closing the lid (clamshell). macOS sleeps the Mac when the lid closes on
-/// battery, so "lid closed" is detected at the *will-sleep* moment.
+/// Observes sleep/wake via IOKit and reports lid-close (clamshell) sleeps. macOS
+/// sleeps on lid close, so "lid closed" is detected at the will-sleep moment.
 final class LidMonitor {
     /// Called just before sleep. `clamshellClosed` is true when the lid is shut.
     var onWillSleep: ((_ clamshellClosed: Bool) -> Void)?
-    /// Called after wake.
     var onDidWake: (() -> Void)?
 
     private var rootPort: io_connect_t = 0

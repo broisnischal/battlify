@@ -1,9 +1,7 @@
 import Foundation
 
-/// Lightweight process inspection for the daemon: is a "keep me awake" task
-/// running right now? Runs `ps` (cheap, once per tick) and matches by command
-/// name and/or CPU usage. The daemon runs as root, so it sees every user's
-/// processes.
+/// Is a "keep me awake" task running now? Runs `ps` once per tick, matching by command
+/// name and/or CPU. As root it sees every user's processes.
 enum ProcessScan {
     /// True if any process matches one of `names` (case-insensitive substring of
     /// the command) or, when `minCpu > 0`, uses at least `minCpu` %CPU.

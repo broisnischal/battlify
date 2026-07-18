@@ -12,8 +12,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var caffeine: CaffeineManager
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
-    // Start near the typical full height so the popover doesn't visibly grow on
-    // first open (the measured height then fine-tunes it).
+    // Start near full height so the popover doesn't visibly grow on first open.
     @State private var contentHeight: CGFloat = 600
 
     private let popoverWidth: CGFloat = 300
@@ -21,8 +20,7 @@ struct MenuContentView: View {
     var body: some View {
         let snap = battery.snapshot
 
-        // Adaptive height: as tall as the content, but never taller than the
-        // screen — past that it scrolls.
+        // As tall as the content, but never taller than the screen.
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header(snap)
@@ -49,8 +47,7 @@ struct MenuContentView: View {
         .scrollIndicators(.hidden)
         .frame(width: popoverWidth, height: min(contentHeight, maxPopoverHeight))
         .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
-        // Re-sync every time the menu opens so it never shows stale state (e.g.
-        // right after activating a license or toggling the limit in another view).
+        // Re-sync every time the menu opens so it never shows stale state.
         .onAppear {
             battery.refresh()
             chargeLimit.refresh()
@@ -59,11 +56,8 @@ struct MenuContentView: View {
     }
 
     private var maxPopoverHeight: CGFloat {
-        // The popover opens on whichever display's menu bar was clicked — i.e. the
-        // screen under the cursor — which isn't necessarily `NSScreen.main` (the
-        // screen holding keyboard focus). On a multi-monitor setup, sizing to the
-        // wrong screen's height clips the popover off the bottom or forces needless
-        // scrolling, so resolve the actual screen first.
+        // The popover opens on the screen under the cursor, not necessarily
+        // `NSScreen.main`, so resolve it or multi-monitor sizing clips the popover.
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
             ?? NSScreen.main
@@ -159,7 +153,6 @@ struct MenuContentView: View {
         }
     }
 
-    /// Signature element: a charge bar that also marks where the limit sits.
     private func chargeGauge(_ snap: BatterySnapshot) -> some View {
         ChargeGauge(percentage: snap.percentage,
                     color: chargeColor(snap),
@@ -175,7 +168,6 @@ struct MenuContentView: View {
         return "Limit \(chargeLimit.limit)%"
     }
 
-    // Red when running warm or critically low, green while charging, else neutral.
     private func chargeColor(_ snap: BatterySnapshot) -> Color {
         if isWarm(snap) { return .red }
         if snap.percentage <= 20 && !snap.isPluggedIn { return .red }
@@ -183,7 +175,6 @@ struct MenuContentView: View {
         return .primary
     }
 
-    /// Warm = charging held for heat, or a genuinely hot battery (≥40 °C).
     private func isWarm(_ snap: BatterySnapshot) -> Bool {
         if chargeLimit.pauseReason == "heat" { return true }
         if let t = snap.temperature, t >= 40 { return true }
@@ -253,7 +244,6 @@ struct MenuContentView: View {
         }
     }
 
-    // One-shot "charge to 100% once" calibration.
     @ViewBuilder
     private var calibrationControl: some View {
         if chargeLimit.calibrating {
@@ -359,8 +349,7 @@ struct MenuContentView: View {
                     calibrationControl
                 }
 
-                // Live state: why charging is currently paused. Rare + useful, so
-                // it stays in the menu; everything configurable moved to Settings.
+                // Live state: why charging is currently paused.
                 if chargeLimit.discharging {
                     hintLabel("Discharging to reach the limit…", systemImage: "battery.25")
                 } else if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
@@ -437,9 +426,8 @@ struct MenuContentView: View {
         }
     }
 
-    /// "Caffeine" tile: tap toggles keep-awake indefinitely; right-click for a timed
-    /// session. Tinted amber while it's holding the Mac awake. Built as a plain button
-    /// (not a Menu) so it stays the same width as the other Quick Action tiles.
+    /// Built as a plain button (not a Menu) so it stays the same width as the
+    /// other Quick Action tiles.
     private var caffeineButton: some View {
         Button {
             caffeine.toggle()
@@ -472,7 +460,6 @@ struct MenuContentView: View {
         }
     }
 
-    /// Caption under Quick Actions while keep-awake is on.
     private var caffeineStatusText: String {
         guard let until = caffeine.expiresAt else {
             return "Keeping awake — display & system won't sleep"
@@ -577,7 +564,6 @@ struct MenuContentView: View {
         return nil
     }
 
-    /// Live watts into the battery while charging, or drawn while on battery.
     private func liveWattsLine(_ snap: BatterySnapshot) -> String? {
         let f = battery.powerFlow
         if snap.isPluggedIn, f.chargeWatts > 0.5 {
@@ -595,11 +581,9 @@ struct MenuContentView: View {
     }
 }
 
-/// The charge bar. Its own view so it can hold the charging-pulse state. Motion
-/// is all in-place (fill width, colour, opacity) so it never changes layout —
-/// the popover never resizes mid-animation. The pulse only runs while charging
-/// AND the popover is open (the view is destroyed on close), so there's no idle
-/// cost — important for a battery app.
+/// Own view so it can hold the charging-pulse state. Motion is all in-place so
+/// the popover never resizes mid-animation; the pulse runs only while charging
+/// and the popover is open, so there's no idle cost.
 private struct ChargeGauge: View {
     let percentage: Int
     let color: Color
@@ -645,9 +629,8 @@ private struct ChargeGauge: View {
     }
 }
 
-/// Card button with press + hover micro-interaction. Scale/brightness only —
-/// no layout change — so rows don't reflow. Uses a nested view so the style can
-/// track hover state.
+/// Scale/brightness only — no layout change — so rows don't reflow. Nested view
+/// so the style can track hover state.
 private struct PressableCardButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         Card(configuration: configuration)
@@ -675,7 +658,6 @@ private struct PressableCardButtonStyle: ButtonStyle {
     }
 }
 
-/// Reports the natural height of the menu content so the popover can size to it.
 private struct ContentHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {

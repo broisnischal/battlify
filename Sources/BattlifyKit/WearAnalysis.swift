@@ -13,7 +13,7 @@ public struct WearContributor: Identifiable, Sendable, Equatable {
 }
 
 /// A wear summary derived from recorded history — what actually aged the battery,
-/// not just a cycle count. Time-weighted by integrating between samples.
+/// not just a cycle count. Time-weighted between samples.
 public struct WearReport: Sendable, Equatable {
     public var windowDays: Int
     public var trackedHours: Double        // total time covered by samples
@@ -36,8 +36,7 @@ public enum WearAnalysis {
     public static let hotThresholdC = 35.0
     static let highChargePct = 90
     static let deepDischargePct = 15
-    // Gaps longer than this (e.g. the Mac was asleep) don't accrue time — we don't
-    // know what happened in between, so we don't attribute wear to it.
+    // Gaps longer than this (Mac asleep) don't accrue time — we don't know what happened.
     static let maxGapSeconds = 30.0 * 60
 
     public static func analyze(samples: [BatterySample],
@@ -86,7 +85,6 @@ public enum WearAnalysis {
         let highPct = r.trackedHours > 0 ? r.highChargeHours / r.trackedHours : 0
         let hotPct = r.trackedHours > 0 ? r.hotHours / r.trackedHours : 0
 
-        // High charge
         let highSev: WearContributor.Severity = highPct >= 0.4 ? .significant : (highPct >= 0.15 ? .minor : .ok)
         out.append(WearContributor(
             id: "high",
@@ -96,7 +94,6 @@ public enum WearAnalysis {
                 : String(format: "%.0f h ≥ 90%% (%.0f%% of tracked time). A charge limit cuts this.", r.highChargeHours, highPct * 100),
             severity: highSev))
 
-        // Heat
         let hotSev: WearContributor.Severity = hotPct >= 0.25 ? .significant : (hotPct >= 0.08 ? .minor : .ok)
         out.append(WearContributor(
             id: "heat",
@@ -107,7 +104,6 @@ public enum WearAnalysis {
                          r.maxTemp.map { String(format: ", peak %.0f°C", $0) } ?? ""),
             severity: hotSev))
 
-        // Deep discharges
         let deepSev: WearContributor.Severity = r.deepDischarges >= 8 ? .significant : (r.deepDischarges >= 3 ? .minor : .ok)
         out.append(WearContributor(
             id: "deep",

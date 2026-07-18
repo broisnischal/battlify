@@ -2,20 +2,16 @@ import Foundation
 import Combine
 import IOKit.pwr_mgt
 
-/// The OS "keep awake" primitive, abstracted so `CaffeineManager`'s logic can be
-/// unit-tested without touching IOKit. Production uses `IOKitKeepAwake`; tests use
-/// a fake that records calls.
+/// The OS "keep awake" primitive, abstracted so `CaffeineManager` can be unit-tested
+/// without touching IOKit.
 public protocol KeepAwakeAsserting: Sendable {
-    /// Acquire a hold that stops the display *and* system from idle-sleeping.
-    /// Returns an opaque non-zero token, or 0 on failure.
+    /// Acquire a hold that stops idle-sleep. Returns a non-zero token, or 0 on failure.
     func acquire(reason: String) -> UInt32
-    /// Release a token previously returned by `acquire`.
     func release(_ token: UInt32)
 }
 
-/// Real backend: a `PreventUserIdleDisplaySleep` power assertion — exactly what
-/// `caffeinate -d` holds. Needs no root; released automatically when the process
-/// exits, so it can never strand the Mac awake.
+/// Real backend: a `PreventUserIdleDisplaySleep` assertion (what `caffeinate -d`
+/// holds). Needs no root; auto-released on process exit, so it can't strand the Mac awake.
 public struct IOKitKeepAwake: KeepAwakeAsserting {
     public init() {}
 
@@ -34,16 +30,11 @@ public struct IOKitKeepAwake: KeepAwakeAsserting {
     }
 }
 
-/// "Caffeine" mode: keep the Mac awake — the display never turns off and the system
-/// never idle-sleeps — until turned off (or an optional timer ends).
-///
-/// Holds a single user-space keep-awake assertion (`caffeinate -d`). It needs no
-/// root and no helper daemon, works on battery *and* wall power, and is released the
-/// instant the app quits. It intentionally does **not** stop lid-close (clamshell)
-/// sleep: closing the lid still sleeps, matching Caffeine/Amphetamine.
+/// "Caffeine" mode: keep the Mac awake (display on, no idle-sleep) until turned off
+/// or a timer ends. Holds one user-space assertion — no root, works on battery and AC.
+/// Intentionally does *not* stop lid-close sleep, matching Caffeine/Amphetamine.
 @MainActor
 public final class CaffeineManager: ObservableObject {
-    /// Whether keep-awake is currently held.
     @Published public private(set) var active = false
     /// When a timed session auto-releases (nil = indefinite or inactive).
     @Published public private(set) var expiresAt: Date?
@@ -93,7 +84,6 @@ public final class CaffeineManager: ObservableObject {
         }
     }
 
-    /// Toggle indefinite keep-awake on/off.
     public func toggle() { active ? deactivate() : activate(.indefinite) }
 
     /// Start keep-awake (or re-arm the timer with a new duration if already on).
@@ -109,8 +99,7 @@ public final class CaffeineManager: ObservableObject {
 
         guard let secs = duration.seconds else { expiresAt = nil; return }
         expiresAt = Date().addingTimeInterval(secs)
-        // Created in a @MainActor context, so the task body runs on the main actor;
-        // the cancel + isCancelled check drops it cleanly if state changes first.
+        // Runs on the main actor; the cancel + isCancelled check drops it if state changes.
         expiryTask = Task { [weak self, sleepFor] in
             await sleepFor(secs)
             guard !Task.isCancelled else { return }
@@ -127,7 +116,6 @@ public final class CaffeineManager: ObservableObject {
     }
 
     deinit {
-        // The assertion is process-scoped; drop it if this ever tears down.
         if token != 0 { backend.release(token) }
     }
 }

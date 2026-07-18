@@ -6,7 +6,6 @@ struct HistoryView: View {
     @StateObject private var model = HistoryViewModel()
     @State private var pendingClear: ClearTarget?
 
-    /// What a clear action will erase, with the copy for its confirmation prompt.
     private enum ClearTarget: Identifiable {
         case chart, lid, all
         var id: Int { hashValue }
@@ -84,7 +83,7 @@ struct HistoryView: View {
         }
         .scrollIndicators(.hidden)
         .frame(width: 560, height: 540)
-        .onAppear { model.refresh() }   // refresh each time the window is opened
+        .onAppear { model.refresh() }
         .confirmationDialog(
             pendingClear?.title ?? "",
             isPresented: Binding(get: { pendingClear != nil },
@@ -428,7 +427,6 @@ struct HistoryView: View {
 
     private var chargeChart: some View {
         Chart(model.samples) { s in
-            // Shade time spent charging.
             if s.charging {
                 AreaMark(
                     x: .value("Time", s.t),

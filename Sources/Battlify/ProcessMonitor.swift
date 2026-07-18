@@ -2,16 +2,13 @@ import Foundation
 import Combine
 
 struct ProcessUsage: Identifiable, Equatable {
-    let id: pid_t   // pid
+    let id: pid_t
     let name: String
     let cpu: Double  // percent
 }
 
-/// Lists the top CPU-consuming processes and can suspend/resume them.
-/// Suspend = SIGSTOP, resume = SIGCONT — works for processes owned by this user.
-///
-/// Polling is **on-demand**: it only spawns `ps` while a view is observing
-/// (the Details window), so it costs zero CPU in the background.
+/// Lists top CPU-consuming processes and can suspend/resume them (SIGSTOP/SIGCONT,
+/// this user's processes). Polling is on-demand — only while a view observes.
 @MainActor
 final class ProcessMonitor: ObservableObject {
     @Published private(set) var top: [ProcessUsage] = []
@@ -57,8 +54,7 @@ final class ProcessMonitor: ObservableObject {
         if suspended.contains(usage.id) { resume(usage.id) } else { suspend(usage.id) }
     }
 
-    /// Parse `ps` output sorted by CPU. Cheap and good enough to surface "what's
-    /// draining the battery right now".
+    /// Parse ps output sorted by CPU — cheap, good enough to surface what's draining.
     private nonisolated static func sampleTopProcesses(limit: Int) -> [ProcessUsage] {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/ps")

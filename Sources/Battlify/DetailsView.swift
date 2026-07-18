@@ -1,8 +1,7 @@
 import SwiftUI
 import BattlifyKit
 
-/// Detached window with battery health stats and the top energy-using processes.
-/// Moved out of the menu to keep the dropdown uncluttered.
+/// Detached window, moved out of the menu to keep the dropdown uncluttered.
 struct DetailsView: View {
     @EnvironmentObject private var battery: BatteryStore
     @EnvironmentObject private var processes: ProcessMonitor
@@ -41,8 +40,8 @@ struct DetailsView: View {
                 }
             }
 
-            // Proportional bar: how the adapter's power splits between the system
-            // and the battery (only meaningful while charging on wall power).
+            // Proportional split of adapter power between system and battery
+            // (only meaningful while charging on wall power).
             if let adapter = f.adapterWatts, adapter > 0.5 {
                 let sys = max(0, f.systemWatts ?? 0)
                 let chg = f.chargeWatts
@@ -58,7 +57,6 @@ struct DetailsView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
                     .frame(height: 10)
-                    // Labeled split so the division of the charging watts is legible.
                     HStack(spacing: 16) {
                         splitTag(.orange, "System", sys, total)
                         splitTag(.green, "Into battery", chg, total)
@@ -106,12 +104,10 @@ struct DetailsView: View {
 
     private func watts(_ w: Double) -> String { String(format: "%.1f W", w) }
 
-    /// Share of `w` out of `total`, as a rounded percentage string.
     private func pct(_ w: Double, of total: Double) -> String {
         String(format: "%.0f%%", total > 0 ? (w / total) * 100 : 0)
     }
 
-    /// A colored dot + label + "watts · %" for one segment of the split bar.
     private func splitTag(_ color: Color, _ label: String, _ w: Double, _ total: Double) -> some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 8, height: 8)
@@ -217,7 +213,6 @@ struct DetailsView: View {
         health >= 80 ? "Normal" : "Service Recommended"
     }
 
-    /// Actionable, state-aware tips for reducing battery wear.
     private func healthTips(_ snap: BatterySnapshot) -> [String] {
         var tips: [String] = []
 

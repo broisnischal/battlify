@@ -1,8 +1,7 @@
 import Foundation
 import IOKit
 
-/// Small IOKit helpers for system power state that don't belong to the battery
-/// snapshot. Shared by the GUI (lid monitor) and the daemon (keep-awake).
+/// Small IOKit helpers for system power state, shared by the GUI and daemon.
 public enum SystemPower {
     /// Reads `AppleClamshellState` from IOPMrootDomain (true = lid closed).
     /// Returns false if the property is missing (e.g. desktops).

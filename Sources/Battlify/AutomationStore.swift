@@ -3,8 +3,7 @@ import Combine
 import AppKit
 import BattlifyKit
 
-/// User preferences + behavior for lid-close radio automation. These run as the
-/// user, so they live in UserDefaults (not the root config).
+/// Lid-close radio automation. Runs as the user, so preferences live in UserDefaults, not the root config.
 @MainActor
 final class AutomationStore: ObservableObject {
     @Published var wifiOffOnLidClose: Bool {
@@ -16,23 +15,17 @@ final class AutomationStore: ObservableObject {
     @Published var restoreOnWake: Bool {
         didSet { defaults.set(restoreOnWake, forKey: Keys.restore) }
     }
-    /// When on, closing the lid applies maximum power saving (Low Power Mode,
-    /// all sleep wake-ups off, radios off) and opening it restores your prior
-    /// state. Like sleepwatcher, driven by the IOKit sleep/wake events.
+    /// Lid close applies maximum power saving (Low Power Mode, wake-ups off, radios off); restored on open.
     @Published var superSaveOnLidClose: Bool {
         didSet { defaults.set(superSaveOnLidClose, forKey: Keys.superSave) }
     }
 
-    /// Live lid sensor (clamshell) state, polled while the Mac is awake.
     @Published private(set) var isLidClosed = false
-    /// Number of external displays currently attached.
     @Published private(set) var externalDisplayCount = 0
 
-    /// "Clamshell mode": lid shut but the Mac is awake — i.e. docked to an
-    /// external display on power. A prime battery-aging scenario.
+    /// Lid shut but the Mac is awake (docked to an external display on power).
     var isClamshellMode: Bool { isLidClosed }
 
-    /// Most recent completed lid-closed session (for quick display).
     @Published private(set) var lastLidSession: LidSession?
 
     private let defaults = UserDefaults.standard
@@ -43,12 +36,8 @@ final class AutomationStore: ObservableObject {
     private var wifiWasOn = false
     private var bluetoothWasOn = false
 
-    // Power state captured just before a deep-save lid close, restored verbatim on
-    // wake. Deep save only touches Low Power Mode and the sleep/wake power toggles —
-    // never the charge mode/limit — so we snapshot exactly those and put them back,
-    // leaving the user's saved charge settings untouched. (Previously we re-applied
-    // a whole SaveMode on wake, which clobbered custom charge-limit/heat tweaks and
-    // reset everything to Off when the mode couldn't be read.)
+    // Snapshot of the exact power state deep save changes (LPM + sleep/wake toggles),
+    // restored verbatim on wake so the user's charge config is never touched.
     private var savedLowPowerMode: Bool?
     private var savedPowerToggles: [String: Bool]?
     private var deepSaveActive = false
@@ -69,14 +58,12 @@ final class AutomationStore: ObservableObject {
     init() {
         wifiOffOnLidClose = defaults.bool(forKey: Keys.wifi)
         bluetoothOffOnLidClose = defaults.bool(forKey: Keys.bt)
-        // Default restore-on-wake to true on first run.
         restoreOnWake = defaults.object(forKey: Keys.restore) as? Bool ?? true
         superSaveOnLidClose = defaults.bool(forKey: Keys.superSave)
         lastLidSession = LidSessionStore.recent(limit: 1).first
 
         lid.onWillSleep = { [weak self] clamshellClosed in
-            // Hop to the main actor safely. `assumeIsolated` traps on macOS 26 when
-            // the IOKit callback isn't on the main actor's executor.
+            // assumeIsolated traps on macOS 26 when the IOKit callback isn't on the main actor's executor.
             Task { @MainActor in self?.handleWillSleep(clamshellClosed) }
         }
         lid.onDidWake = { [weak self] in
@@ -100,24 +87,22 @@ final class AutomationStore: ObservableObject {
         externalDisplayCount = max(0, NSScreen.screens.count - (isLidClosed ? 0 : 1))
     }
 
-    /// Apply the lid-radio parts of a save mode's profile.
+    /// Apply only the lid-radio parts of a save mode's profile.
     func apply(_ profile: SaveProfile) {
         wifiOffOnLidClose = profile.wifiOffOnLidClose
         bluetoothOffOnLidClose = profile.bluetoothOffOnLidClose
         restoreOnWake = profile.restoreOnWake
     }
 
-    /// Runs just before *any* sleep (idle or lid). Fast + synchronous so it
-    /// completes before the system powers down.
+    /// Runs just before any sleep; synchronous so it finishes before the system powers down.
     private func handleWillSleep(_ clamshellClosed: Bool) {
-        // Cut charging before sleep if configured — the daemon decides based on
-        // its own config, so this is a cheap no-op when the option is off.
+        // Daemon decides based on its config, so this is a cheap no-op when disabled.
         _ = try? ControlClient.send(.prepareForSleep)
         handleLidClose(clamshellClosed)
     }
 
     private func handleLidClose(_ clamshellClosed: Bool) {
-        guard clamshellClosed else { return } // ignore non-lid sleeps
+        guard clamshellClosed else { return }
 
         // Record the charge at close so we can measure the drop on wake.
         defaults.set(Date(), forKey: Keys.pendingCloseAt)
@@ -142,12 +127,8 @@ final class AutomationStore: ObservableObject {
         completeLidSession()
 
         if deepSaveActive {
-            // Restore exactly what deep save changed — Low Power Mode + the sleep/wake
-            // toggles — to their pre-close values. We deliberately do NOT re-apply a
-            // SaveMode here: that would overwrite the user's saved charge limit/heat
-            // settings (and reset to Off if the mode was unknown). Radios restore with
-            // retry below. A nil snapshot means we never captured state, so leave the
-            // current settings alone rather than guessing.
+            // Restore only what deep save changed (LPM + toggles); re-applying a SaveMode
+            // would clobber the user's charge config. Nil snapshot = never captured, so skip.
             if let lpm = savedLowPowerMode {
                 _ = try? ControlClient.send(.setLowPowerMode(lpm))
             }
@@ -167,7 +148,6 @@ final class AutomationStore: ObservableObject {
         }
     }
 
-    /// Finalize the lid-closed session started at the last lid close.
     private func completeLidSession() {
         guard let closedAt = defaults.object(forKey: Keys.pendingCloseAt) as? Date else { return }
         let closeCharge = defaults.integer(forKey: Keys.pendingCloseCharge)
@@ -183,8 +163,7 @@ final class AutomationStore: ObservableObject {
         lastLidSession = session
     }
 
-    /// Bring radios back. macOS can be slow to ready the Wi-Fi/Bluetooth hardware
-    /// right after wake, so we wait briefly and retry until it sticks.
+    /// macOS is slow to ready Wi-Fi/Bluetooth right after wake, so wait briefly and retry.
     private func restoreRadios() {
         let wantWifi = wifiWasOn
         let wantBT = bluetoothWasOn
@@ -202,17 +181,14 @@ final class AutomationStore: ObservableObject {
                 self.bluetoothWasOn = false
             }
         }
-        // Give the hardware a moment after wake before the first try.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { attempt(0) }
     }
 
     // MARK: - Deep save (sleepwatcher-style)
 
-    /// Maximize savings as the lid closes. Calls are synchronous so they finish
-    /// before the system is allowed to sleep.
+    /// Synchronous so it finishes before the system is allowed to sleep.
     private func enterDeepSave() {
-        // Snapshot the exact power state we're about to change so we can restore it
-        // verbatim on wake — without touching the charge mode/limit config.
+        // Snapshot the exact state we change, to restore verbatim on wake without touching charge config.
         if let status = try? ControlClient.send(.getStatus) {
             savedLowPowerMode = status.lowPowerModeEnabled
             savedPowerToggles = status.powerToggles
@@ -223,7 +199,6 @@ final class AutomationStore: ObservableObject {
         bluetoothWasOn = RadioControl.isBluetoothOn
         if bluetoothWasOn { RadioControl.setBluetooth(false) }
 
-        // Maximum savings via the root daemon.
         _ = try? ControlClient.send(.setLowPowerMode(true))
         _ = try? ControlClient.send(.setPowerToggle(.powerNap, false))
         _ = try? ControlClient.send(.setPowerToggle(.wakeOnNetwork, false))

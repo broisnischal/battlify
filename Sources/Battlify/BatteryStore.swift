@@ -5,18 +5,16 @@ import AppKit
 import BattlifyKit
 
 extension Notification.Name {
-    /// Posted when charging is enabled/disabled so views reading live battery
-    /// state can re-read without waiting for the next slow poll.
+    /// Posted when charging toggles so views can re-read without waiting for the slow poll.
     static let battlifyChargeStateChanged = Notification.Name("BattlifyChargeStateChanged")
 }
 
-/// Observable wrapper around `BatteryMonitor`. Updates immediately on power-source
-/// changes (via an IOKit run-loop source) and on a slow timer as a fallback for
-/// values IOKit doesn't push notifications for (temperature, cycle count).
+/// Observable wrapper around BatteryMonitor: instant updates via an IOKit run-loop
+/// source, plus a slow fallback timer for values IOKit doesn't notify (temp, cycles).
 @MainActor
 final class BatteryStore: ObservableObject {
     @Published private(set) var snapshot: BatterySnapshot = .unknown
-    /// Live power flow (adapter/battery/system watts). Updated with the snapshot.
+    /// Live power flow (adapter/battery/system watts).
     @Published private(set) var powerFlow: PowerFlow = .unknown
 
     private var timer: Timer?
@@ -33,17 +31,14 @@ final class BatteryStore: ObservableObject {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
-        // Re-read when charging is toggled by the daemon (limit change, pause,
-        // calibrate, …). The SMC change takes a moment to surface in IOKit, so we
-        // poll a couple of times over the next few seconds.
+        // SMC change takes a moment to surface in IOKit, so poll a few times over a few seconds.
         NotificationCenter.default.addObserver(
             forName: .battlifyChargeStateChanged, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.refreshSoon() }
         }
     }
 
-    /// Refresh now and again shortly after, to catch a just-applied charge change
-    /// once IOKit reflects it.
+    /// Refresh now and again shortly after, to catch a change once IOKit reflects it.
     func refreshSoon() {
         refresh()
         for delay in [0.3, 1.0, 2.5] {
@@ -53,8 +48,7 @@ final class BatteryStore: ObservableObject {
         }
     }
 
-    // No deinit cleanup: this store is owned by the App for the process lifetime,
-    // so the run-loop source and timer live as long as the app does.
+    // No deinit cleanup: owned by the App for the process lifetime.
 
     func refresh() {
         snapshot = BatteryMonitor.read()
@@ -62,8 +56,7 @@ final class BatteryStore: ObservableObject {
     }
 
     private func startPolling() {
-        // IOPS notifications handle instant %/charging changes; this slow timer
-        // is just a fallback for values without notifications (temp, cycles).
+        // Fallback for values IOKit doesn't notify (temp, cycles); IOPS handles instant changes.
         let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -72,8 +65,7 @@ final class BatteryStore: ObservableObject {
         timer = t
     }
 
-    /// Power flow gets no IOKit notification, so poll it on a short timer to keep
-    /// the live watt readouts fresh. `PowerMonitor.read()` is a cheap IORegistry read.
+    /// Power flow gets no IOKit notification, so poll on a short timer; the read is cheap.
     private func startPowerFlowPolling() {
         let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.powerFlow = PowerMonitor.read() }
@@ -89,9 +81,7 @@ final class BatteryStore: ObservableObject {
         guard let source = IOPSNotificationCreateRunLoopSource({ ctx in
             guard let ctx else { return }
             let store = Unmanaged<BatteryStore>.fromOpaque(ctx).takeUnretainedValue()
-            // Read now for an instant reaction, then a couple more times: IOKit's
-            // charging/plugged flags can trail the actual plug/unplug by a moment,
-            // so a single read can catch a stale value.
+            // IOKit's charging/plugged flags can trail the actual plug/unplug, so read a few times.
             Task { @MainActor in store.refreshSoon() }
         }, context)?.takeRetainedValue() else { return }
 

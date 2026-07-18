@@ -14,11 +14,9 @@ if [[ "$EUID" -ne 0 ]]; then
     exit 1
 fi
 
-# Reload the LaunchDaemon robustly. `launchctl bootout` is asynchronous, so
-# bootstrapping straight after it races the old job's teardown and fails with
-# "Bootstrap failed: 5: Input/output error". Enable first (a previously disabled
-# service can't bootstrap), wait for the old instance to fully unload, then
-# bootstrap with a short retry while the label frees up.
+# `launchctl bootout` is async: bootstrapping right after it races the old job's
+# teardown and fails with "Bootstrap failed: 5". Enable first (a disabled service
+# won't bootstrap), wait for the old instance to unload, then bootstrap with retry.
 reload_daemon() {
     local plist="$1" label="$2"
     local errfile; errfile="$(mktemp)"
@@ -27,7 +25,7 @@ reload_daemon() {
 
     if launchctl print "system/$label" >/dev/null 2>&1; then
         launchctl bootout "system/$label" 2>/dev/null || true
-        for _ in $(seq 1 50); do   # up to ~5s
+        for _ in $(seq 1 50); do   # wait up to ~5s for unload
             launchctl print "system/$label" >/dev/null 2>&1 || break
             sleep 0.1
         done
@@ -53,9 +51,8 @@ reload_daemon() {
 }
 
 echo "==> Building release binary…"
-# Optimize for size + drop unreachable code (no behavior change).
 BUILD_FLAGS="-c release -Xswiftc -Osize -Xlinker -dead_strip"
-# Build as the invoking user so SwiftPM caches land in their home, not root's.
+# build as the invoking user so SwiftPM caches land in their home, not root's
 if [[ -n "${SUDO_USER:-}" ]]; then
     sudo -u "$SUDO_USER" bash -lc "cd '$REPO_DIR' && swift build $BUILD_FLAGS --product battlify-helper"
 else
@@ -66,8 +63,7 @@ BIN_SRC="$REPO_DIR/.build/release/battlify-helper"
 echo "==> Installing binary to $BIN_DST"
 install -d /usr/local/bin
 install -m 755 "$BIN_SRC" "$BIN_DST"
-# Strip local/debug symbols to shrink the on-disk + resident size.
-strip -x "$BIN_DST" || true
+strip -x "$BIN_DST" || true   # shrink on-disk + resident size
 
 echo "==> Installing LaunchDaemon to $PLIST_DST"
 install -m 644 "$PLIST_SRC" "$PLIST_DST"

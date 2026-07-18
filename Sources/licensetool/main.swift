@@ -67,8 +67,7 @@ case "verify":
         FileHandle.standardError.write(Data("usage: licensetool verify --token <token>\n".utf8))
         exit(64)
     }
-    // Verify against the public key embedded in the app (or --pub). Pass --device
-    // to also check the binding; omitted, the device check is skipped (seller-side).
+    // Verify against the app's public key (or --pub); pass --device to also check the binding.
     do {
         let info = try License.verify(token, deviceID: value("--device"),
                                       publicKeyBase64: value("--pub") ?? License.publicKeyBase64)

@@ -3,8 +3,7 @@ import Combine
 import AppKit
 import BattlifyKit
 
-/// Drives in-app update checks against a public JSON feed. Checks on launch and
-/// once a day, plus on demand. Surfaces an available update for the menu to show.
+/// In-app update checks against a public JSON feed: on launch, daily, and on demand.
 @MainActor
 final class UpdaterManager: ObservableObject {
     @Published private(set) var available: AppUpdate?
@@ -12,8 +11,7 @@ final class UpdaterManager: ObservableObject {
     @Published private(set) var installing = false
     @Published private(set) var lastResult: String?
 
-    /// Public update feed. Host this JSON anywhere reachable without auth
-    /// (GitHub Pages, a public releases repo, your storefront/CDN).
+    /// Public update feed (any host reachable without auth).
     let feedURL = URL(string: "https://raw.githubusercontent.com/broisnischal/battlify-releases/main/appcast.json")!
 
     let currentVersion: String =
@@ -23,7 +21,6 @@ final class UpdaterManager: ObservableObject {
 
     init() {
         check(userInitiated: false)
-        // Re-check once a day.
         let t = Timer(timeInterval: 24 * 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.check(userInitiated: false) }
         }
@@ -59,17 +56,14 @@ final class UpdaterManager: ObservableObject {
         }
     }
 
-    /// Open the DMG download in the browser (manual fallback: user drags to
-    /// Applications). Used when the in-place installer can't run.
+    /// Open the DMG in the browser — manual fallback when the in-place installer can't run.
     func downloadAvailable() {
         guard let u = available?.url else { return }
         NSWorkspace.shared.open(u)
     }
 
-    /// Download the update DMG and install it *in place* over the running app,
-    /// then relaunch — no manual drag/replace. If anything blocks the automatic
-    /// path (e.g. the app lives somewhere unwritable), falls back to opening the
-    /// DMG so the user can install it by hand.
+    /// Download and install the update in place, then relaunch. Falls back to opening
+    /// the DMG if the automatic path is blocked (e.g. app lives somewhere unwritable).
     func installUpdate() {
         guard !installing, let url = available?.url else { return }
         let bundlePath = Bundle.main.bundlePath
@@ -117,9 +111,8 @@ final class UpdaterManager: ObservableObject {
         }
     }
 
-    /// Downloads the DMG, mounts it, and hands off to a detached shell script that
-    /// waits for this process to exit, swaps the bundle, and relaunches. Runs off
-    /// the main actor — it only touches local files, not published state.
+    /// Download, mount, and hand off to a detached script that waits for this process
+    /// to exit, swaps the bundle, and relaunches. Off the main actor — local files only.
     nonisolated private static func performInstall(from url: URL, bundlePath: String, pid: Int32, bundleID: String) async throws {
         let fm = FileManager.default
         let tmp = NSTemporaryDirectory()
@@ -145,11 +138,10 @@ final class UpdaterManager: ObservableObject {
             throw UpdaterError.appNotFoundInDMG
         }
 
-        // 4. Swap-and-relaunch script. It waits for THIS pid to exit so it never
-        //    overwrites a running bundle, keeps a .bak to roll back on failure,
-        //    clears quarantine, refreshes Launch Services (so the new bundle isn't
-        //    shadowed by a stale registration), then relaunches. All output goes to
-        //    a log file so the parent's closing pipes can't SIGPIPE it mid-run.
+        // 4. Swap-and-relaunch script: waits for THIS pid to exit so it never overwrites
+        //    a running bundle, keeps a .bak to roll back, refreshes Launch Services (else
+        //    the new bundle is shadowed by a stale registration). Output goes to a log
+        //    file so the parent's closing pipes can't SIGPIPE it.
         let logPath = tmp + "battlify-update.log"
         let script = """
         #!/bin/bash
@@ -201,9 +193,8 @@ final class UpdaterManager: ObservableObject {
         let scriptPath = tmp + "battlify-update-\(stamp).sh"
         try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
 
-        // 5. Launch it fully detached (nohup + background in a throwaway shell) so it
-        //    survives this app terminating — a direct child can be torn down with the
-        //    parent and never finish the swap/relaunch. Then the caller quits the app.
+        // 5. Launch fully detached (nohup) so it survives this app terminating — a direct
+        //    child can be torn down with the parent before finishing the swap/relaunch.
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         p.arguments = ["-c", "/usr/bin/nohup /bin/bash \"\(scriptPath)\" >/dev/null 2>&1 &"]
