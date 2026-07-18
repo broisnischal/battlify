@@ -37,11 +37,11 @@ struct SettingsView: View {
         }
         var icon: String {
             switch self {
-            case .charging: return "bolt.batteryblock.fill"
-            case .schedule: return "clock.arrow.circlepath"
-            case .sleepPower: return "moon.zzz.fill"
-            case .general: return "gearshape.fill"
-            case .about: return "info.circle"
+            case .charging: return "charging"
+            case .schedule: return "clock"
+            case .sleepPower: return "sleep"
+            case .general: return "settings"
+            case .about: return "info"
             }
         }
     }
@@ -92,8 +92,7 @@ struct SettingsView: View {
             selection = tab
         } label: {
             VStack(spacing: 3) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: 16, weight: .regular))
+                HugeIcon(tab.icon, size: 19)
                     .frame(height: 20)
                 Text(tab.title)
                     .font(.caption)
@@ -117,8 +116,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(spacing: 0) {
                 VStack(spacing: 8) {
-                    Image(systemName: "bolt.batteryblock.fill")
-                        .font(.system(size: 36))
+                    HugeIcon("charging", size: 40)
                         .foregroundStyle(.tint)
                         .frame(width: 76, height: 76)
                         .background(.quaternary.opacity(0.4),
@@ -139,16 +137,16 @@ struct SettingsView: View {
                 VStack(spacing: 0) {
                     licenseRow
                     divider
-                    linkRow("Send Me an Email", systemImage: "envelope",
+                    linkRow("Send Me an Email", systemImage: "mail",
                             url: "mailto:nischaldahal01395@gmail.com")
                     divider
                     linkRow("Donate", systemImage: "heart",
                             url: "https://nischal-dahal.com.np/donate")
                     divider
-                    linkRow("Check It Out on GitHub", systemImage: "chevron.left.forwardslash.chevron.right",
+                    linkRow("Check It Out on GitHub", systemImage: "code",
                             url: "https://github.com/broisnischal/battlify")
                     divider
-                    linkRow("Visit the Website", systemImage: "safari",
+                    linkRow("Visit the Website", systemImage: "compass",
                             url: "https://nischal-dahal.com.np")
                 }
                 .padding(.vertical, 20)
@@ -172,7 +170,7 @@ struct SettingsView: View {
             openWindow(id: "license")
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: license.isLicensed ? "checkmark.seal.fill" : "key")
+                HugeIcon(license.isLicensed ? "check" : "key", size: 19)
                     .frame(width: 22)
                     .foregroundStyle(.tint)
                 Text(license.isLicensed ? "Manage License" : "Activate License")
@@ -181,8 +179,7 @@ struct SettingsView: View {
                 Text(license.statusText)
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.tail)
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
+                HugeIcon("chevronRight", size: 12)
                     .foregroundStyle(.secondary)
             }
             .font(.callout)
@@ -198,13 +195,13 @@ struct SettingsView: View {
             if let u = URL(string: url) { NSWorkspace.shared.open(u) }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: systemImage)
+                HugeIcon(systemImage, size: 17)
                     .frame(width: 22)
                     .foregroundStyle(.tint)
                 Text(title)
                     .foregroundStyle(.tint)
                 Spacer()
-                Image(systemName: "arrow.up.right")
+                HugeIcon("arrowUpRight", size: 13)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -867,7 +864,7 @@ struct SettingsView: View {
         Label {
             Text(text).font(.caption).fixedSize(horizontal: false, vertical: true)
         } icon: {
-            Image(systemName: systemImage).foregroundStyle(.secondary)
+            HugeIcon(systemImage, size: 17).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
