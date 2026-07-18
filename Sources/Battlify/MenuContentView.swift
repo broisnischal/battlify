@@ -406,7 +406,7 @@ struct MenuContentView: View {
                                                   : "Dim the display to save power") {
                     actions.toggleDim()
                 }
-                actionButton("Display Off", systemImage: "moon",
+                actionButton("Off", systemImage: "moon",
                              help: "Turn the display off now (the Mac stays awake)") {
                     actions.turnDisplayOff()
                 }
