@@ -13,6 +13,7 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var notifier: NotificationManager
     @EnvironmentObject private var network: NetworkProfileStore
+    @EnvironmentObject private var chargingOverlay: ChargingOverlay
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var selection: Tab = .charging
@@ -555,6 +556,20 @@ struct SettingsView: View {
                 toggleRow("Color icon by charge state",
                           "Green while charging, red when low or warm. Off keeps it monochrome.",
                           isOn: $settings.colorMenuBarIcon)
+            }
+
+            card("Charging animation") {
+                toggleRow("Play a full-screen animation when plugged in",
+                          "A dot-matrix battery fills up across the whole screen for a few seconds when you plug in. Click or press Esc to dismiss.",
+                          isOn: $settings.chargingAnimationEnabled)
+                divider
+                HStack {
+                    Text("Preview").font(.callout)
+                    Spacer()
+                    Button("Preview") { chargingOverlay.show(percentage: battery.snapshot.percentage) }
+                        .controlSize(.small)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
             }
 
             card("Notifications") {
