@@ -28,9 +28,13 @@ final class AutomationStore: ObservableObject {
 
     @Published private(set) var lastLidSession: LidSession?
 
+    /// Read to know whether "Always Active" is actually holding the Mac awake.
+    weak var chargeLimit: ChargeLimitStore?
+
     private let defaults = UserDefaults.standard
     private let lid = LidMonitor()
     private var lidPollTimer: Timer?
+    private var clamshellSaverTimer: Timer?
 
     // Radio states captured at sleep, to restore on wake.
     private var wifiWasOn = false
@@ -85,6 +89,63 @@ final class AutomationStore: ObservableObject {
         isLidClosed = LidMonitor.isClamshellClosed()
         // NSScreen import via AppKit; count displays beyond the built-in.
         externalDisplayCount = max(0, NSScreen.screens.count - (isLidClosed ? 0 : 1))
+        updateClamshellSaver()
+    }
+
+    // MARK: - Clamshell display saver
+
+    // With "Always Active" holding the Mac awake, closing the lid skips macOS's normal
+    // clamshell display-off, so the internal panel + keyboard backlight stay lit (and
+    // hot) inside the shut lid. Re-issue a forced display sleep while the lid is shut so
+    // a wake can't leave it on; the keyboard backlight follows display sleep. Never runs
+    // with an external display attached (that would blank the user's monitor).
+    private func updateClamshellSaver() {
+        if shouldSaveClamshell() { startClamshellSaver() } else { stopClamshellSaver() }
+    }
+
+    private func shouldSaveClamshell() -> Bool {
+        guard let cl = chargeLimit, cl.keepAwake else { return false }
+        guard SystemPower.isClamshellClosed(), !Self.hasExternalDisplay() else { return false }
+        return cl.keepAwakeOnBattery || BatteryMonitor.read().onExternalPower
+    }
+
+    private func startClamshellSaver() {
+        guard clamshellSaverTimer == nil else { return }
+        forceInternalDisplayOff()
+        let t = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.clamshellSaverTick() }
+        }
+        t.tolerance = 2
+        RunLoop.main.add(t, forMode: .common)
+        clamshellSaverTimer = t
+    }
+
+    private func clamshellSaverTick() {
+        // Re-read live so opening the lid or attaching a display stops us within one tick.
+        guard shouldSaveClamshell() else { stopClamshellSaver(); return }
+        forceInternalDisplayOff()
+    }
+
+    private func stopClamshellSaver() {
+        clamshellSaverTimer?.invalidate()
+        clamshellSaverTimer = nil
+    }
+
+    private func forceInternalDisplayOff() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        p.arguments = ["displaysleepnow"]
+        p.standardOutput = Pipe(); p.standardError = Pipe()
+        try? p.run()
+    }
+
+    /// True if any non-built-in display is online — then we must not force display sleep.
+    private static func hasExternalDisplay() -> Bool {
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return false }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return false }
+        return ids.prefix(Int(count)).contains { CGDisplayIsBuiltin($0) == 0 }
     }
 
     /// Apply only the lid-radio parts of a save mode's profile.

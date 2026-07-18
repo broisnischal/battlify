@@ -40,7 +40,10 @@ struct BattlifyApp: App {
                 .environmentObject(settings)
                 .environmentObject(notifier)
                 .environmentObject(network)
-                .onAppear { network.chargeLimit = chargeLimit }
+                .onAppear {
+                    network.chargeLimit = chargeLimit
+                    automation.chargeLimit = chargeLimit
+                }
         } label: {
             // Its own observing view so it re-renders reliably — a label closure that
             // reads the store inline can render once and go stale.
