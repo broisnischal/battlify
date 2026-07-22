@@ -108,8 +108,13 @@ public final class ChargeController {
 
     public func isChargingEnabled() throws -> Bool {
         if usesLegacyKeys {
-            let v = try smc.read(ch0b)
-            return v.bytes.first == 0x00
+            // Read BOTH inhibit keys, not just CH0B: charging is enabled if *either*
+            // still allows it. A non-atomic stop that set CH0B but not CH0C would
+            // otherwise read as "stopped" while the battery keeps charging — so this
+            // reports still-charging and the caller retries the stop (no overshoot).
+            let b = try smc.read(ch0b).bytes.first
+            let c = try smc.read(ch0c).bytes.first
+            return b == 0x00 || c == 0x00
         } else {
             let v = try smc.read(chte)
             return v.bytes.prefix(4).allSatisfy { $0 == 0x00 }

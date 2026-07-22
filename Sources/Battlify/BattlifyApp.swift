@@ -24,6 +24,7 @@ struct BattlifyApp: App {
     @StateObject private var settings = AppSettings()
     @StateObject private var notifier = NotificationManager()
     @StateObject private var network = NetworkProfileStore()
+    @StateObject private var endurance = EnduranceStore()
 
     var body: some Scene {
         MenuBarExtra {
@@ -40,9 +41,11 @@ struct BattlifyApp: App {
                 .environmentObject(settings)
                 .environmentObject(notifier)
                 .environmentObject(network)
+                .environmentObject(endurance)
                 .onAppear {
                     network.chargeLimit = chargeLimit
                     automation.chargeLimit = chargeLimit
+                    endurance.start(chargeLimit: chargeLimit)
                 }
         } label: {
             // Its own observing view so it re-renders reliably — a label closure that
@@ -64,6 +67,7 @@ struct BattlifyApp: App {
                 .environmentObject(settings)
                 .environmentObject(notifier)
                 .environmentObject(network)
+                .environmentObject(endurance)
         }
         .windowResizability(.contentSize)
 

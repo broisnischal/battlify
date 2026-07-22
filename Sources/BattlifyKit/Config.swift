@@ -56,6 +56,10 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     public var keepAwakeMinCpu: Double
     /// Thermal guardrail: release keep-awake at/above this °C to protect a closed Mac. 0 = off.
     public var keepAwakeMaxTempC: Double
+    /// When task-gated keep-awake is on, actively put the Mac to sleep once the
+    /// matching task finishes (instead of only releasing the hold and waiting for
+    /// idle sleep). Lets an overnight build/download finish and then sleep right away.
+    public var sleepWhenTaskDone: Bool
 
     /// Recurring charging windows (charge/hold/discharge on a weekly timetable).
     public var schedules: [ChargeSchedule]
@@ -90,6 +94,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 keepAwakeProcesses: [String] = [],
                 keepAwakeMinCpu: Double = 0,
                 keepAwakeMaxTempC: Double = 0,
+                sleepWhenTaskDone: Bool = false,
                 schedules: [ChargeSchedule] = [],
                 readyBy: ReadyByTarget = ReadyByTarget(),
                 slowCharge: Bool = false,
@@ -115,6 +120,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.keepAwakeProcesses = keepAwakeProcesses
         self.keepAwakeMinCpu = keepAwakeMinCpu
         self.keepAwakeMaxTempC = keepAwakeMaxTempC
+        self.sleepWhenTaskDone = sleepWhenTaskDone
         self.schedules = schedules
         self.readyBy = readyBy
         self.slowCharge = slowCharge
@@ -147,6 +153,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         keepAwakeProcesses = try c.decodeIfPresent([String].self, forKey: .keepAwakeProcesses) ?? []
         keepAwakeMinCpu = try c.decodeIfPresent(Double.self, forKey: .keepAwakeMinCpu) ?? 0
         keepAwakeMaxTempC = try c.decodeIfPresent(Double.self, forKey: .keepAwakeMaxTempC) ?? 0
+        sleepWhenTaskDone = try c.decodeIfPresent(Bool.self, forKey: .sleepWhenTaskDone) ?? false
         schedules = try c.decodeIfPresent([ChargeSchedule].self, forKey: .schedules) ?? []
         readyBy = try c.decodeIfPresent(ReadyByTarget.self, forKey: .readyBy) ?? ReadyByTarget()
         slowCharge = try c.decodeIfPresent(Bool.self, forKey: .slowCharge) ?? false

@@ -13,12 +13,15 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var notifier: NotificationManager
     @EnvironmentObject private var network: NetworkProfileStore
+    @EnvironmentObject private var endurance: EnduranceStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var selection: Tab = .charging
     /// Schedule being edited/added in the sheet (nil = sheet closed).
     @State private var editingSchedule: ChargeSchedule?
     @State private var editingIsNew = false
+    /// Whether the "pick running processes" sheet for keep-awake is open.
+    @State private var showingProcessPicker = false
 
     /// Hand-rolled tab bar instead of `TabView`, which on recent macOS collapses
     /// into an overflow popup instead of showing real tabs.
@@ -68,6 +71,16 @@ struct SettingsView: View {
                 isNew: editingIsNew,
                 onSave: { chargeLimit.updateOrAddSchedule($0) },
                 onDelete: editingIsNew ? nil : { chargeLimit.removeSchedule(schedule) })
+        }
+        .sheet(isPresented: $showingProcessPicker) {
+            ProcessPickerView(existing: chargeLimit.keepAwakeProcesses) { picked in
+                // Union with the existing list (case-insensitive), preserving order.
+                var names = chargeLimit.keepAwakeProcesses
+                let have = Set(names.map { $0.lowercased() })
+                for name in picked where !have.contains(name.lowercased()) { names.append(name) }
+                chargeLimit.keepAwakeProcesses = names
+                chargeLimit.apply()
+            }
         }
     }
 
@@ -243,11 +256,20 @@ struct SettingsView: View {
                             if chargeLimit.keepAwakeRequiresTask {
                                 divider
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text("Keep awake for these apps/processes").font(.callout)
+                                    HStack {
+                                        Text("Keep awake for these apps/processes").font(.callout)
+                                        Spacer()
+                                        Button {
+                                            showingProcessPicker = true
+                                        } label: {
+                                            Label("Choose…", systemImage: "plus.circle")
+                                        }
+                                        .buttonStyle(.link)
+                                    }
                                     TextField("e.g. ffmpeg, npm, docker, rsync",
                                               text: keepAwakeProcessText)
                                         .textFieldStyle(.roundedBorder)
-                                    Text("Comma-separated names; matched against running commands.")
+                                    Text("Comma-separated names; matched against running commands. Use “Choose…” to pick from running processes.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 .padding(.horizontal, 12).padding(.vertical, 10)
@@ -259,6 +281,10 @@ struct SettingsView: View {
                                             get: { chargeLimit.keepAwakeMinCpu },
                                             set: { chargeLimit.keepAwakeMinCpu = $0; chargeLimit.apply() }),
                                            range: 0...100)
+                                divider
+                                toggleRow("Sleep when the task finishes",
+                                          "Put the Mac to sleep automatically once the matching task stops (waits ~30s to be sure it's really done), so an overnight build or download finishes and then the Mac sleeps.",
+                                          isOn: bind(\.sleepWhenTaskDone))
                             }
                             divider
                             toggleRow("Sleep if it gets too hot",
@@ -443,6 +469,34 @@ struct SettingsView: View {
     private var sleepPowerTab: some View {
         tab {
             proGate {
+                card("Battery saver (Endurance)") {
+                    toggleRow("Endurance mode",
+                              "Cuts battery drain: dims the screen, turns on Low Power Mode, and trims background wake & Bluetooth. Restores everything when you turn it off.",
+                              isOn: Binding(get: { endurance.active },
+                                            set: { endurance.setActive($0) }))
+                    divider
+                    toggleRow("Turn on automatically on battery",
+                              "Activates Endurance whenever you unplug, and turns it back off when you plug in.",
+                              isOn: $endurance.autoOnBattery)
+                    if endurance.brightnessSupported {
+                        divider
+                        stepperRow("Screen brightness cap",
+                                   value: "\(Int((endurance.brightnessCap * 100).rounded()))%",
+                                   binding: Binding(
+                                    get: { endurance.brightnessCap * 100 },
+                                    set: { endurance.brightnessCap = $0 / 100 }),
+                                   range: 20...80)
+                    }
+                    divider
+                    if let s = endurance.savingsPercent {
+                        infoRow("Measured: \(s)% less drain — normal \(fmtW(endurance.normalWatts)) → saver \(fmtW(endurance.enduranceWatts)).\(nowSuffix)",
+                                systemImage: "leaf")
+                    } else {
+                        infoRow("Measuring drain… run on battery with the mode on and off for a few minutes to compare.\(nowSuffix)",
+                                systemImage: "gauge")
+                    }
+                }
+
                 card("When the lid closes") {
                     toggleRow("Super Save when lid closed",
                               "Maximizes battery while closed, restores when you open it.",
@@ -870,6 +924,15 @@ struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    private func fmtW(_ w: Double?) -> String {
+        guard let w else { return "—" }
+        return String(format: "%.1f W", w)
+    }
+
+    private var nowSuffix: String {
+        endurance.liveWatts > 0.1 ? " Now: \(fmtW(endurance.liveWatts))." : ""
+    }
 
     private var keepAwakeProcessText: Binding<String> {
         Binding(

@@ -20,8 +20,18 @@ final class Daemon: @unchecked Sendable {
 
     // Why charging is currently paused ("limit"/"heat"/nil), for status reporting.
     private var lastPauseReason: String?
+    // Charge-limit hysteresis, tracked explicitly rather than inferred from the raw
+    // SMC charging flag — duty-cycling (Charge Power < 100) also toggles that flag,
+    // and reading it back would latch the "hold at limit" branch during a rest phase,
+    // stalling charging inside the band. Set at/above the limit, cleared below
+    // (limit − resumeMargin); charging is held while true.
+    private var holdingAtLimit = false
     // °C below maxChargeTempC at which heat-paused charging may resume.
     private let heatResumeMargin = 2.0
+    // Have we ever read a battery temperature? Used to fail safe: if the sensor has
+    // worked before but a read fails while heat-aware is on, we pause charging rather
+    // than silently charge uncapped. Macs that never expose a temp sensor stay unblocked.
+    private var sawTemperature = false
     // Last MagSafe LED we set, so we only write the SMC on change.
     private var lastLed: MagSafeLED?
 
@@ -44,6 +54,14 @@ final class Daemon: @unchecked Sendable {
     private var lastDisableSleep: Bool?
     // Force display off once per lid-closed spell while keep-awake holds; resets when the lid opens.
     private var displayForcedOffWhileClosed = false
+
+    // Auto-sleep-when-task-done state. We only sleep once we've actually seen the
+    // matching task running (so enabling the option while idle doesn't sleep), and
+    // only after it's been gone for a few ticks (so a brief gap between a build's
+    // sub-processes doesn't sleep prematurely).
+    private var keepAwakeSawTask = false
+    private var keepAwakeTaskIdleTicks = 0
+    private let sleepAfterTaskIdleTicks = 3   // ~30s gone before we sleep
 
     // Charge-power duty cycle in long phases (≥ minChargeDwell) to avoid flicker/hardware thrash.
     private let minChargeDwell: TimeInterval = 120   // ≥ 2 min per phase
@@ -289,21 +307,37 @@ final class Daemon: @unchecked Sendable {
             // charge windows, ready-by top-up, and calibration all bypass the limit ceiling
             let bypassLimit = cfg.calibrateToFull || topUp || (activeSchedule?.action == .charge)
 
-            // hysteresis band
+            // Hysteresis band, tracked via `holdingAtLimit` (not the raw SMC flag, which
+            // duty-cycling toggles): hold once we reach the limit, and keep holding while
+            // coasting down through the band until we drop below (limit − resumeMargin),
+            // then resume charging back up to the limit.
             if cfg.chargeLimitEnabled && !bypassLimit {
                 if level >= cfg.chargeLimit {
-                    desired = false; reason = "limit"
-                } else if level >= cfg.chargeLimit - cfg.resumeMargin && !charging {
-                    desired = false; reason = "limit"   // hold paused inside the band
+                    holdingAtLimit = true
+                } else if level < cfg.chargeLimit - cfg.resumeMargin {
+                    holdingAtLimit = false
                 }
+                if holdingAtLimit { desired = false; reason = "limit" }
+            } else {
+                holdingAtLimit = false   // not enforcing the ceiling right now
             }
             // heat constraint, only while we'd otherwise charge
-            if desired, cfg.heatAwareEnabled, let t = snap.temperature {
-                if t >= cfg.maxChargeTempC {
+            if desired, cfg.heatAwareEnabled {
+                if let t = snap.temperature {
+                    sawTemperature = true
+                    if t >= cfg.maxChargeTempC {
+                        desired = false; reason = "heat"
+                    } else if t >= cfg.maxChargeTempC - heatResumeMargin
+                                && !charging && lastPauseReason == "heat" {
+                        desired = false; reason = "heat"
+                    }
+                } else if sawTemperature {
+                    // Sensor worked before but this read failed: fail safe (pause)
+                    // rather than charge with the thermal cap silently disabled.
                     desired = false; reason = "heat"
-                } else if t >= cfg.maxChargeTempC - heatResumeMargin
-                            && !charging && lastPauseReason == "heat" {
-                    desired = false; reason = "heat"
+                    if lastPauseReason != "heat" {
+                        log("heat-aware: temperature unreadable; pausing charging as a precaution")
+                    }
                 }
             }
         }
@@ -380,9 +414,10 @@ final class Daemon: @unchecked Sendable {
         var want = cfg.keepAwake && (cfg.keepAwakeOnBattery || snap.onExternalPower)
 
         // Task-gated: only hold while a matching task runs, so the Mac sleeps when work finishes.
-        if want && cfg.keepAwakeRequiresTask {
-            want = ProcessScan.isBusy(names: cfg.keepAwakeProcesses, minCpu: cfg.keepAwakeMinCpu)
-        }
+        let taskGated = want && cfg.keepAwakeRequiresTask
+        let taskBusy = taskGated
+            && ProcessScan.isBusy(names: cfg.keepAwakeProcesses, minCpu: cfg.keepAwakeMinCpu)
+        if taskGated { want = taskBusy }
         // Thermal guardrail: release keep-awake once a closed Mac crosses the temp limit.
         if want, cfg.keepAwakeMaxTempC > 0, let t = snap.temperature, t >= cfg.keepAwakeMaxTempC {
             want = false
@@ -420,6 +455,29 @@ final class Daemon: @unchecked Sendable {
             }
         } else {
             displayForcedOffWhileClosed = false
+        }
+
+        // Auto-sleep once the monitored task finishes. `want`/the hold above are
+        // already released when the task isn't busy, so `pmset sleepnow` isn't
+        // blocked by our own disablesleep. Debounced so a brief gap between a
+        // build's sub-processes doesn't sleep mid-job, and only after we've seen
+        // the task actually run this session.
+        if taskGated {
+            if taskBusy {
+                keepAwakeSawTask = true
+                keepAwakeTaskIdleTicks = 0
+            } else if keepAwakeSawTask {
+                keepAwakeTaskIdleTicks += 1
+                if cfg.sleepWhenTaskDone && keepAwakeTaskIdleTicks >= sleepAfterTaskIdleTicks {
+                    log("keep-awake task finished — sleeping now")
+                    keepAwakeSawTask = false
+                    keepAwakeTaskIdleTicks = 0
+                    PowerSettings.sleepNow()
+                }
+            }
+        } else {
+            keepAwakeSawTask = false
+            keepAwakeTaskIdleTicks = 0
         }
     }
 
@@ -532,12 +590,25 @@ final class Daemon: @unchecked Sendable {
         }
     }
 
-    /// Restore a safe state and exit: re-enable charging, restore the adapter, hand the
-    /// LED to macOS, clear disablesleep. Serialized with the tick loop via `lock`.
+    /// Restore a safe state and exit: preserve the charge limit across shutdown,
+    /// restore the adapter, hand the LED to macOS, clear disablesleep. Serialized
+    /// with the tick loop via `lock`.
+    ///
+    /// launchd sends SIGTERM on every shutdown/restart, so this runs then. The SMC
+    /// charge-inhibit key persists while the Mac is powered off but plugged in (the
+    /// same property `prepareForSleep` relies on), so if we cleared it here the
+    /// battery would charge straight past the limit — to full — while the Mac is
+    /// off. So when limiting is on we leave the inhibit *set*; only when limiting is
+    /// off do we re-enable charging, to never leave a Mac unable to charge.
+    /// (Uninstall re-enables explicitly, after unloading this daemon.)
     private func performCleanupAndExit() -> Never {
         lock.lock()   // hold through exit; serialize SMC access with tick()
         PowerSettings.setDisableSleep(false)
-        try? charge.enableCharging()
+        if ConfigStore.load().chargeLimitEnabled {
+            try? charge.disableCharging()
+        } else {
+            try? charge.enableCharging()
+        }
         if charge.isAdapterControlSupported { try? charge.enableAdapter() }
         if charge.isMagSafeSupported { try? charge.setMagSafeLED(.system) }
         exit(0)

@@ -56,4 +56,11 @@ enum PowerSettings {
     static func displaySleepNow() -> Bool {
         Shell.run("/usr/bin/pmset", ["displaysleepnow"]) != nil
     }
+
+    /// Put the whole system to sleep now. The caller must first clear `disablesleep`
+    /// (otherwise sleep is blocked); used to sleep the Mac once a keep-awake task finishes.
+    @discardableResult
+    static func sleepNow() -> Bool {
+        Shell.run("/usr/bin/pmset", ["sleepnow"]) != nil
+    }
 }
