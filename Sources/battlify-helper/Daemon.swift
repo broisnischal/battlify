@@ -532,12 +532,25 @@ final class Daemon: @unchecked Sendable {
         }
     }
 
-    /// Restore a safe state and exit: re-enable charging, restore the adapter, hand the
-    /// LED to macOS, clear disablesleep. Serialized with the tick loop via `lock`.
+    /// Restore a safe state and exit: preserve the charge limit across shutdown,
+    /// restore the adapter, hand the LED to macOS, clear disablesleep. Serialized
+    /// with the tick loop via `lock`.
+    ///
+    /// launchd sends SIGTERM on every shutdown/restart, so this runs then. The SMC
+    /// charge-inhibit key persists while the Mac is powered off but plugged in (the
+    /// same property `prepareForSleep` relies on), so if we cleared it here the
+    /// battery would charge straight past the limit — to full — while the Mac is
+    /// off. So when limiting is on we leave the inhibit *set*; only when limiting is
+    /// off do we re-enable charging, to never leave a Mac unable to charge.
+    /// (Uninstall re-enables explicitly, after unloading this daemon.)
     private func performCleanupAndExit() -> Never {
         lock.lock()   // hold through exit; serialize SMC access with tick()
         PowerSettings.setDisableSleep(false)
-        try? charge.enableCharging()
+        if ConfigStore.load().chargeLimitEnabled {
+            try? charge.disableCharging()
+        } else {
+            try? charge.enableCharging()
+        }
         if charge.isAdapterControlSupported { try? charge.enableAdapter() }
         if charge.isMagSafeSupported { try? charge.setMagSafeLED(.system) }
         exit(0)

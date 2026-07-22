@@ -11,11 +11,15 @@ if [[ "$EUID" -ne 0 ]]; then
     exit 1
 fi
 
-echo "==> Re-enabling charging (safety) before removing daemon"
-"$BIN_DST" enable 2>/dev/null || true
-
 echo "==> Unloading daemon"
 launchctl bootout system "$PLIST_DST" 2>/dev/null || true
+
+# Re-enable charging AFTER the daemon is unloaded: on exit the daemon now
+# preserves the charge inhibit (so the limit survives shutdown/restart), so this
+# must be the last word on the SMC — otherwise the daemon's exit cleanup would
+# re-inhibit charging right after we cleared it, leaving the Mac unable to charge.
+echo "==> Re-enabling charging (safety) after unloading daemon"
+"$BIN_DST" enable 2>/dev/null || true
 
 echo "==> Removing files"
 rm -f "$PLIST_DST"
