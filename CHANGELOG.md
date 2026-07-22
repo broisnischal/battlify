@@ -1,5 +1,56 @@
 # battlify
 
+## 0.14.0
+
+### Minor Changes
+
+- d30e805: Add **Endurance** — a battery-saver mode that targets ~25% less drain by layering the
+  biggest real power levers and restoring everything when turned off:
+
+  - Caps screen brightness (the single largest lever) via DisplayServices — works on
+    Apple Silicon and Intel across macOS 12–15.
+  - Turns on macOS Low Power Mode.
+  - Trims battery-wasteful background wake (Power Nap / wake-on-network / TCP keep-alive)
+    and turns Bluetooth off.
+  - Prior brightness, Low Power Mode, toggles and Bluetooth are snapshotted on activation
+    and restored on exit.
+
+  Activation: a toggle in the menu and in Settings → Sleep & Power, plus optional
+  auto-on-battery (on by default) that activates when you unplug and deactivates when you
+  plug back in. The brightness cap is adjustable (default 40%).
+
+  **Measured drain meter** proves the effect: it shows live discharge watts and rolling
+  averages for normal vs. saver mode, and the measured % reduction — so you can confirm the
+  savings rather than trust an estimate (the exact figure is workload-dependent).
+
+- d30e805: Keep-awake improvements and charging-correctness fixes:
+
+  - **Process picker**: pick the apps/processes that keep the Mac awake from a
+    searchable list of what's currently running, instead of typing command names by
+    hand ("Choose…" next to the process field). Selections are added to the list.
+  - **Sleep when the task finishes**: optionally put the Mac to sleep automatically
+    once the monitored task stops (debounced ~30s so a gap between a build's
+    sub-processes doesn't sleep mid-job), so an overnight build/download finishes and
+    then the Mac sleeps.
+  - **Fix (Charge Power)**: with charge power below 100%, the duty-cycle rest phase was
+    misread as "holding at the limit", so the battery drained to the bottom of the
+    recharge band and never cycled back up. Hysteresis is now tracked explicitly and
+    independent of the duty cycle.
+  - **Fix (heat)**: a failed battery-temperature read no longer silently disables the
+    thermal cap; if the sensor has worked before, charging pauses as a precaution.
+  - **Fix (legacy SMC)**: charge state now reads both CH0B and CH0C, so a partial write
+    that leaves one key allowing charge is retried instead of overshooting the limit.
+
+### Patch Changes
+
+- d30e805: Fix: the charge limit is now held through shutdown and restart. The helper's exit
+  cleanup used to re-enable charging on every SIGTERM (which launchd sends on
+  shutdown/restart), clearing the SMC charge inhibit. Because that inhibit persists
+  while the Mac is powered off but plugged in, the battery would then charge past
+  the limit — all the way to full — while the Mac was off. The daemon now leaves the
+  inhibit in place on exit whenever limiting is enabled, and only re-enables charging
+  when limiting is off. Uninstall re-enables charging after unloading the daemon.
+
 ## 0.12.0
 
 ### Minor Changes
