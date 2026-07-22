@@ -71,6 +71,8 @@ final class ChargeLimitStore: ObservableObject {
     @Published var keepAwakeMinCpu: Double = 0
     /// Release keep-awake above this °C (0 = no guardrail).
     @Published var keepAwakeMaxTempC: Double = 0
+    /// Actively sleep the Mac once the monitored task finishes (task-gated keep-awake).
+    @Published var sleepWhenTaskDone = false
     @Published var schedules: [ChargeSchedule] = []
     /// Once-daily "ready by" top-up target.
     @Published var readyBy = ReadyByTarget()
@@ -174,6 +176,7 @@ final class ChargeLimitStore: ObservableObject {
         cfg.keepAwakeProcesses = keepAwakeProcesses
         cfg.keepAwakeMinCpu = keepAwakeMinCpu
         cfg.keepAwakeMaxTempC = keepAwakeMaxTempC
+        cfg.sleepWhenTaskDone = sleepWhenTaskDone
         cfg.schedules = schedules
         cfg.readyBy = readyBy
         cfg.chargePower = chargePower
@@ -286,6 +289,7 @@ final class ChargeLimitStore: ObservableObject {
         set(\.keepAwakeProcesses, r.config.keepAwakeProcesses)
         set(\.keepAwakeMinCpu, r.config.keepAwakeMinCpu)
         set(\.keepAwakeMaxTempC, r.config.keepAwakeMaxTempC)
+        set(\.sleepWhenTaskDone, r.config.sleepWhenTaskDone)
         set(\.schedules, r.config.schedules)
         set(\.readyBy, r.config.readyBy)
         set(\.slowCharge, r.config.slowCharge)

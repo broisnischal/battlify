@@ -19,6 +19,8 @@ struct SettingsView: View {
     /// Schedule being edited/added in the sheet (nil = sheet closed).
     @State private var editingSchedule: ChargeSchedule?
     @State private var editingIsNew = false
+    /// Whether the "pick running processes" sheet for keep-awake is open.
+    @State private var showingProcessPicker = false
 
     /// Hand-rolled tab bar instead of `TabView`, which on recent macOS collapses
     /// into an overflow popup instead of showing real tabs.
@@ -68,6 +70,16 @@ struct SettingsView: View {
                 isNew: editingIsNew,
                 onSave: { chargeLimit.updateOrAddSchedule($0) },
                 onDelete: editingIsNew ? nil : { chargeLimit.removeSchedule(schedule) })
+        }
+        .sheet(isPresented: $showingProcessPicker) {
+            ProcessPickerView(existing: chargeLimit.keepAwakeProcesses) { picked in
+                // Union with the existing list (case-insensitive), preserving order.
+                var names = chargeLimit.keepAwakeProcesses
+                let have = Set(names.map { $0.lowercased() })
+                for name in picked where !have.contains(name.lowercased()) { names.append(name) }
+                chargeLimit.keepAwakeProcesses = names
+                chargeLimit.apply()
+            }
         }
     }
 
@@ -243,11 +255,20 @@ struct SettingsView: View {
                             if chargeLimit.keepAwakeRequiresTask {
                                 divider
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text("Keep awake for these apps/processes").font(.callout)
+                                    HStack {
+                                        Text("Keep awake for these apps/processes").font(.callout)
+                                        Spacer()
+                                        Button {
+                                            showingProcessPicker = true
+                                        } label: {
+                                            Label("Choose…", systemImage: "plus.circle")
+                                        }
+                                        .buttonStyle(.link)
+                                    }
                                     TextField("e.g. ffmpeg, npm, docker, rsync",
                                               text: keepAwakeProcessText)
                                         .textFieldStyle(.roundedBorder)
-                                    Text("Comma-separated names; matched against running commands.")
+                                    Text("Comma-separated names; matched against running commands. Use “Choose…” to pick from running processes.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 .padding(.horizontal, 12).padding(.vertical, 10)
@@ -259,6 +280,10 @@ struct SettingsView: View {
                                             get: { chargeLimit.keepAwakeMinCpu },
                                             set: { chargeLimit.keepAwakeMinCpu = $0; chargeLimit.apply() }),
                                            range: 0...100)
+                                divider
+                                toggleRow("Sleep when the task finishes",
+                                          "Put the Mac to sleep automatically once the matching task stops (waits ~30s to be sure it's really done), so an overnight build or download finishes and then the Mac sleeps.",
+                                          isOn: bind(\.sleepWhenTaskDone))
                             }
                             divider
                             toggleRow("Sleep if it gets too hot",
