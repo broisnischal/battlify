@@ -487,11 +487,13 @@ struct SettingsView: View {
                                     set: { endurance.brightnessCap = $0 / 100 }),
                                    range: 20...80)
                     }
+                    divider
                     if let s = endurance.savingsPercent {
-                        divider
-                        infoRow("Measured drain reduction so far: \(s)% "
-                                + "(normal \(fmtW(endurance.normalWatts)) → saver \(fmtW(endurance.enduranceWatts))).",
+                        infoRow("Measured: \(s)% less drain — normal \(fmtW(endurance.normalWatts)) → saver \(fmtW(endurance.enduranceWatts)).\(nowSuffix)",
                                 systemImage: "leaf")
+                    } else {
+                        infoRow("Measuring drain… run on battery with the mode on and off for a few minutes to compare.\(nowSuffix)",
+                                systemImage: "gauge")
                     }
                 }
 
@@ -926,6 +928,10 @@ struct SettingsView: View {
     private func fmtW(_ w: Double?) -> String {
         guard let w else { return "—" }
         return String(format: "%.1f W", w)
+    }
+
+    private var nowSuffix: String {
+        endurance.liveWatts > 0.1 ? " Now: \(fmtW(endurance.liveWatts))." : ""
     }
 
     private var keepAwakeProcessText: Binding<String> {

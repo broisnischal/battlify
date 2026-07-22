@@ -40,6 +40,10 @@ final class EnduranceStore: ObservableObject {
     private weak var chargeLimit: ChargeLimitStore?
     private var timer: Timer?
     private var autoActivated = false
+    // A manual off/on wins over auto-on-battery until the plug state next changes,
+    // so turning it off doesn't immediately flip back on while still on battery.
+    private var manualOverrideOff = false
+    private var lastOnBattery: Bool?
 
     // Saved state to restore on exit.
     private var savedBrightness: Float?
@@ -78,7 +82,13 @@ final class EnduranceStore: ObservableObject {
 
     /// User (or auto) flips the mode.
     func setActive(_ on: Bool, auto: Bool = false) {
-        if !auto { autoActivated = false }
+        if auto {
+            autoActivated = on
+        } else {
+            // Manual action: honor it until the plug state next changes.
+            autoActivated = false
+            manualOverrideOff = !on
+        }
         guard on != active else { return }
         active = on
         if on { apply() } else { restore() }
@@ -121,12 +131,17 @@ final class EnduranceStore: ObservableObject {
         let flow = PowerMonitor.read()
         let onBattery = !snap.onExternalPower
 
+        // A plug-state change re-enables auto behavior — a manual off is honored only
+        // until you next plug in or unplug.
+        if let last = lastOnBattery, last != onBattery { manualOverrideOff = false }
+        lastOnBattery = onBattery
+
         // Auto activate/deactivate on plug state.
         if autoOnBattery {
-            if onBattery && !active {
-                setActive(true, auto: true); autoActivated = true
+            if onBattery && !active && !manualOverrideOff {
+                setActive(true, auto: true)
             } else if !onBattery && active && autoActivated {
-                setActive(false, auto: true); autoActivated = false
+                setActive(false, auto: true)
             }
         }
 

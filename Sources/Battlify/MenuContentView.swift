@@ -10,7 +10,6 @@ struct MenuContentView: View {
     @EnvironmentObject private var updater: UpdaterManager
     @EnvironmentObject private var actions: SystemActions
     @EnvironmentObject private var caffeine: CaffeineManager
-    @EnvironmentObject private var endurance: EnduranceStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near full height so the popover doesn't visibly grow on first open.
@@ -35,8 +34,6 @@ struct MenuContentView: View {
                 }
                 .disabled(!license.isPro)
                 .opacity(license.isPro ? 1 : 0.45)
-                Divider()
-                enduranceSection
                 Divider()
                 quickActionsSection
                 Divider()
@@ -214,61 +211,6 @@ struct MenuContentView: View {
     private func applyMode(_ mode: SaveMode) {
         automation.apply(mode.profile)
         chargeLimit.applyMode(mode)
-    }
-
-    // MARK: - Endurance (battery-saver mode + measured drain meter)
-
-    @ViewBuilder
-    private var enduranceSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Endurance", "leaf")
-            Toggle(isOn: Binding(get: { endurance.active },
-                                 set: { endurance.setActive($0) })) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Battery saver").font(.callout)
-                    Text(endurance.active
-                         ? "On — dimmed, Low Power Mode, radios & background wake trimmed"
-                         : "Cuts drain: dims the screen, Low Power Mode, less background wake")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-            drainMeter
-        }
-    }
-
-    @ViewBuilder
-    private var drainMeter: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            if endurance.liveWatts > 0.1 {
-                drainMetric("Now", String(format: "%.1f W", endurance.liveWatts))
-            }
-            if let n = endurance.normalWatts {
-                drainMetric("Normal", String(format: "%.1f W", n))
-            }
-            if let e = endurance.enduranceWatts {
-                drainMetric("Saver", String(format: "%.1f W", e))
-            }
-            Spacer()
-            if let s = endurance.savingsPercent {
-                Text("−\(s)%")
-                    .font(.headline).monospacedDigit()
-                    .foregroundStyle(s >= 25 ? Color.green : Color.orange)
-            }
-        }
-        if endurance.savingsPercent == nil {
-            Text("Measuring drain… run on battery in both modes for a few minutes to compare.")
-                .font(.caption2).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func drainMetric(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(label).font(.caption2).foregroundStyle(.secondary)
-            Text(value).font(.caption).monospacedDigit()
-        }
     }
 
     // MARK: - Pause charging (idle / resume after N hours)
