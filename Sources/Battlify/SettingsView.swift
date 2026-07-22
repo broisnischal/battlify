@@ -13,6 +13,7 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var notifier: NotificationManager
     @EnvironmentObject private var network: NetworkProfileStore
+    @EnvironmentObject private var endurance: EnduranceStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var selection: Tab = .charging
@@ -468,6 +469,32 @@ struct SettingsView: View {
     private var sleepPowerTab: some View {
         tab {
             proGate {
+                card("Battery saver (Endurance)") {
+                    toggleRow("Endurance mode",
+                              "Cuts battery drain: dims the screen, turns on Low Power Mode, and trims background wake & Bluetooth. Restores everything when you turn it off.",
+                              isOn: Binding(get: { endurance.active },
+                                            set: { endurance.setActive($0) }))
+                    divider
+                    toggleRow("Turn on automatically on battery",
+                              "Activates Endurance whenever you unplug, and turns it back off when you plug in.",
+                              isOn: $endurance.autoOnBattery)
+                    if endurance.brightnessSupported {
+                        divider
+                        stepperRow("Screen brightness cap",
+                                   value: "\(Int((endurance.brightnessCap * 100).rounded()))%",
+                                   binding: Binding(
+                                    get: { endurance.brightnessCap * 100 },
+                                    set: { endurance.brightnessCap = $0 / 100 }),
+                                   range: 20...80)
+                    }
+                    if let s = endurance.savingsPercent {
+                        divider
+                        infoRow("Measured drain reduction so far: \(s)% "
+                                + "(normal \(fmtW(endurance.normalWatts)) → saver \(fmtW(endurance.enduranceWatts))).",
+                                systemImage: "leaf")
+                    }
+                }
+
                 card("When the lid closes") {
                     toggleRow("Super Save when lid closed",
                               "Maximizes battery while closed, restores when you open it.",
@@ -895,6 +922,11 @@ struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    private func fmtW(_ w: Double?) -> String {
+        guard let w else { return "—" }
+        return String(format: "%.1f W", w)
+    }
 
     private var keepAwakeProcessText: Binding<String> {
         Binding(
