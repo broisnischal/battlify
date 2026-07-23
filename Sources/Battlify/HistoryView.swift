@@ -221,19 +221,35 @@ struct HistoryView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(s.dropPercent == 0 ? "no drop" : "−\(s.dropPercent)%")
                     .font(.callout.weight(.semibold))
-                    .foregroundStyle(dropColor(s.dropPercent))
+                    .foregroundStyle(healthColor(s))
                     .monospacedDigit()
                 if let rate = s.dropPerHour {
-                    Text(String(format: "%.1f%%/h", rate))
-                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                    Text(String(format: "%.1f%%/h · %@", rate, healthWord(s)))
+                        .font(.caption2).foregroundStyle(healthColor(s)).monospacedDigit()
                 }
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
-    private func dropColor(_ drop: Int) -> Color {
-        drop == 0 ? .secondary : .primary
+    /// Colour by drain *rate*, not absolute drop: a few % overnight is normal (green),
+    /// the same in an hour is not. Matches LidSession.drainHealth bands.
+    private func healthColor(_ s: LidSession) -> Color {
+        switch s.drainHealth {
+        case .normal:   return .green
+        case .high:     return .orange
+        case .critical: return .red
+        case .unknown:  return .secondary
+        }
+    }
+
+    private func healthWord(_ s: LidSession) -> String {
+        switch s.drainHealth {
+        case .normal:   return "normal"
+        case .high:     return "high"
+        case .critical: return "high drain"
+        case .unknown:  return "—"
+        }
     }
 
     private func closedRangeText(_ s: LidSession) -> String {

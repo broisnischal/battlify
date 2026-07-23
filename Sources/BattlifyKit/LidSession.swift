@@ -20,6 +20,19 @@ public struct LidSession: Codable, Sendable, Identifiable {
         return Double(dropPercent) / hours
     }
 
+    /// How healthy the sleep drain is, judged by *rate* not absolute drop — a few
+    /// percent overnight is normal; the same drop in an hour is not. Bands follow the
+    /// commonly-cited macOS sleep-drain thresholds (≤1%/h normal, 1–3%/h high, >3%/h
+    /// critical). Apple Silicon typically idles at a few tenths of a %/h with the lid shut.
+    public enum DrainHealth: Sendable { case normal, high, critical, unknown }
+
+    public var drainHealth: DrainHealth {
+        guard let r = dropPerHour else { return .unknown }
+        if r <= 1.0 { return .normal }
+        if r <= 3.0 { return .high }
+        return .critical
+    }
+
     public init(closedAt: Date, closeCharge: Int, openedAt: Date, openCharge: Int) {
         self.closedAt = closedAt
         self.closeCharge = closeCharge

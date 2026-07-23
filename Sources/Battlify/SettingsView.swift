@@ -498,8 +498,8 @@ struct SettingsView: View {
                 }
 
                 card("When the lid closes") {
-                    toggleRow("Super Save when lid closed",
-                              "Maximizes battery while closed, restores when you open it.",
+                    toggleRow("Minimize drain when lid closed",
+                              "Turns off Wi-Fi, Bluetooth, Power Nap, Wake-for-network and Find-My-while-asleep (TCP keep-alive), and switches on Low Power Mode while the lid is shut — then restores everything on wake. On Apple Silicon this trims the small wake-related drain (roughly ~0.3 → ~0.2%/h); it can't reach 0% — only Shut Down does, because RAM stays powered during sleep.",
                               isOn: $automation.superSaveOnLidClose)
                     divider
                     Group {
