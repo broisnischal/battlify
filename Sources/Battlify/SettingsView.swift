@@ -102,17 +102,17 @@ struct SettingsView: View {
 
     // MARK: - Tab bar
 
+    /// Tabs share the bar equally. A fixed per-tab minimum would overflow the
+    /// window once there were six of them, pushing the last pill off the edge.
     private var tabBar: some View {
-        HStack(spacing: 4) {
-            Spacer(minLength: 0)
+        HStack(spacing: 2) {
             ForEach(Tab.allCases) { tab in
                 tabButton(tab)
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
     }
 
     private func tabButton(_ tab: Tab) -> some View {
@@ -120,23 +120,26 @@ struct SettingsView: View {
         return Button {
             selection = tab
         } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 HugeIcon(tab.icon, size: 19)
                     .frame(height: 20)
                 Text(tab.title)
                     .font(.caption)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-            .frame(minWidth: 76)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(selected ? Color.primary.opacity(0.10) : Color.clear)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // No focus ring: on a tab strip it reads as a stray outline, not focus.
+        .focusEffectDisabled()
     }
 
     // MARK: - About
