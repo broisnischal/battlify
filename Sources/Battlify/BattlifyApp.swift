@@ -25,6 +25,7 @@ struct BattlifyApp: App {
     @StateObject private var notifier = NotificationManager()
     @StateObject private var network = NetworkProfileStore()
     @StateObject private var endurance = EnduranceStore()
+    @StateObject private var triggers = TriggerStore()
 
     var body: some Scene {
         MenuBarExtra {
@@ -42,6 +43,7 @@ struct BattlifyApp: App {
                 .environmentObject(notifier)
                 .environmentObject(network)
                 .environmentObject(endurance)
+                .environmentObject(triggers)
                 .onAppear {
                     network.chargeLimit = chargeLimit
                     automation.chargeLimit = chargeLimit
@@ -49,9 +51,11 @@ struct BattlifyApp: App {
                 }
         } label: {
             // Its own observing view so it re-renders reliably — a label closure that
-            // reads the store inline can render once and go stale.
+            // reads the store inline can render once and go stale. It also renders at
+            // launch, which is where the automation rules get started (the dropdown's
+            // `onAppear` wouldn't run until you first opened the menu).
             MenuBarLabel(battery: battery, chargeLimit: chargeLimit,
-                         settings: settings, notifier: notifier)
+                         settings: settings, notifier: notifier, triggers: triggers)
         }
         .menuBarExtraStyle(.window)
 
@@ -68,6 +72,7 @@ struct BattlifyApp: App {
                 .environmentObject(notifier)
                 .environmentObject(network)
                 .environmentObject(endurance)
+                .environmentObject(triggers)
         }
         .windowResizability(.contentSize)
 
@@ -100,6 +105,7 @@ struct MenuBarLabel: View {
     @ObservedObject var chargeLimit: ChargeLimitStore
     @ObservedObject var settings: AppSettings
     @ObservedObject var notifier: NotificationManager
+    let triggers: TriggerStore
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
     /// never while discharging (a battery saver shouldn't burn cycles on battery).
@@ -163,6 +169,9 @@ struct MenuBarLabel: View {
             celebrating = true
             celebrateTicks = 0
         }
+        // The status item exists from launch, so this is where the automation
+        // rules start watching — they must run whether or not the menu is opened.
+        .onAppear { triggers.attach(chargeLimit: chargeLimit, battery: battery) }
     }
 
     /// Truly full, or held at the user's charge limit.

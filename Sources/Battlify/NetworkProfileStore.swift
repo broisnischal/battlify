@@ -59,6 +59,14 @@ final class NetworkProfileStore: NSObject, ObservableObject {
         profiles.removeAll { $0.id == profile.id }
     }
 
+    /// Ask for Location access, which macOS requires before it will report the
+    /// joined SSID. Used by anything that matches on the network name — network
+    /// profiles here, and Wi-Fi conditions in the automation rules.
+    func requestLocationAccess() {
+        guard !locationAuthorized else { return }
+        locationManager.requestWhenInUseAuthorization()
+    }
+
     /// Start/stop SSID monitoring and request Location access when enabling.
     private func reconfigure() {
         timer?.invalidate(); timer = nil

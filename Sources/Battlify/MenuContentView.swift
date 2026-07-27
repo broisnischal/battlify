@@ -10,6 +10,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var updater: UpdaterManager
     @EnvironmentObject private var actions: SystemActions
     @EnvironmentObject private var caffeine: CaffeineManager
+    @EnvironmentObject private var triggers: TriggerStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near full height so the popover doesn't visibly grow on first open.
@@ -31,6 +32,10 @@ struct MenuContentView: View {
                     modeSection
                     Divider()
                     chargeLimitSection
+                    if !triggers.activeRules.isEmpty {
+                        Divider()
+                        activeRulesSection
+                    }
                 }
                 .disabled(!license.isPro)
                 .opacity(license.isPro ? 1 : 0.45)
@@ -514,6 +519,29 @@ struct MenuContentView: View {
     private func openDetached(_ id: String) {
         NSApplication.shared.activate(ignoringOtherApps: true)
         openWindow(id: id)
+    }
+
+    // MARK: - Automation
+
+    /// Lists any rule currently holding a setting, so an automatic change to the
+    /// limit or mode is never a mystery.
+    @ViewBuilder
+    private var activeRulesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Automation", "wand")
+            ForEach(triggers.activeRules) { rule in
+                HStack(spacing: 8) {
+                    HugeIcon(rule.action.icon, size: 14, weight: 2)
+                        .foregroundStyle(Color.accentColor)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(rule.displayName).font(.callout)
+                        Text(rule.actionSummary)
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 6)
+                }
+            }
+        }
     }
 
     // MARK: - Reusable bits

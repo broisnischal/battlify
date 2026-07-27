@@ -41,7 +41,7 @@ final class BatteryStore: ObservableObject {
     /// Refresh now and again shortly after, to catch a change once IOKit reflects it.
     func refreshSoon() {
         refresh()
-        for delay in [0.3, 1.0, 2.5] {
+        for delay in [0.5, 2.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.refresh()
             }
@@ -51,8 +51,20 @@ final class BatteryStore: ObservableObject {
     // No deinit cleanup: owned by the App for the process lifetime.
 
     func refresh() {
-        snapshot = BatteryMonitor.read()
-        powerFlow = PowerMonitor.read()
+        var new = BatteryMonitor.read()
+        // The sensor jitters by hundredths of a degree. Round to what's actually
+        // displayed, so idle noise can't make every poll look like a change.
+        if let celsius = new.temperature { new.temperature = (celsius * 10).rounded() / 10 }
+        // Republishing an identical snapshot costs a full status-item relayout —
+        // and, via the notification manager's objectWillChange sink, a main-actor
+        // hop per subscriber. Only publish real changes.
+        if new != snapshot { snapshot = new }
+
+        // Live watts only appear in the popover and Details window. With neither
+        // open, skip the IORegistry walk and the publish entirely.
+        guard powerViewers > 0 else { return }
+        let flow = PowerMonitor.read()
+        if flow != powerFlow { powerFlow = flow }
     }
 
     private func startPolling() {

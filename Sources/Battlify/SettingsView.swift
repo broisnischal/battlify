@@ -14,25 +14,30 @@ struct SettingsView: View {
     @EnvironmentObject private var notifier: NotificationManager
     @EnvironmentObject private var network: NetworkProfileStore
     @EnvironmentObject private var endurance: EnduranceStore
+    @EnvironmentObject private var triggers: TriggerStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var selection: Tab = .charging
     /// Schedule being edited/added in the sheet (nil = sheet closed).
     @State private var editingSchedule: ChargeSchedule?
     @State private var editingIsNew = false
+    /// Automation rule being edited/added in the sheet (nil = sheet closed).
+    @State private var editingRule: TriggerRule?
+    @State private var editingRuleIsNew = false
     /// Whether the "pick running processes" sheet for keep-awake is open.
     @State private var showingProcessPicker = false
 
     /// Hand-rolled tab bar instead of `TabView`, which on recent macOS collapses
     /// into an overflow popup instead of showing real tabs.
     private enum Tab: String, CaseIterable, Identifiable {
-        case charging, schedule, sleepPower, general, about
+        case charging, schedule, automation, sleepPower, general, about
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .charging: return "Charging"
             case .schedule: return "Schedule"
+            case .automation: return "Automation"
             case .sleepPower: return "Sleep & Power"
             case .general: return "General"
             case .about: return "About"
@@ -42,6 +47,7 @@ struct SettingsView: View {
             switch self {
             case .charging: return "charging"
             case .schedule: return "clock"
+            case .automation: return "wand"
             case .sleepPower: return "sleep"
             case .general: return "settings"
             case .about: return "info"
@@ -57,6 +63,7 @@ struct SettingsView: View {
                 switch selection {
                 case .charging:   chargingTab
                 case .schedule:   scheduleTab
+                case .automation: automationTab
                 case .sleepPower: sleepPowerTab
                 case .general:    generalTab
                 case .about:      aboutTab
@@ -64,13 +71,22 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 500, height: 580)
+        // Wide enough for six tabs to sit on one row without crowding.
+        .frame(width: 560, height: 580)
         .sheet(item: $editingSchedule) { schedule in
             ScheduleEditorView(
                 schedule: schedule,
                 isNew: editingIsNew,
                 onSave: { chargeLimit.updateOrAddSchedule($0) },
                 onDelete: editingIsNew ? nil : { chargeLimit.removeSchedule(schedule) })
+        }
+        .sheet(item: $editingRule) { rule in
+            TriggerRuleEditorView(
+                store: triggers,
+                rule: rule,
+                isNew: editingRuleIsNew,
+                onSave: { triggers.updateOrAddRule($0) },
+                onDelete: editingRuleIsNew ? nil : { triggers.removeRule(rule) })
         }
         .sheet(isPresented: $showingProcessPicker) {
             ProcessPickerView(existing: chargeLimit.keepAwakeProcesses) { picked in
@@ -86,17 +102,17 @@ struct SettingsView: View {
 
     // MARK: - Tab bar
 
+    /// Tabs share the bar equally. A fixed per-tab minimum would overflow the
+    /// window once there were six of them, pushing the last pill off the edge.
     private var tabBar: some View {
-        HStack(spacing: 4) {
-            Spacer(minLength: 0)
+        HStack(spacing: 2) {
             ForEach(Tab.allCases) { tab in
                 tabButton(tab)
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
     }
 
     private func tabButton(_ tab: Tab) -> some View {
@@ -104,23 +120,26 @@ struct SettingsView: View {
         return Button {
             selection = tab
         } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 HugeIcon(tab.icon, size: 19)
                     .frame(height: 20)
                 Text(tab.title)
                     .font(.caption)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-            .frame(minWidth: 76)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(selected ? Color.primary.opacity(0.10) : Color.clear)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // No focus ring: on a tab strip it reads as a stray outline, not focus.
+        .focusEffectDisabled()
     }
 
     // MARK: - About
@@ -461,6 +480,91 @@ struct SettingsView: View {
         case .charge: return "bolt.fill"
         case .hold: return "pause.fill"
         case .discharge: return "battery.25"
+        }
+    }
+
+    // MARK: - Automation
+
+    /// Condition-driven rules: apply a charging or power setting while something
+    /// is true of the Mac, and put it back when it stops being true.
+    private var automationTab: some View {
+        tab {
+            if chargeLimit.daemonAvailable {
+                proGate {
+                    card("Rules") {
+                        if triggers.rules.isEmpty {
+                            infoRow("No rules yet. A rule watches your Mac — a display connected, an app running, a network joined, the CPU busy — and applies a charging or power setting the whole time that holds, then puts your setting back.",
+                                    systemImage: "wand")
+                            divider
+                        } else {
+                            ForEach(triggers.rules) { rule in
+                                TriggerRuleRow(store: triggers, rule: rule) {
+                                    editingRuleIsNew = false
+                                    editingRule = rule
+                                }
+                                divider
+                            }
+                        }
+                        HStack(spacing: 10) {
+                            Button {
+                                editingRuleIsNew = true
+                                editingRule = TriggerRule()
+                            } label: {
+                                HStack(spacing: 5) {
+                                    HugeIcon("plus", size: 12)
+                                    Text("Add Rule")
+                                }
+                            }
+                            .controlSize(.small)
+
+                            Menu("Start from an example") {
+                                ForEach(TriggerStore.templates) { template in
+                                    Button(template.label) {
+                                        // A fresh id, so the same example can be
+                                        // added more than once.
+                                        var rule = template
+                                        rule.id = UUID()
+                                        editingRuleIsNew = true
+                                        editingRule = rule
+                                    }
+                                }
+                            }
+                            .controlSize(.small)
+                            .fixedSize()
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                    }
+
+                    if needsLocationForWiFiRule {
+                        card("Permission needed") {
+                            infoRow("macOS treats the Wi-Fi network name as location data, so a Wi-Fi condition can't match until Battlify has Location access.",
+                                    systemImage: "location")
+                            divider
+                            HStack {
+                                Button("Grant Location Access…") { network.requestLocationAccess() }
+                                    .controlSize(.small)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 10)
+                        }
+                    }
+
+                    card("Right now") {
+                        TriggerLiveStateView(store: triggers)
+                    }
+                }
+            } else {
+                helperCard
+            }
+        }
+    }
+
+    /// A Wi-Fi rule is set up, but macOS won't hand over the network name yet.
+    private var needsLocationForWiFiRule: Bool {
+        !network.locationAuthorized && triggers.rules.contains { rule in
+            rule.enabled && rule.conditions.contains { $0.kind == .wifiNetwork }
         }
     }
 

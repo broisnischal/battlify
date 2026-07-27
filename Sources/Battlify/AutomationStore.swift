@@ -86,9 +86,13 @@ final class AutomationStore: ObservableObject {
     }
 
     private func pollLidState() {
-        isLidClosed = LidMonitor.isClamshellClosed()
+        let closed = LidMonitor.isClamshellClosed()
         // NSScreen import via AppKit; count displays beyond the built-in.
-        externalDisplayCount = max(0, NSScreen.screens.count - (isLidClosed ? 0 : 1))
+        let externals = max(0, NSScreen.screens.count - (closed ? 0 : 1))
+        // Both are unchanged on almost every poll; publishing anyway would relayout
+        // the menu bar item four times a minute for nothing.
+        if closed != isLidClosed { isLidClosed = closed }
+        if externals != externalDisplayCount { externalDisplayCount = externals }
         updateClamshellSaver()
     }
 
