@@ -76,6 +76,33 @@ that gap two ways, and you choose which:
 - **Sleep & Idle controls** — Power Nap, wake-for-network, and TCP keep-alive are
   the settings that silently wake your Mac in a bag. Turn them off from one place.
 
+**Automation rules**
+
+Rules that read "while *this* is true, do *that*" — and undo it the moment it stops
+being true. Build one from any mix of twelve conditions:
+
+- an **external display** is connected (or two, or three)
+- a **USB device** or a connected **Bluetooth device** — by name, or any at all
+- an **app is running**, or running *and frontmost*
+- the battery is **charging**, or **above a level** you set
+- the **power adapter** is connected
+- your Mac has a given **IP address** (a trailing dot matches a whole subnet)
+- you're on a specific **Wi-Fi network**, or connected to a **VPN**
+- **headphones or another audio output** is in use
+- a **drive or volume** is mounted
+- **CPU usage** is above a threshold
+
+Match all of them or any of them, and invert any single condition. While a rule
+holds it can switch save mode, set (or lift) the charge limit, hold charging, keep
+the Mac awake, turn on Low Power Mode, or dial charge power down.
+
+Rules put your setting back when they stop matching — and if you changed that
+setting yourself in the meantime, the rule leaves it alone rather than overruling
+you. The Automation tab shows a live readout of everything it can see, so you can
+fill a condition in with the exact name of the drive, dock, or network in front of
+you, and any rule that's currently holding is listed in the menu, so an automatic
+change is never a mystery.
+
 **Insight & convenience**
 
 - **Battery Health** card with the numbers that matter (cycle count, capacity,
