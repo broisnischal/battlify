@@ -197,7 +197,8 @@ final class TriggerStore: ObservableObject {
             kinds: kinds,
             battery: battery?.snapshot ?? BatteryMonitor.read(),
             cpu: cpu)
-        snapshot = reading
+        // Only publish when something actually moved.
+        if reading != snapshot { snapshot = reading }
 
         var active: Set<UUID> = []
         for rule in rules where rule.enabled {
