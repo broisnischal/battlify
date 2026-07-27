@@ -132,11 +132,10 @@ struct TriggerRuleEditorView: View {
                 .padding(.bottom, 14)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 18) {
                     nameField
                     conditionsSection
                     actionSection
-                    matchesNowLine
                 }
                 .padding(.bottom, 4)
             }
@@ -177,32 +176,38 @@ struct TriggerRuleEditorView: View {
 
     private var nameField: some View {
         HStack(spacing: 12) {
-            Text("Name").foregroundStyle(.secondary).frame(width: 64, alignment: .leading)
+            Text("Name")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
             TextField("e.g. Docked at my desk", text: $draft.label)
                 .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
         }
     }
 
     private var conditionsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("While").font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                Text("While").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
-                Picker("", selection: $draft.matchAll) {
-                    Text("All are true").tag(true)
-                    Text("Any is true").tag(false)
+                // Only meaningful once there's more than one condition to combine.
+                if draft.conditions.count > 1 {
+                    Picker("", selection: $draft.matchAll) {
+                        Text("All are true").tag(true)
+                        Text("Any is true").tag(false)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                    .controlSize(.small)
                 }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
-                .disabled(draft.conditions.count < 2)
             }
 
             VStack(spacing: 0) {
                 if draft.conditions.isEmpty {
-                    Text("Add at least one condition — the rule applies while it holds, and undoes itself when it stops.")
+                    Text("No conditions yet. Pick what Battlify should watch for — the rule applies the whole time it's true, and undoes itself when it stops.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 10)
                 } else {
                     ForEach($draft.conditions) { $condition in
                         if condition.id != draft.conditions.first?.id {
@@ -211,22 +216,30 @@ struct TriggerRuleEditorView: View {
                         conditionRow($condition)
                     }
                 }
+
+                Divider().padding(.leading, 12)
+
+                // Footer: add on the left, live verdict on the right.
+                HStack(spacing: 8) {
+                    Menu {
+                        ForEach(TriggerKind.allCases) { kind in
+                            Button(kind.title) {
+                                draft.conditions.append(TriggerCondition(kind: kind))
+                            }
+                        }
+                    } label: {
+                        Text("Add Condition")
+                    }
+                    .fixedSize()
+                    .controlSize(.small)
+
+                    Spacer(minLength: 8)
+                    matchesNowLine
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .background(.quaternary.opacity(0.4),
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-            Menu {
-                ForEach(TriggerKind.allCases) { kind in
-                    Button(kind.title) {
-                        draft.conditions.append(TriggerCondition(kind: kind))
-                    }
-                }
-            } label: {
-                Text("Add Condition")
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .controlSize(.small)
         }
     }
 
@@ -330,7 +343,7 @@ struct TriggerRuleEditorView: View {
 
     private var actionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Then").font(.subheadline.weight(.semibold))
+            Text("Then").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     HugeIcon(draft.action.icon, size: 16)
@@ -414,12 +427,13 @@ struct TriggerRuleEditorView: View {
 
     @ViewBuilder
     private var matchesNowLine: some View {
-        let matches = normalized(draft).isSatisfied(by: store.snapshot)
-        HStack(spacing: 6) {
-            truthDot(matches)
-            Text(draft.conditions.isEmpty ? "Add a condition to see whether it matches."
-                 : (matches ? "Matches right now." : "Doesn't match right now."))
-                .font(.caption).foregroundStyle(.secondary)
+        if !draft.conditions.isEmpty {
+            let matches = normalized(draft).isSatisfied(by: store.snapshot)
+            HStack(spacing: 5) {
+                truthDot(matches)
+                Text(matches ? "Matches now" : "Not matching now")
+                    .font(.caption).foregroundStyle(matches ? Color.green : .secondary)
+            }
         }
     }
 
