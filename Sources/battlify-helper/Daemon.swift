@@ -59,6 +59,10 @@ final class Daemon: @unchecked Sendable {
     // matching task running (so enabling the option while idle doesn't sleep), and
     // only after it's been gone for a few ticks (so a brief gap between a build's
     // sub-processes doesn't sleep prematurely).
+    private lazy var fans = FanControl(smc: smc)
+    /// True only while *we* hold the fans in forced mode — another fan utility may
+    /// own them, and we must never hand back what we didn't take.
+    private var fanForcedByUs = false
     private var keepAwakeSawTask = false
     private var keepAwakeTaskIdleTicks = 0
     private let sleepAfterTaskIdleTicks = 3   // ~30s gone before we sleep
@@ -411,6 +415,32 @@ final class Daemon: @unchecked Sendable {
 
     /// "Always Active": keep the Mac awake with the lid closed. `pmset disablesleep`
     /// is the only thing that prevents clamshell sleep, paired with a PreventSystemSleep
+    /// Spin the fans up while real work is running, so a Mac held awake with the lid
+    /// shut isn't cooking itself. This only ever asks for *more* airflow than macOS
+    /// chose; it can't ask for less. The fans go back to automatic the moment the work
+    /// stops, the feature is switched off, or the daemon exits.
+    private func updateFanBoost(_ cfg: BattlifyConfig, keepAwakeHolding: Bool,
+                                scan: ProcessScan.Reading) {
+        guard fans.isSupported else { return }
+        let working = scan.matchedName
+            || (cfg.fanBoostMinCpu > 0 && scan.topCPU >= cfg.fanBoostMinCpu)
+        let want = cfg.fanBoostEnabled && working
+            && (!cfg.fanBoostOnlyWhenKeepAwake || keepAwakeHolding)
+
+        if want {
+            // Re-assert every tick: cheap, and it reclaims the fans if something else
+            // (or a sleep/wake cycle) reset them while we still want the boost.
+            if fans.boost(toPercent: cfg.fanBoostPercent), !fanForcedByUs {
+                fanForcedByUs = true
+                log("fan boost on at \(cfg.fanBoostPercent)% (top CPU \(Int(scan.topCPU))%)")
+            }
+        } else if fanForcedByUs {
+            fans.restoreAuto()
+            fanForcedByUs = false
+            log("fan boost off — fans back to automatic")
+        }
+    }
+
     /// assertion for idle sleep. It doesn't survive a reboot, so the first tick re-applies
     /// it (`lastDisableSleep` starts nil).
     private func updateKeepAwake(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
@@ -420,14 +450,21 @@ final class Daemon: @unchecked Sendable {
 
         // Task-gated: only hold while a matching task runs, so the Mac sleeps when work finishes.
         let taskGated = want && cfg.keepAwakeRequiresTask
+        // `ps` is the expensive part of the tick, so scan once and let keep-awake and
+        // the fan policy each apply their own threshold to the result.
+        let scan = (taskGated || cfg.fanBoostEnabled)
+            ? ProcessScan.scan(names: cfg.keepAwakeProcesses)
+            : ProcessScan.Reading()
         let taskBusy = taskGated
-            && ProcessScan.isBusy(names: cfg.keepAwakeProcesses, minCpu: cfg.keepAwakeMinCpu)
+            && (scan.matchedName || (cfg.keepAwakeMinCpu > 0 && scan.topCPU >= cfg.keepAwakeMinCpu))
         if taskGated { want = taskBusy }
         // Thermal guardrail: release keep-awake once a closed Mac crosses the temp limit.
         if want, cfg.keepAwakeMaxTempC > 0, let t = snap.temperature, t >= cfg.keepAwakeMaxTempC {
             want = false
             log("keep-awake released: temperature \(String(format: "%.1f", t))°C ≥ guardrail \(cfg.keepAwakeMaxTempC)°C")
         }
+
+        updateFanBoost(cfg, keepAwakeHolding: want, scan: scan)
 
         if lastDisableSleep != want {
             if PowerSettings.setDisableSleep(want) {
@@ -616,6 +653,8 @@ final class Daemon: @unchecked Sendable {
         }
         if charge.isAdapterControlSupported { try? charge.enableAdapter() }
         if charge.isMagSafeSupported { try? charge.setMagSafeLED(.system) }
+        // Forced fan mode survives until reboot, so never exit still holding it.
+        if fanForcedByUs { fans.restoreAuto() }
         exit(0)
     }
 

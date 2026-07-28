@@ -75,6 +75,14 @@ final class ChargeLimitStore: ObservableObject {
     @Published var sleepWhenTaskDone = false
     /// How deeply the Mac sleeps when closed and idle.
     @Published var sleepDepth: SleepDepth = .normal
+    /// Spin the fans up while work is running.
+    @Published var fanBoostEnabled = false
+    /// Boost level as a percentage of each fan's own range.
+    @Published var fanBoostPercent = 60
+    /// %CPU that counts as "working" for the fan boost.
+    @Published var fanBoostMinCpu: Double = 50
+    /// Restrict the boost to when Always Active is holding the Mac awake.
+    @Published var fanBoostOnlyWhenKeepAwake = false
     @Published var schedules: [ChargeSchedule] = []
     /// Once-daily "ready by" top-up target.
     @Published var readyBy = ReadyByTarget()
@@ -180,6 +188,10 @@ final class ChargeLimitStore: ObservableObject {
         cfg.keepAwakeMaxTempC = keepAwakeMaxTempC
         cfg.sleepWhenTaskDone = sleepWhenTaskDone
         cfg.sleepDepth = sleepDepth
+        cfg.fanBoostEnabled = fanBoostEnabled
+        cfg.fanBoostPercent = fanBoostPercent
+        cfg.fanBoostMinCpu = fanBoostMinCpu
+        cfg.fanBoostOnlyWhenKeepAwake = fanBoostOnlyWhenKeepAwake
         cfg.schedules = schedules
         cfg.readyBy = readyBy
         cfg.chargePower = chargePower
@@ -294,6 +306,10 @@ final class ChargeLimitStore: ObservableObject {
         set(\.keepAwakeMaxTempC, r.config.keepAwakeMaxTempC)
         set(\.sleepWhenTaskDone, r.config.sleepWhenTaskDone)
         set(\.sleepDepth, r.config.sleepDepth)
+        set(\.fanBoostEnabled, r.config.fanBoostEnabled)
+        set(\.fanBoostPercent, r.config.fanBoostPercent)
+        set(\.fanBoostMinCpu, r.config.fanBoostMinCpu)
+        set(\.fanBoostOnlyWhenKeepAwake, r.config.fanBoostOnlyWhenKeepAwake)
         set(\.schedules, r.config.schedules)
         set(\.readyBy, r.config.readyBy)
         set(\.slowCharge, r.config.slowCharge)
