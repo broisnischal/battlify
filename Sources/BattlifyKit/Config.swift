@@ -19,6 +19,40 @@ public enum MagSafeLEDMode: String, Codable, Sendable, CaseIterable, Identifiabl
     }
 }
 
+/// How deeply the Mac sleeps when it's closed and idle.
+///
+/// `hibernatemode` is the whole lever on Apple silicon — the `standbydelay` knobs
+/// Intel Macs had don't appear in `pmset -g cap` there, so there is nothing else
+/// to tune. Writing it needs root, so the daemon applies it.
+public enum SleepDepth: String, Codable, Sendable, CaseIterable, Identifiable {
+    /// macOS default: memory stays powered, with an image written to disk as a
+    /// safety net. Wakes instantly.
+    case normal
+    /// Memory is powered down and restored from disk on wake. Saves the trickle
+    /// that keeping memory alive costs, at the price of a slower resume.
+    case deep
+
+    public var id: String { rawValue }
+
+    public var hibernateMode: Int { self == .deep ? 25 : 3 }
+
+    public var title: String {
+        switch self {
+        case .normal: return "Normal"
+        case .deep:   return "Deep"
+        }
+    }
+
+    public var summary: String {
+        switch self {
+        case .normal:
+            return "Memory stays powered while asleep, so the Mac wakes the moment you open the lid. The right choice unless you leave it closed for days at a time."
+        case .deep:
+            return "Powers memory down and restores it from disk. Saves the small trickle that keeping memory alive costs over a long sleep — but waking takes several seconds instead of being instant."
+        }
+    }
+}
+
 /// Persistent settings shared between the GUI (writer) and root daemon (reader).
 /// Stored as JSON at a system-wide path so the daemon can read it for any logged-in user.
 public struct BattlifyConfig: Codable, Equatable, Sendable {
@@ -76,6 +110,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     public var calibrateToFull: Bool
     /// Charging paused until this time (nil = not paused; distantFuture = until resumed).
     public var pauseUntil: Date?
+    /// How deeply the Mac sleeps when closed and idle (see `SleepDepth`).
+    public var sleepDepth: SleepDepth
     public var mode: SaveMode
 
     public init(chargeLimitEnabled: Bool = false,
@@ -101,6 +137,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 chargePower: Int = 100,
                 calibrateToFull: Bool = false,
                 pauseUntil: Date? = nil,
+                sleepDepth: SleepDepth = .normal,
                 mode: SaveMode = .off) {
         self.chargeLimitEnabled = chargeLimitEnabled
         self.chargeLimit = chargeLimit
@@ -127,6 +164,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.chargePower = min(100, max(0, chargePower))
         self.calibrateToFull = calibrateToFull
         self.pauseUntil = pauseUntil
+        self.sleepDepth = sleepDepth
         self.mode = mode
     }
 
@@ -163,6 +201,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
             ?? (slowCharge ? 50 : 100)))
         calibrateToFull = try c.decodeIfPresent(Bool.self, forKey: .calibrateToFull) ?? false
         pauseUntil = try c.decodeIfPresent(Date.self, forKey: .pauseUntil)
+        sleepDepth = try c.decodeIfPresent(SleepDepth.self, forKey: .sleepDepth) ?? .normal
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off
     }
 }

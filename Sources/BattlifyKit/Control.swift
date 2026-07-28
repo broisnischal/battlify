@@ -168,7 +168,7 @@ public enum HelperBuild {
     ///       physical adapter presence (raw SMC AC-W, falling back to IOKit's
     ///       ExternalConnected) instead of the providing-source flag, which flips
     ///       to "battery" while discharging.
-    public static let version = 2
+    public static let version = 3
 }
 
 public enum ControlError: Error, CustomStringConvertible {

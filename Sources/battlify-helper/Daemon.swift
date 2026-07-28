@@ -129,6 +129,11 @@ final class Daemon: @unchecked Sendable {
             do {
                 try ConfigStore.save(cfg)
                 tick() // apply immediately
+                // System-wide and persistent, so only write it when it differs.
+                if PowerSettings.readHibernateMode() != cfg.sleepDepth.hibernateMode,
+                   !PowerSettings.setSleepDepth(cfg.sleepDepth) {
+                    return status(ok: false, message: "saved, but pmset refused hibernatemode")
+                }
                 return status(ok: true, message: "saved")
             } catch {
                 return status(ok: false, message: "save failed: \(error)")
