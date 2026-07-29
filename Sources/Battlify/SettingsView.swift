@@ -602,19 +602,11 @@ struct SettingsView: View {
                 }
 
                 card("When the lid closes") {
-                    toggleRow("Super Save when lid closed",
-                              "Maximizes battery while closed, restores when you open it.",
-                              isOn: $automation.superSaveOnLidClose)
+                    toggleRow("Turn off Wi-Fi", isOn: $automation.wifiOffOnLidClose)
                     divider
-                    Group {
-                        toggleRow("Turn off Wi-Fi", isOn: $automation.wifiOffOnLidClose)
-                        divider
-                        toggleRow("Turn off Bluetooth", isOn: $automation.bluetoothOffOnLidClose)
-                        divider
-                        toggleRow("Restore Wi-Fi & Bluetooth on wake", isOn: $automation.restoreOnWake)
-                    }
-                    .disabled(automation.superSaveOnLidClose)
-                    .opacity(automation.superSaveOnLidClose ? 0.45 : 1)
+                    toggleRow("Turn off Bluetooth", isOn: $automation.bluetoothOffOnLidClose)
+                    divider
+                    toggleRow("Restore Wi-Fi & Bluetooth on wake", isOn: $automation.restoreOnWake)
                 }
 
                 if chargeLimit.daemonAvailable {
