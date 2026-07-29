@@ -7,7 +7,8 @@ public struct FanState: Sendable, Equatable, Identifiable {
     public let minRPM: Double
     public let maxRPM: Double
     /// True when the fan has been taken off macOS's automatic control — by us, or
-    /// by another fan utility.
+    /// by another fan utility. Derived by comparing `F<i>Md` against this Mac's own
+    /// resting value, which is not 0 everywhere (see `FanControl.isForced`).
     public let forced: Bool
 
     public var id: Int { index }
@@ -37,8 +38,17 @@ public struct FanState: Sendable, Equatable, Identifiable {
 /// firmware would choose. Forcing a fan slower than macOS wants is how a Mac
 /// cooks, so the only write is a boost, it is always clamped into the fan's own
 /// [min, max], and forced mode is never engaged before a target is written.
-public struct FanControl {
+public final class FanControl {
     private let smc: SMC
+
+    /// The `F<i>Md` value each fan reported before anything here wrote to it — this
+    /// machine's "macOS is in charge" value. It is *not* 0 everywhere: a Mac15,6
+    /// (M3 Pro) rests at 3, so treating nonzero as forced reports idle fans as
+    /// hijacked, and restoring a hardcoded 0 leaves them in a mode they never had.
+    private var autoMode: [Int: UInt8] = [:]
+
+    /// The value written to `F<i>Md` to take a fan off automatic control.
+    static let forcedMode: UInt8 = 1
 
     public init(smc: SMC) { self.smc = smc }
 
@@ -57,9 +67,34 @@ public struct FanControl {
               let low = float("F\(index)Mn"),
               let high = float("F\(index)Mx")
         else { return nil }
-        let forced = (try? smc.read("F\(index)Md"))?.bytes.first.map { $0 != 0 } ?? false
+        let mode = (try? smc.read("F\(index)Md"))?.bytes.first
+        let forced = mode.map { Self.isForced(mode: $0, automatic: automaticMode(index)) } ?? false
         return FanState(index: index, rpm: Double(rpm), minRPM: Double(low),
                         maxRPM: Double(high), forced: forced)
+    }
+
+    /// Whether `mode` means the fan is off automatic control, given the resting value
+    /// this Mac reported before anything wrote to it.
+    ///
+    /// `F<i>Md` has no portable "automatic" constant — Intel Macs rest at 0, a Mac15,6
+    /// rests at 3 — so anything other than the observed baseline counts as forced, and
+    /// our own marker always does even when no baseline was captured.
+    static func isForced(mode: UInt8, automatic: UInt8?) -> Bool {
+        if mode == forcedMode { return true }
+        guard let automatic else { return false }
+        return mode != automatic
+    }
+
+    /// This fan's resting mode, captured the first time it's read and reused after, so
+    /// a boost we applied later can't be mistaken for the baseline. Our own forced
+    /// marker is never adopted: a previous run that died without restoring would
+    /// otherwise poison the baseline for the life of this process.
+    private func automaticMode(_ index: Int) -> UInt8? {
+        if let known = autoMode[index] { return known }
+        guard let raw = (try? smc.read("F\(index)Md"))?.bytes.first,
+              raw != Self.forcedMode else { return nil }
+        autoMode[index] = raw
+        return raw
     }
 
     public func states() -> [FanState] {
@@ -99,7 +134,10 @@ public struct FanControl {
         guard fans > 0 else { return false }
         var allOK = true
         for index in 0..<fans {
-            if !write(byte: 0, to: "F\(index)Md") { allOK = false }
+            // Put back what this Mac reported before we touched it. The 0 fallback is
+            // only for a fan whose baseline was never captured — leaving it forced is
+            // the worse failure, so we still hand it back rather than give up.
+            if !write(byte: automaticMode(index) ?? 0, to: "F\(index)Md") { allOK = false }
         }
         return allOK
     }
