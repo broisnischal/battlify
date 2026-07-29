@@ -191,8 +191,11 @@ struct HistoryView: View {
     @ViewBuilder
     private var lidSessionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("While Lid Was Closed")
-                .font(.title3.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text("While Lid Was Closed").font(.title3.weight(.semibold))
+                Spacer()
+                Text("asleep").font(.caption).foregroundStyle(.secondary)
+            }
 
             if model.lidSessions.isEmpty {
                 Text("No closed-lid sessions in this period yet. Close the lid and reopen it to see how much the battery drained.")
@@ -262,14 +265,24 @@ struct HistoryView: View {
     private var batterySessionsSection: some View {
         chargeSpanSection(
             title: "On Battery",
+            // Called out as awake time so these rows aren't mistaken for sleep
+            // drain — that lives in "While Lid Was Closed" above.
+            subtitle: "awake and in use",
             emptyText: "No on-battery sessions in this period yet. Unplug to see how fast the battery drains in real use.",
             spans: model.dischargeSessions)
     }
 
     @ViewBuilder
-    private func chargeSpanSection(title: String, emptyText: String, spans: [ChargeSpan]) -> some View {
+    private func chargeSpanSection(title: String, subtitle: String? = nil,
+                                   emptyText: String, spans: [ChargeSpan]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.title3.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.title3.weight(.semibold))
+                if let subtitle {
+                    Spacer()
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+            }
 
             if spans.isEmpty {
                 Text(emptyText)

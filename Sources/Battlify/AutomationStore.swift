@@ -15,10 +15,6 @@ final class AutomationStore: ObservableObject {
     @Published var restoreOnWake: Bool {
         didSet { defaults.set(restoreOnWake, forKey: Keys.restore) }
     }
-    /// Lid close applies maximum power saving (Low Power Mode, wake-ups off, radios off); restored on open.
-    @Published var superSaveOnLidClose: Bool {
-        didSet { defaults.set(superSaveOnLidClose, forKey: Keys.superSave) }
-    }
 
     @Published private(set) var isLidClosed = false
     @Published private(set) var externalDisplayCount = 0
@@ -40,20 +36,10 @@ final class AutomationStore: ObservableObject {
     private var wifiWasOn = false
     private var bluetoothWasOn = false
 
-    // Snapshot of the exact power state deep save changes (LPM + sleep/wake toggles),
-    // restored verbatim on wake so the user's charge config is never touched.
-    private var savedLowPowerMode: Bool?
-    private var savedPowerToggles: [String: Bool]?
-    private var deepSaveActive = false
-
-    /// The sleep/wake power toggles deep save turns off (and restores on wake).
-    private static let deepSaveToggles: [PowerToggle] = [.powerNap, .wakeOnNetwork, .tcpKeepAlive]
-
     private enum Keys {
         static let wifi = "automation.wifiOffOnLidClose"
         static let bt = "automation.bluetoothOffOnLidClose"
         static let restore = "automation.restoreOnWake"
-        static let superSave = "automation.superSaveOnLidClose"
         // Pending lid session (persisted so it survives the sleep).
         static let pendingCloseAt = "lidsession.closedAt"
         static let pendingCloseCharge = "lidsession.closeCharge"
@@ -63,7 +49,6 @@ final class AutomationStore: ObservableObject {
         wifiOffOnLidClose = defaults.bool(forKey: Keys.wifi)
         bluetoothOffOnLidClose = defaults.bool(forKey: Keys.bt)
         restoreOnWake = defaults.object(forKey: Keys.restore) as? Bool ?? true
-        superSaveOnLidClose = defaults.bool(forKey: Keys.superSave)
         lastLidSession = LidSessionStore.recent(limit: 1).first
 
         lid.onWillSleep = { [weak self] clamshellClosed in
@@ -173,17 +158,13 @@ final class AutomationStore: ObservableObject {
         defaults.set(Date(), forKey: Keys.pendingCloseAt)
         defaults.set(BatteryMonitor.read().percentage, forKey: Keys.pendingCloseCharge)
 
-        if superSaveOnLidClose {
-            enterDeepSave()
-        } else {
-            if wifiOffOnLidClose {
-                wifiWasOn = RadioControl.isWiFiOn
-                if wifiWasOn { RadioControl.setWiFi(false) }
-            }
-            if bluetoothOffOnLidClose {
-                bluetoothWasOn = RadioControl.isBluetoothOn
-                if bluetoothWasOn { RadioControl.setBluetooth(false) }
-            }
+        if wifiOffOnLidClose {
+            wifiWasOn = RadioControl.isWiFiOn
+            if wifiWasOn { RadioControl.setWiFi(false) }
+        }
+        if bluetoothOffOnLidClose {
+            bluetoothWasOn = RadioControl.isBluetoothOn
+            if bluetoothWasOn { RadioControl.setBluetooth(false) }
         }
     }
 
@@ -191,26 +172,7 @@ final class AutomationStore: ObservableObject {
         pollLidState()        // reflect "lid open" immediately
         completeLidSession()
 
-        if deepSaveActive {
-            // Restore only what deep save changed (LPM + toggles); re-applying a SaveMode
-            // would clobber the user's charge config. Nil snapshot = never captured, so skip.
-            if let lpm = savedLowPowerMode {
-                _ = try? ControlClient.send(.setLowPowerMode(lpm))
-            }
-            if let toggles = savedPowerToggles {
-                for toggle in Self.deepSaveToggles {
-                    if let on = toggles[toggle.rawValue] {
-                        _ = try? ControlClient.send(.setPowerToggle(toggle, on))
-                    }
-                }
-            }
-            savedLowPowerMode = nil
-            savedPowerToggles = nil
-            deepSaveActive = false
-            restoreRadios()
-        } else if restoreOnWake {
-            restoreRadios()
-        }
+        if restoreOnWake { restoreRadios() }
     }
 
     private func completeLidSession() {
@@ -247,27 +209,5 @@ final class AutomationStore: ObservableObject {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { attempt(0) }
-    }
-
-    // MARK: - Deep save (sleepwatcher-style)
-
-    /// Synchronous so it finishes before the system is allowed to sleep.
-    private func enterDeepSave() {
-        // Snapshot the exact state we change, to restore verbatim on wake without touching charge config.
-        if let status = try? ControlClient.send(.getStatus) {
-            savedLowPowerMode = status.lowPowerModeEnabled
-            savedPowerToggles = status.powerToggles
-        }
-        // Radios off (works even without the daemon).
-        wifiWasOn = RadioControl.isWiFiOn
-        if wifiWasOn { RadioControl.setWiFi(false) }
-        bluetoothWasOn = RadioControl.isBluetoothOn
-        if bluetoothWasOn { RadioControl.setBluetooth(false) }
-
-        _ = try? ControlClient.send(.setLowPowerMode(true))
-        _ = try? ControlClient.send(.setPowerToggle(.powerNap, false))
-        _ = try? ControlClient.send(.setPowerToggle(.wakeOnNetwork, false))
-        _ = try? ControlClient.send(.setPowerToggle(.tcpKeepAlive, false))
-        deepSaveActive = true
     }
 }
