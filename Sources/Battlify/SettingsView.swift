@@ -729,6 +729,10 @@ struct SettingsView: View {
                 toggleRow("Color icon by charge state",
                           "Green while charging, red when low or warm. Off keeps it monochrome.",
                           isOn: $settings.colorMenuBarIcon)
+                divider
+                toggleRow("Animate the icon while charging",
+                          "A moving glyph costs about a tenth of a core for as long as you're plugged in, because the menu bar re-lays out on every frame. Off keeps a static charging bolt.",
+                          isOn: $settings.animateMenuBarIcon)
             }
 
             card("Notifications") {
