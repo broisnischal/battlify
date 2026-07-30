@@ -63,6 +63,9 @@ final class Daemon: @unchecked Sendable {
     /// True only while *we* hold the fans in forced mode — another fan utility may
     /// own them, and we must never hand back what we didn't take.
     private var fanForcedByUs = false
+    /// Latches so a persistent fan failure is logged once, not every 10s tick.
+    private var fanUnsupportedLogged = false
+    private var fanBoostFailedLogged = false
     private var keepAwakeSawTask = false
     private var keepAwakeTaskIdleTicks = 0
     private let sleepAfterTaskIdleTicks = 3   // ~30s gone before we sleep
@@ -276,6 +279,7 @@ final class Daemon: @unchecked Sendable {
         if let last = lastTickAt, now.timeIntervalSince(last) > wakeGapThreshold {
             settleUntil = now.addingTimeInterval(wakeSettleDuration)
             log("woke from sleep; settling for \(Int(wakeSettleDuration))s")
+            reopenSMC()
         }
         lastTickAt = now
 
@@ -415,13 +419,40 @@ final class Daemon: @unchecked Sendable {
 
     /// "Always Active": keep the Mac awake with the lid closed. `pmset disablesleep`
     /// is the only thing that prevents clamshell sleep, paired with a PreventSystemSleep
+    /// Re-establish the AppleSMC connection after a wake.
+    ///
+    /// The daemon opened it once at launch and kept the handle for the life of the
+    /// process — days, across dozens of sleep/wake cycles. A handle that doesn't
+    /// survive a sleep fails silently: `keyExists` starts returning false, so
+    /// `fans.isSupported` goes false and the fan boost returns early without ever
+    /// writing or logging. Called under `lock` from `tick()`, so no other thread is
+    /// inside the connection while it's swapped.
+    private func reopenSMC() {
+        smc.close()
+        do {
+            try smc.open()
+        } catch {
+            log("could not reopen SMC after wake: \(error)")
+        }
+    }
+
     /// Spin the fans up while real work is running, so a Mac held awake with the lid
     /// shut isn't cooking itself. This only ever asks for *more* airflow than macOS
     /// chose; it can't ask for less. The fans go back to automatic the moment the work
     /// stops, the feature is switched off, or the daemon exits.
     private func updateFanBoost(_ cfg: BattlifyConfig, keepAwakeHolding: Bool,
                                 scan: ProcessScan.Reading) {
-        guard fans.isSupported else { return }
+        guard fans.isSupported else {
+            // Silence here reads exactly like "the feature is off". Say it once so a
+            // machine that stops exposing the fan keys is diagnosable from the log.
+            if !fanUnsupportedLogged {
+                fanUnsupportedLogged = true
+                log("fan boost unavailable: SMC fan keys not readable (FNum/F0Md)")
+            }
+            return
+        }
+        fanUnsupportedLogged = false
+
         let working = scan.matchedName
             || (cfg.fanBoostMinCpu > 0 && scan.topCPU >= cfg.fanBoostMinCpu)
         let want = cfg.fanBoostEnabled && working
@@ -430,9 +461,17 @@ final class Daemon: @unchecked Sendable {
         if want {
             // Re-assert every tick: cheap, and it reclaims the fans if something else
             // (or a sleep/wake cycle) reset them while we still want the boost.
-            if fans.boost(toPercent: cfg.fanBoostPercent), !fanForcedByUs {
+            let ok = fans.boost(toPercent: cfg.fanBoostPercent)
+            if ok, !fanForcedByUs {
                 fanForcedByUs = true
+                fanBoostFailedLogged = false
                 log("fan boost on at \(cfg.fanBoostPercent)% (top CPU \(Int(scan.topCPU))%)")
+            } else if !ok, !fanBoostFailedLogged {
+                // A refused SMC write left no trace at all before this: the boost was
+                // wanted, nothing happened, and the log stayed empty every tick.
+                fanBoostFailedLogged = true
+                fanForcedByUs = false
+                log("fan boost wanted at \(cfg.fanBoostPercent)% but the SMC refused the write")
             }
         } else if fanForcedByUs {
             fans.restoreAuto()
