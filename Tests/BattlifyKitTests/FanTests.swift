@@ -59,6 +59,37 @@ struct FanTests {
         #expect(fan(low).title == "Fan 1")
     }
 
+    @Test("A fan resting at its own baseline is not reported as forced")
+    func restingFanIsNotForced() {
+        // Mac15,6 (M3 Pro) reports F0Md = 3 with macOS in full control. Reading any
+        // nonzero value as forced made every idle fan look hijacked by another app.
+        #expect(!FanControl.isForced(mode: 3, automatic: 3))
+        // Intel Macs rest at 0.
+        #expect(!FanControl.isForced(mode: 0, automatic: 0))
+    }
+
+    @Test("Our own forced marker always reads as forced")
+    func forcedMarkerDetected() {
+        #expect(FanControl.isForced(mode: 1, automatic: 3))
+        #expect(FanControl.isForced(mode: 1, automatic: 0))
+        // Even with no baseline captured — a run that died mid-boost still reads forced.
+        #expect(FanControl.isForced(mode: 1, automatic: nil))
+    }
+
+    @Test("Another utility's mode reads as forced")
+    func thirdPartyModeDetected() {
+        // Anything that isn't this machine's resting value means someone took over.
+        #expect(FanControl.isForced(mode: 2, automatic: 3))
+        #expect(FanControl.isForced(mode: 3, automatic: 0))
+    }
+
+    @Test("Without a baseline, an unrecognised mode is not called forced")
+    func unknownModeWithoutBaseline() {
+        // Better to stay quiet than to accuse macOS of hijacking its own fans.
+        #expect(!FanControl.isForced(mode: 3, automatic: nil))
+        #expect(!FanControl.isForced(mode: 0, automatic: nil))
+    }
+
     @Test("Fan boost defaults are off and sane")
     func configDefaults() {
         let config = BattlifyConfig()
