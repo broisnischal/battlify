@@ -42,6 +42,29 @@ enum PowerSettings {
         Shell.run("/usr/bin/pmset", [toggle.scope.rawValue, toggle.rawValue, on ? "1" : "0"]) != nil
     }
 
+    /// Current `hibernatemode`, parsed from `pmset -g`. Reading needs no root.
+    static func readHibernateMode() -> Int? {
+        guard let out = Shell.run("/usr/bin/pmset", ["-g"]) else { return nil }
+        for raw in out.split(separator: "\n") {
+            let parts = raw.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            guard parts.count >= 2, parts[parts.count - 2] == "hibernatemode" else { continue }
+            return Int(parts[parts.count - 1])
+        }
+        return nil
+    }
+
+    /// Apply a sleep depth. Hibernating only engages while `standby` is allowed, so
+    /// deep sleep asserts that too. Requires root; returns false when pmset refuses
+    /// (not every Mac accepts every hibernatemode).
+    @discardableResult
+    static func setSleepDepth(_ depth: SleepDepth) -> Bool {
+        guard Shell.run("/usr/bin/pmset",
+                        ["-a", "hibernatemode", String(depth.hibernateMode)]) != nil
+        else { return false }
+        if depth == .deep { Shell.run("/usr/bin/pmset", ["-a", "standby", "1"]) }
+        return true
+    }
+
     /// Disable *all* sleep — idle and clamshell — the only way to keep running with the
     /// lid shut (no IOPMAssertion prevents clamshell sleep). Requires root; does NOT
     /// persist across reboots, so the daemon re-applies it on startup.

@@ -601,6 +601,25 @@ struct SettingsView: View {
                     }
                 }
 
+                card("Deep sleep") {
+                    pickerRow(chargeLimit.sleepDepth.summary) {
+                        Picker("", selection: Binding(
+                            get: { chargeLimit.sleepDepth },
+                            set: { chargeLimit.sleepDepth = $0; chargeLimit.apply() })) {
+                            ForEach(SleepDepth.allCases) { Text($0.title).tag($0) }
+                        }
+                        .pickerStyle(.segmented).labelsHidden()
+                    }
+                    if chargeLimit.sleepDepth == .deep {
+                        divider
+                        infoRow("Opening the lid will take a few seconds while memory is read back from disk — the more memory in use, the longer it takes. Worth it only if the Mac often stays closed for a day or more.",
+                                systemImage: "clock")
+                    }
+                    divider
+                    infoRow("A closed Mac already sips power, so expect a small gain, not a large one. macOS still wakes briefly now and then for maintenance either way.",
+                            systemImage: "bulb")
+                }
+
                 card("When the lid closes") {
                     toggleRow("Super Save when lid closed",
                               "Maximizes battery while closed, restores when you open it.",
@@ -710,6 +729,10 @@ struct SettingsView: View {
                 toggleRow("Color icon by charge state",
                           "Green while charging, red when low or warm. Off keeps it monochrome.",
                           isOn: $settings.colorMenuBarIcon)
+                divider
+                toggleRow("Animate the icon while charging",
+                          "A moving glyph costs about a tenth of a core for as long as you're plugged in, because the menu bar re-lays out on every frame. Off keeps a static charging bolt.",
+                          isOn: $settings.animateMenuBarIcon)
             }
 
             card("Notifications") {

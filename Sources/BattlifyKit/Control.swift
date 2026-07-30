@@ -168,7 +168,11 @@ public enum HelperBuild {
     ///       physical adapter presence (raw SMC AC-W, falling back to IOKit's
     ///       ExternalConnected) instead of the providing-source flag, which flips
     ///       to "battery" while discharging.
-    public static let version = 2
+    ///   v5: fan boost removed — SMC fan writes are refused on Apple silicon, so an
+    ///       installed helper still running the fan policy must be replaced.
+    ///   v6: idle back-off — the enforcement loop drops to a slow tick once the lid is
+    ///       shut on battery, so it stops doing work inside maintenance dark wakes.
+    public static let version = 6
 }
 
 public enum ControlError: Error, CustomStringConvertible {

@@ -123,7 +123,12 @@ struct MenuBarLabel: View {
         let tint: MenuBarTint =
             celebratingNow && settings.colorMenuBarIcon ? .colored(.systemGreen)
             : settings.colorMenuBarIcon ? tint(for: snap) : .neutral
-        let animating = !reduceMotion && (snap.isCharging || celebrating)
+        // Each tick re-renders the status item, and that relayout measured ~10% of a
+        // core sustained — the entire time the Mac was plugged in. So the charging
+        // animation is opt-in. The completion flash still runs when it fires: it's
+        // bounded to about three seconds, not the whole charge.
+        let animating = !reduceMotion
+            && (celebrating || (settings.animateMenuBarIcon && snap.isCharging))
         // The label renders at launch — a reliable hook to start notification detection.
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
         return HStack(spacing: 2) {

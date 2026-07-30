@@ -14,9 +14,10 @@ final class Daemon: @unchecked Sendable {
     private let charge: ChargeController
     private let lock = NSLock()
 
-    // History sampling: tick is every 10s; sample every 30 ticks (~5 min).
-    private var ticksSinceSample = 0
-    private let ticksPerSample = 30
+    // History sampling. Timed rather than counted in ticks, because the tick rate
+    // itself varies (see `nextInterval`) and the graph's spacing shouldn't.
+    private var lastSampleAt: Date?
+    private let sampleInterval = 300.0   // ~5 min between history points
 
     // Why charging is currently paused ("limit"/"heat"/nil), for status reporting.
     private var lastPauseReason: String?
@@ -38,9 +39,10 @@ final class Daemon: @unchecked Sendable {
     // Post-wake settle: a tick gap ≫ interval implies we slept; hold charging + LED off briefly.
     private var lastTickAt: Date?
     private var settleUntil: Date?
-    private let tickInterval = 10.0
-    private let wakeGapThreshold = 30.0   // gap implying a sleep occurred
-    private let wakeSettleDuration = 15.0 // how long to settle after wake
+    /// What the run loop waits after the current tick; `nextInterval` sets it from
+    /// `TickPolicy`, which is where the reasoning about cadence lives.
+    private var tickInterval = TickPolicy.active
+    private var wakeSettleDuration: Double { 15.0 }   // how long to settle after wake
 
     // DispatchSource fires cleanup on this queue in a normal context, not an async-signal handler.
     private let signalQueue = DispatchQueue(label: "com.battlify.helper.signals")
@@ -106,8 +108,9 @@ final class Daemon: @unchecked Sendable {
         while true {
             lock.lock()
             tick()
+            let wait = tickInterval
             lock.unlock()
-            Thread.sleep(forTimeInterval: tickInterval)
+            Thread.sleep(forTimeInterval: wait)
         }
     }
 
@@ -129,6 +132,11 @@ final class Daemon: @unchecked Sendable {
             do {
                 try ConfigStore.save(cfg)
                 tick() // apply immediately
+                // System-wide and persistent, so only write it when it differs.
+                if PowerSettings.readHibernateMode() != cfg.sleepDepth.hibernateMode,
+                   !PowerSettings.setSleepDepth(cfg.sleepDepth) {
+                    return status(ok: false, message: "saved, but pmset refused hibernatemode")
+                }
                 return status(ok: true, message: "saved")
             } catch {
                 return status(ok: false, message: "save failed: \(error)")
@@ -178,9 +186,10 @@ final class Daemon: @unchecked Sendable {
             catch { return status(ok: false, message: "save failed: \(error)") }
 
         case .clearSamples:
-            // GUI can't delete the root-owned history file; reset the counter so we don't re-append mid-tick.
+            // GUI can't delete the root-owned history file; restart the sampling clock
+            // so a cleared graph doesn't immediately re-append mid-tick.
             HistoryStore.clear()
-            ticksSinceSample = 0
+            lastSampleAt = Date()
             return status(ok: true, message: "history cleared")
         }
     }
@@ -261,10 +270,12 @@ final class Daemon: @unchecked Sendable {
         // flips to "battery"), keeping onExternalPower-gated decisions stable while draining.
         if let ac = charge.isACPresent() { snap.isExternalConnected = ac }
 
-        recordHistoryIfDue(snap)
+        recordHistoryIfDue(snap, now: now)
 
-        // Detect wake: a tick gap much larger than the interval means we slept.
-        if let last = lastTickAt, now.timeIntervalSince(last) > wakeGapThreshold {
+        // Detect wake: a tick gap much larger than the interval we asked for means the
+        // clock ran on without us, i.e. we were frozen. Scaled off the interval in
+        // force, so backing off to a slow tick doesn't read as a wake every time.
+        if let last = lastTickAt, now.timeIntervalSince(last) > tickInterval * 3 {
             settleUntil = now.addingTimeInterval(wakeSettleDuration)
             log("woke from sleep; settling for \(Int(wakeSettleDuration))s")
         }
@@ -352,6 +363,17 @@ final class Daemon: @unchecked Sendable {
         updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
+        tickInterval = nextInterval(cfg, snap)
+    }
+
+    /// How long to wait before the next tick (see `TickPolicy`). The clamshell read is
+    /// skipped unless the config could actually allow a back-off, so the common case
+    /// costs nothing.
+    private func nextInterval(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) -> Double {
+        guard TickPolicy.hasNothingToManage(cfg, onExternalPower: snap.onExternalPower)
+        else { return TickPolicy.active }
+        return TickPolicy.interval(cfg, onExternalPower: snap.onExternalPower,
+                                   lidClosed: SystemPower.isClamshellClosed())
     }
 
     /// Whether to charge this tick for the requested power (0–100%): 100% passes
@@ -415,8 +437,12 @@ final class Daemon: @unchecked Sendable {
 
         // Task-gated: only hold while a matching task runs, so the Mac sleeps when work finishes.
         let taskGated = want && cfg.keepAwakeRequiresTask
+        // `ps` is the expensive part of the tick, so only scan when task-gating needs it.
+        let scan = taskGated
+            ? ProcessScan.scan(names: cfg.keepAwakeProcesses)
+            : ProcessScan.Reading()
         let taskBusy = taskGated
-            && ProcessScan.isBusy(names: cfg.keepAwakeProcesses, minCpu: cfg.keepAwakeMinCpu)
+            && (scan.matchedName || (cfg.keepAwakeMinCpu > 0 && scan.topCPU >= cfg.keepAwakeMinCpu))
         if taskGated { want = taskBusy }
         // Thermal guardrail: release keep-awake once a closed Mac crosses the temp limit.
         if want, cfg.keepAwakeMaxTempC > 0, let t = snap.temperature, t >= cfg.keepAwakeMaxTempC {
@@ -554,10 +580,9 @@ final class Daemon: @unchecked Sendable {
         lastLed = target
     }
 
-    private func recordHistoryIfDue(_ snap: BatterySnapshot) {
-        ticksSinceSample += 1
-        guard ticksSinceSample >= ticksPerSample else { return }
-        ticksSinceSample = 0
+    private func recordHistoryIfDue(_ snap: BatterySnapshot, now: Date) {
+        if let last = lastSampleAt, now.timeIntervalSince(last) < sampleInterval { return }
+        lastSampleAt = now
 
         HistoryStore.append(BatterySample(
             t: Date(), pct: snap.percentage,
