@@ -1,5 +1,27 @@
 # battlify
 
+## 0.16.0
+
+### Minor Changes
+
+- f8eed8d: New **Deep sleep** setting (Sleep & Power) for Macs that stay closed for days.
+
+  macOS normally keeps memory powered while the Mac sleeps so it wakes the instant you open the lid, writing a disk image only as a safety net. Deep sleep powers memory down and restores it from disk instead, which saves the small trickle that keeping memory alive costs over a long sleep. The trade is the wake: opening the lid takes several seconds while memory is read back, instead of being instant — so it's off by default and stays off when you upgrade.
+
+  On Apple silicon `hibernatemode` is the only lever that exists for this; the `standbydelay` knobs Intel Macs had aren't available, so there's nothing else to tune. Writing it needs root, so the root helper applies it — and reports back if pmset refuses.
+
+- 0dd03e5: The menu-bar glyph no longer animates while charging unless you ask it to.
+
+  The animation ticked twice a second, and every tick re-rendered the status item. A status-item relayout is expensive: measured on an M3 Pro, it cost about a tenth of a core continuously, for as long as the Mac was plugged in. Turning it off drops the app to 0% CPU at idle. That is not a trade a battery app should make on your behalf, so it is now a setting in General — off by default, with a static charging bolt instead. The brief flash when charging completes still runs; it lasts about three seconds rather than the whole charge.
+
+- 875aada: The helper stops working while your Mac sleeps.
+
+  It used to run its enforcement loop every 10 seconds regardless. With the lid shut on battery the only moment that loop can run is inside one of the maintenance wakes macOS schedules roughly hourly — and everything it did there (reading its config off disk, walking IOKit for the battery, probing the SMC) was pure cost, holding the chip awake in exactly the window that should end as fast as possible. Measured dark wakes ran 6–45 seconds, so a 10-second loop fired three or four times inside one.
+
+  There was also nothing for it to decide: the charge limit and the heat cap only act while current is flowing in. So it now drops to a 60-second loop once the lid is closed on battery, which leaves a typical maintenance wake seeing at most one pass. Measured cost after the change: 0.03% CPU.
+
+  Anything that genuinely has to react with the lid shut keeps the fast loop — Always Active's task gating, a discharge run, a schedule boundary, a ready-by top-up, a calibration, or a pause that has to expire on time.
+
 ## 0.15.0
 
 ### Minor Changes
