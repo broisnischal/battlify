@@ -112,16 +112,6 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     public var pauseUntil: Date?
     /// How deeply the Mac sleeps when closed and idle (see `SleepDepth`).
     public var sleepDepth: SleepDepth
-    /// Spin the fans up while real work is running, so a Mac held awake with the
-    /// lid shut isn't cooking. Only ever raises airflow above what macOS chose.
-    public var fanBoostEnabled: Bool
-    /// How hard to run the fans while boosting, as a percentage of each fan's own
-    /// range (0 = its floor, 100 = the firmware's ceiling).
-    public var fanBoostPercent: Int
-    /// Any process at or above this %CPU counts as "working" for the fan boost.
-    public var fanBoostMinCpu: Double
-    /// Restrict the boost to when "Always Active" is actually holding the Mac awake.
-    public var fanBoostOnlyWhenKeepAwake: Bool
     public var mode: SaveMode
 
     public init(chargeLimitEnabled: Bool = false,
@@ -148,10 +138,6 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 calibrateToFull: Bool = false,
                 pauseUntil: Date? = nil,
                 sleepDepth: SleepDepth = .normal,
-                fanBoostEnabled: Bool = false,
-                fanBoostPercent: Int = 60,
-                fanBoostMinCpu: Double = 50,
-                fanBoostOnlyWhenKeepAwake: Bool = false,
                 mode: SaveMode = .off) {
         self.chargeLimitEnabled = chargeLimitEnabled
         self.chargeLimit = chargeLimit
@@ -179,10 +165,6 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.calibrateToFull = calibrateToFull
         self.pauseUntil = pauseUntil
         self.sleepDepth = sleepDepth
-        self.fanBoostEnabled = fanBoostEnabled
-        self.fanBoostPercent = min(100, max(0, fanBoostPercent))
-        self.fanBoostMinCpu = max(0, fanBoostMinCpu)
-        self.fanBoostOnlyWhenKeepAwake = fanBoostOnlyWhenKeepAwake
         self.mode = mode
     }
 
@@ -220,10 +202,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         calibrateToFull = try c.decodeIfPresent(Bool.self, forKey: .calibrateToFull) ?? false
         pauseUntil = try c.decodeIfPresent(Date.self, forKey: .pauseUntil)
         sleepDepth = try c.decodeIfPresent(SleepDepth.self, forKey: .sleepDepth) ?? .normal
-        fanBoostEnabled = try c.decodeIfPresent(Bool.self, forKey: .fanBoostEnabled) ?? false
-        fanBoostPercent = min(100, max(0, try c.decodeIfPresent(Int.self, forKey: .fanBoostPercent) ?? 60))
-        fanBoostMinCpu = max(0, try c.decodeIfPresent(Double.self, forKey: .fanBoostMinCpu) ?? 50)
-        fanBoostOnlyWhenKeepAwake = try c.decodeIfPresent(Bool.self, forKey: .fanBoostOnlyWhenKeepAwake) ?? false
+        // Older configs may still carry fanBoost* keys from the removed fan-boost
+        // feature; unknown keys are ignored, so they load fine.
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off
     }
 }

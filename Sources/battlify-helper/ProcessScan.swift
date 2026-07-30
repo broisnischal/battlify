@@ -3,8 +3,8 @@ import Foundation
 /// Is a "keep me awake" task running now? Runs `ps` once per tick, matching by command
 /// name and/or CPU. As root it sees every user's processes.
 enum ProcessScan {
-    /// What one `ps` pass saw, so keep-awake and the fan policy can each apply
-    /// their own threshold without scanning twice per tick.
+    /// What one `ps` pass saw: the name match and the busiest process, so callers
+    /// can apply their own threshold without scanning twice per tick.
     struct Reading {
         /// Highest %CPU any single process is using.
         var topCPU: Double = 0

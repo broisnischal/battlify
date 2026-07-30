@@ -26,7 +26,6 @@ struct BattlifyApp: App {
     @StateObject private var network = NetworkProfileStore()
     @StateObject private var endurance = EnduranceStore()
     @StateObject private var triggers = TriggerStore()
-    @StateObject private var fanMonitor = FanMonitor()
 
     var body: some Scene {
         MenuBarExtra {
@@ -74,7 +73,6 @@ struct BattlifyApp: App {
                 .environmentObject(network)
                 .environmentObject(endurance)
                 .environmentObject(triggers)
-                .environmentObject(fanMonitor)
         }
         .windowResizability(.contentSize)
 

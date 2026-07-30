@@ -15,7 +15,6 @@ struct SettingsView: View {
     @EnvironmentObject private var network: NetworkProfileStore
     @EnvironmentObject private var endurance: EnduranceStore
     @EnvironmentObject private var triggers: TriggerStore
-    @EnvironmentObject private var fanMonitor: FanMonitor
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var selection: Tab = .charging
@@ -602,44 +601,6 @@ struct SettingsView: View {
                     }
                 }
 
-                card("Fans") {
-                    if fanMonitor.supported {
-                        toggleRow("Spin fans up while work is running",
-                                  "Adds airflow when something is actually working — a long build, a render, agents running. It only ever asks for more airflow than macOS chose, never less, and hands the fans back when the work stops.",
-                                  isOn: bind(\.fanBoostEnabled))
-                        if chargeLimit.fanBoostEnabled {
-                            divider
-                            fanBoostLevelRow
-                            divider
-                            stepperRow("Counts as working above",
-                                       value: "\(Int(chargeLimit.fanBoostMinCpu))% CPU",
-                                       binding: Binding(
-                                        get: { chargeLimit.fanBoostMinCpu },
-                                        set: { chargeLimit.fanBoostMinCpu = $0; chargeLimit.apply() }),
-                                       range: 10...100)
-                            divider
-                            toggleRow("Only while Always Active is holding the lid closed",
-                                      "Off means the boost applies whenever work is running, lid open or shut.",
-                                      isOn: bind(\.fanBoostOnlyWhenKeepAwake))
-                        }
-                        divider
-                        ForEach(fanMonitor.fans) { fan in
-                            labelRow(fan.title,
-                                     "\(Int(fan.rpm)) rpm · \(fan.percentOfRange)%"
-                                        + (fan.forced ? " · forced" : " · auto"))
-                        }
-                        if fanMonitor.anyForced && !chargeLimit.fanBoostEnabled {
-                            divider
-                            infoRow("Your fans are being held off automatic control by something else — another fan utility, most likely. Battlify won't touch them while that's the case.",
-                                    systemImage: "alert")
-                        }
-                    } else {
-                        infoRow("This Mac doesn't expose controllable fans.", systemImage: "info")
-                    }
-                }
-                .onAppear { fanMonitor.beginObserving() }
-                .onDisappear { fanMonitor.endObserving() }
-
                 card("Deep sleep") {
                     pickerRow(chargeLimit.sleepDepth.summary) {
                         Picker("", selection: Binding(
@@ -984,41 +945,6 @@ struct SettingsView: View {
         }
         .controlSize(.small)
         .padding(.horizontal, 12).padding(.vertical, 10)
-    }
-
-    /// Fan boost level. Applies on release so dragging doesn't spam the daemon.
-    private var fanBoostLevelRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Boost to").font(.callout)
-                Spacer()
-                Text("\(chargeLimit.fanBoostPercent)%")
-                    .font(.callout.weight(.semibold)).monospacedDigit()
-            }
-            Slider(
-                value: Binding(
-                    get: { Double(chargeLimit.fanBoostPercent) },
-                    set: { chargeLimit.fanBoostPercent = Int($0) }
-                ),
-                in: 0...100, step: 5,
-                onEditingChanged: { editing in if !editing { chargeLimit.apply() } }
-            )
-            .controlSize(.small)
-            Text(fanBoostHint)
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-    }
-
-    /// Translate the percentage into the RPM it actually asks for on this Mac.
-    private var fanBoostHint: String {
-        guard let fan = fanMonitor.fans.first else {
-            return "A percentage of each fan's own range — 0% is its floor, 100% the maximum macOS allows."
-        }
-        let rpm = FanControl.target(forPercent: chargeLimit.fanBoostPercent,
-                                    min: fan.minRPM, max: fan.maxRPM)
-        return "About \(Int(rpm)) rpm on this Mac (range \(Int(fan.minRPM))–\(Int(fan.maxRPM))). Higher is cooler and louder."
     }
 
     /// Applies on release so dragging doesn't spam the daemon.
