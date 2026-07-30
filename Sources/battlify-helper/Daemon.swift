@@ -279,7 +279,6 @@ final class Daemon: @unchecked Sendable {
         if let last = lastTickAt, now.timeIntervalSince(last) > wakeGapThreshold {
             settleUntil = now.addingTimeInterval(wakeSettleDuration)
             log("woke from sleep; settling for \(Int(wakeSettleDuration))s")
-            reopenSMC()
         }
         lastTickAt = now
 
@@ -419,23 +418,6 @@ final class Daemon: @unchecked Sendable {
 
     /// "Always Active": keep the Mac awake with the lid closed. `pmset disablesleep`
     /// is the only thing that prevents clamshell sleep, paired with a PreventSystemSleep
-    /// Re-establish the AppleSMC connection after a wake.
-    ///
-    /// The daemon opened it once at launch and kept the handle for the life of the
-    /// process — days, across dozens of sleep/wake cycles. A handle that doesn't
-    /// survive a sleep fails silently: `keyExists` starts returning false, so
-    /// `fans.isSupported` goes false and the fan boost returns early without ever
-    /// writing or logging. Called under `lock` from `tick()`, so no other thread is
-    /// inside the connection while it's swapped.
-    private func reopenSMC() {
-        smc.close()
-        do {
-            try smc.open()
-        } catch {
-            log("could not reopen SMC after wake: \(error)")
-        }
-    }
-
     /// Spin the fans up while real work is running, so a Mac held awake with the lid
     /// shut isn't cooking itself. This only ever asks for *more* airflow than macOS
     /// chose; it can't ask for less. The fans go back to automatic the moment the work
