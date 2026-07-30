@@ -170,7 +170,9 @@ public enum HelperBuild {
     ///       to "battery" while discharging.
     ///   v5: fan boost removed — SMC fan writes are refused on Apple silicon, so an
     ///       installed helper still running the fan policy must be replaced.
-    public static let version = 5
+    ///   v6: idle back-off — the enforcement loop drops to a slow tick once the lid is
+    ///       shut on battery, so it stops doing work inside maintenance dark wakes.
+    public static let version = 6
 }
 
 public enum ControlError: Error, CustomStringConvertible {
