@@ -112,6 +112,14 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     public var pauseUntil: Date?
     /// How deeply the Mac sleeps when closed and idle (see `SleepDepth`).
     public var sleepDepth: SleepDepth
+    /// Minutes the lid must stay shut on battery before the Mac is switched to
+    /// hibernation for the rest of the sleep. 0 disables it.
+    ///
+    /// Deep sleep is the only thing that stops a closed Mac drawing power, because
+    /// it cuts the rail feeding memory — but paying a multi-second wake every time
+    /// you shut the lid for five minutes is a bad trade. Waiting first gets both:
+    /// short closes stay instant, and a Mac left shut overnight hibernates.
+    public var hibernateAfterMinutes: Int
     public var mode: SaveMode
 
     public init(chargeLimitEnabled: Bool = false,
@@ -138,6 +146,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 calibrateToFull: Bool = false,
                 pauseUntil: Date? = nil,
                 sleepDepth: SleepDepth = .normal,
+                hibernateAfterMinutes: Int = 0,
                 mode: SaveMode = .off) {
         self.chargeLimitEnabled = chargeLimitEnabled
         self.chargeLimit = chargeLimit
@@ -165,6 +174,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.calibrateToFull = calibrateToFull
         self.pauseUntil = pauseUntil
         self.sleepDepth = sleepDepth
+        self.hibernateAfterMinutes = max(0, hibernateAfterMinutes)
         self.mode = mode
     }
 
@@ -202,6 +212,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         calibrateToFull = try c.decodeIfPresent(Bool.self, forKey: .calibrateToFull) ?? false
         pauseUntil = try c.decodeIfPresent(Date.self, forKey: .pauseUntil)
         sleepDepth = try c.decodeIfPresent(SleepDepth.self, forKey: .sleepDepth) ?? .normal
+        hibernateAfterMinutes = max(0, try c.decodeIfPresent(Int.self, forKey: .hibernateAfterMinutes) ?? 0)
         // Older configs may still carry fanBoost* keys from the removed fan-boost
         // feature; unknown keys are ignored, so they load fine.
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off

@@ -172,7 +172,9 @@ public enum HelperBuild {
     ///       installed helper still running the fan policy must be replaced.
     ///   v6: idle back-off — the enforcement loop drops to a slow tick once the lid is
     ///       shut on battery, so it stops doing work inside maintenance dark wakes.
-    public static let version = 6
+    ///   v7: delayed hibernation — the daemon switches a long-closed Mac to
+    ///       hibernatemode 25 and restores the user's setting when the lid opens.
+    public static let version = 7
 }
 
 public enum ControlError: Error, CustomStringConvertible {
