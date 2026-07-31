@@ -75,6 +75,8 @@ final class ChargeLimitStore: ObservableObject {
     @Published var sleepWhenTaskDone = false
     /// How deeply the Mac sleeps when closed and idle.
     @Published var sleepDepth: SleepDepth = .normal
+    /// Minutes shut on battery before the Mac hibernates for the rest of the sleep.
+    @Published var hibernateAfterMinutes = 0
     @Published var schedules: [ChargeSchedule] = []
     /// Once-daily "ready by" top-up target.
     @Published var readyBy = ReadyByTarget()
@@ -180,6 +182,7 @@ final class ChargeLimitStore: ObservableObject {
         cfg.keepAwakeMaxTempC = keepAwakeMaxTempC
         cfg.sleepWhenTaskDone = sleepWhenTaskDone
         cfg.sleepDepth = sleepDepth
+        cfg.hibernateAfterMinutes = hibernateAfterMinutes
         cfg.schedules = schedules
         cfg.readyBy = readyBy
         cfg.chargePower = chargePower
@@ -294,6 +297,7 @@ final class ChargeLimitStore: ObservableObject {
         set(\.keepAwakeMaxTempC, r.config.keepAwakeMaxTempC)
         set(\.sleepWhenTaskDone, r.config.sleepWhenTaskDone)
         set(\.sleepDepth, r.config.sleepDepth)
+        set(\.hibernateAfterMinutes, r.config.hibernateAfterMinutes)
         set(\.schedules, r.config.schedules)
         set(\.readyBy, r.config.readyBy)
         set(\.slowCharge, r.config.slowCharge)

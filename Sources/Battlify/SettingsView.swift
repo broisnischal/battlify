@@ -601,6 +601,20 @@ struct SettingsView: View {
                     }
                 }
 
+                card("Hibernate after a while") {
+                    pickerRow(hibernateDelaySummary) {
+                        Picker("", selection: Binding(
+                            get: { chargeLimit.hibernateAfterMinutes },
+                            set: { chargeLimit.hibernateAfterMinutes = $0; chargeLimit.apply() })) {
+                            Text("Off").tag(0)
+                            Text("30 min").tag(30)
+                            Text("1 hour").tag(60)
+                            Text("3 hours").tag(180)
+                        }
+                        .pickerStyle(.segmented).labelsHidden()
+                    }
+                }
+
                 card("Deep sleep") {
                     pickerRow(chargeLimit.sleepDepth.summary) {
                         Picker("", selection: Binding(
@@ -949,6 +963,13 @@ struct SettingsView: View {
         }
         .controlSize(.small)
         .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    private var hibernateDelaySummary: String {
+        guard chargeLimit.hibernateAfterMinutes > 0 else {
+            return "A closed Mac still draws about 130 mW keeping memory alive — roughly 2% overnight. Turn this on and Battlify powers memory down once the lid has been shut that long, so a short close still wakes instantly and a night closed costs nothing."
+        }
+        return "Shut for this long on battery and memory powers down for the rest of the sleep. Opening the lid restores your Deep sleep setting, so only long closes pay the slower wake."
     }
 
     /// Applies on release so dragging doesn't spam the daemon.

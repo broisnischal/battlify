@@ -65,6 +65,11 @@ final class Daemon: @unchecked Sendable {
     private var keepAwakeTaskIdleTicks = 0
     private let sleepAfterTaskIdleTicks = 3   // ~30s gone before we sleep
 
+    // Delayed hibernation: when the current lid-closed spell began, and whether
+    // we've already switched the Mac over during it.
+    private var lidClosedSince: Date?
+    private var hibernateApplied = false
+
     // Charge-power duty cycle in long phases (≥ minChargeDwell) to avoid flicker/hardware thrash.
     private let minChargeDwell: TimeInterval = 120   // ≥ 2 min per phase
     private var chargeCycleCharging = true
@@ -363,7 +368,44 @@ final class Daemon: @unchecked Sendable {
         updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
+        updateDelayedHibernate(cfg, snap, now: now)
         tickInterval = nextInterval(cfg, snap)
+    }
+
+    /// Switch a Mac that's been shut for a while over to hibernation, and put the
+    /// user's setting back when the lid opens (see `HibernatePolicy` for why).
+    ///
+    /// Asleep, this only runs during macOS's maintenance wakes, so the switch lands
+    /// at the first wake past the delay. That's fine: it takes effect on the *next*
+    /// sleep transition either way, which is the one that follows that same wake.
+    private func updateDelayedHibernate(_ cfg: BattlifyConfig, _ snap: BatterySnapshot, now: Date) {
+        let closed = SystemPower.isClamshellClosed() && !snap.onExternalPower
+        if closed {
+            if lidClosedSince == nil { lidClosedSince = now }
+        } else {
+            lidClosedSince = nil
+        }
+
+        switch HibernatePolicy.decide(config: cfg, onExternalPower: snap.onExternalPower,
+                                      lidClosedSince: lidClosedSince, now: now,
+                                      applied: hibernateApplied) {
+        case .hold:
+            break
+        case .hibernate:
+            guard PowerSettings.setSleepDepth(.deep) else {
+                log("delayed hibernate: pmset refused hibernatemode")
+                return
+            }
+            hibernateApplied = true
+            log("closed \(cfg.hibernateAfterMinutes)m on battery — hibernating for the rest of this sleep")
+        case .restore:
+            // Never leave the user's Mac hibernating once it's awake again: that's
+            // their setting to own, and hibernatemode persists across reboots.
+            if PowerSettings.setSleepDepth(cfg.sleepDepth) {
+                hibernateApplied = false
+                log("lid open / on power — hibernatemode back to \(cfg.sleepDepth.rawValue)")
+            }
+        }
     }
 
     /// How long to wait before the next tick (see `TickPolicy`). The clamshell read is
@@ -636,6 +678,8 @@ final class Daemon: @unchecked Sendable {
         }
         if charge.isAdapterControlSupported { try? charge.enableAdapter() }
         if charge.isMagSafeSupported { try? charge.setMagSafeLED(.system) }
+        // hibernatemode survives a reboot, so never exit still holding our override.
+        if hibernateApplied { _ = PowerSettings.setSleepDepth(ConfigStore.load().sleepDepth) }
         exit(0)
     }
 
