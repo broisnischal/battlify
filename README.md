@@ -116,6 +116,12 @@ change is never a mystery.
   from idle-sleeping, on battery or plugged in, until you turn it back off (or a timer
   you set runs out). Closing the lid still sleeps, and it releases the moment you quit
   Battlify — so it can never strand your Mac awake.
+- **Global keyboard shortcuts** for the things you reach for most — Caffeine, Low Power
+  Mode, the charge limit (on/off, or up and down in 5% steps), pause/resume charging,
+  cycle save mode, dim the display, and more. Every one is remappable in
+  *Settings → Shortcuts*, defaults sit on ⌃⌥⌘, and anything disruptive (sleep, force
+  discharge) ships unbound. No Accessibility permission needed: Battlify claims only
+  the combinations you assign and never sees anything else you type.
 - **Launch at login** and **in-app auto-update**, and it'll tell you if the helper
   ever falls out of date so features don't silently stop working.
 

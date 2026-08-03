@@ -11,6 +11,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var actions: SystemActions
     @EnvironmentObject private var caffeine: CaffeineManager
     @EnvironmentObject private var triggers: TriggerStore
+    @EnvironmentObject private var hotkeys: HotkeyStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near full height so the popover doesn't visibly grow on first open.
@@ -58,6 +59,12 @@ struct MenuContentView: View {
             battery.beginPowerFlowObserving()
             chargeLimit.refresh()
             license.refresh()
+            // The dropdown's `openWindow` is the one the footer buttons already use,
+            // so hand it to the shortcut store in place of the label's.
+            hotkeys.setOpenWindow { id in
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                openWindow(id: id)
+            }
         }
         .onDisappear { battery.endPowerFlowObserving() }
     }
@@ -407,16 +414,18 @@ struct MenuContentView: View {
             HStack(spacing: 8) {
                 actionButton(actions.dimmed ? "Brighten" : "Dim",
                              systemImage: actions.dimmed ? "sun" : "sunLow",
-                             help: actions.dimmed ? "Restore the previous brightness"
-                                                  : "Dim the display to save power") {
+                             help: (actions.dimmed ? "Restore the previous brightness"
+                                                   : "Dim the display to save power")
+                                   + shortcutHint(.toggleDimDisplay)) {
                     actions.toggleDim()
                 }
                 actionButton("Off", systemImage: "moon",
-                             help: "Turn the display off now (the Mac stays awake)") {
+                             help: "Turn the display off now (the Mac stays awake)"
+                                   + shortcutHint(.displayOff)) {
                     actions.turnDisplayOff()
                 }
                 actionButton("Sleep", systemImage: "sleep",
-                             help: "Put the Mac to sleep now") {
+                             help: "Put the Mac to sleep now" + shortcutHint(.sleepNow)) {
                     actions.sleepNow()
                 }
                 caffeineButton
@@ -449,9 +458,10 @@ struct MenuContentView: View {
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help(caffeine.active
-              ? "Keeping the Mac awake — the display won't sleep. Click to turn off; right-click for a timer."
-              : "Keep the Mac awake — display and system won't sleep. Click for on; right-click to set a timer.")
+        .help((caffeine.active
+               ? "Keeping the Mac awake — the display won't sleep. Click to turn off; right-click for a timer."
+               : "Keep the Mac awake — display and system won't sleep. Click for on; right-click to set a timer.")
+              + shortcutHint(.toggleCaffeine))
         .contextMenu {
             if caffeine.active {
                 Button("Turn Off") { caffeine.deactivate() }
@@ -474,6 +484,13 @@ struct MenuContentView: View {
             return m > 0 ? "Keeping awake — \(h)h \(m)m left" : "Keeping awake — \(h)h left"
         }
         return "Keeping awake — \(max(1, mins))m left"
+    }
+
+    /// " · ⌃⌥⌘C" for a bound action, or nothing — appended to tooltips so the
+    /// shortcuts are discoverable from the menu instead of only in Settings.
+    private func shortcutHint(_ action: HotkeyAction) -> String {
+        guard hotkeys.enabled, let key = hotkeys.bindings.hotkey(for: action) else { return "" }
+        return " · \(key.displayString)"
     }
 
     private func actionButton(_ title: String, systemImage: String, help: String,

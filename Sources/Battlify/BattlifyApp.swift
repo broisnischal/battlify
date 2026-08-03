@@ -26,6 +26,7 @@ struct BattlifyApp: App {
     @StateObject private var network = NetworkProfileStore()
     @StateObject private var endurance = EnduranceStore()
     @StateObject private var triggers = TriggerStore()
+    @StateObject private var hotkeys = HotkeyStore()
 
     var body: some Scene {
         MenuBarExtra {
@@ -44,6 +45,7 @@ struct BattlifyApp: App {
                 .environmentObject(network)
                 .environmentObject(endurance)
                 .environmentObject(triggers)
+                .environmentObject(hotkeys)
                 .onAppear {
                     network.chargeLimit = chargeLimit
                     automation.chargeLimit = chargeLimit
@@ -55,7 +57,9 @@ struct BattlifyApp: App {
             // launch, which is where the automation rules get started (the dropdown's
             // `onAppear` wouldn't run until you first opened the menu).
             MenuBarLabel(battery: battery, chargeLimit: chargeLimit,
-                         settings: settings, notifier: notifier, triggers: triggers)
+                         settings: settings, notifier: notifier, triggers: triggers,
+                         hotkeys: hotkeys, caffeine: caffeine, actions: actions,
+                         license: license)
         }
         .menuBarExtraStyle(.window)
 
@@ -73,6 +77,7 @@ struct BattlifyApp: App {
                 .environmentObject(network)
                 .environmentObject(endurance)
                 .environmentObject(triggers)
+                .environmentObject(hotkeys)
         }
         .windowResizability(.contentSize)
 
@@ -106,6 +111,15 @@ struct MenuBarLabel: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var notifier: NotificationManager
     let triggers: TriggerStore
+    // Not observed: the label doesn't render from these. They're here because the
+    // label is the one view that exists from launch, which is where global shortcuts
+    // have to start listening — waiting for the dropdown's first open would mean the
+    // shortcuts silently didn't work until you'd clicked the menu bar once.
+    let hotkeys: HotkeyStore
+    let caffeine: CaffeineManager
+    let actions: SystemActions
+    let license: LicenseManager
+    @Environment(\.openWindow) private var openWindow
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
     /// never while discharging (a battery saver shouldn't burn cycles on battery).
@@ -176,7 +190,15 @@ struct MenuBarLabel: View {
         }
         // The status item exists from launch, so this is where the automation
         // rules start watching — they must run whether or not the menu is opened.
-        .onAppear { triggers.attach(chargeLimit: chargeLimit, battery: battery) }
+        .onAppear {
+            triggers.attach(chargeLimit: chargeLimit, battery: battery)
+            hotkeys.attach(chargeLimit: chargeLimit, caffeine: caffeine,
+                           systemActions: actions, license: license,
+                           openWindow: { id in
+                               NSApplication.shared.activate(ignoringOtherApps: true)
+                               openWindow(id: id)
+                           })
+        }
     }
 
     /// Truly full, or held at the user's charge limit.
