@@ -1,5 +1,30 @@
 # battlify
 
+## 0.17.0
+
+### Minor Changes
+
+- 0a3d5ab: Global keyboard shortcuts, with a full remapping UI in Settings › Shortcuts.
+
+  - **15 bindable actions**: toggle the charge limit, raise/lower it in 5% steps, pause/resume charging, cycle save mode, Low Power Mode, force discharge, Caffeine, Always Active, dim/restore the display, display off, sleep now, and open the Settings/Details/History windows.
+  - **Remap anything**: click a shortcut, type the new combination. Assigning a combination that's already taken moves it and tells you which action lost it. ⌫ removes a binding, ⎋ cancels, and **Reset to Defaults** restores the shipped set.
+  - **Defaults on ⌃⌥⌘** (⌃⌥⌘C for Caffeine, ⌃⌥⌘L for Low Power Mode, ⌃⌥⌘B for the charge limit, …). Sleep, force discharge, display-off, and the Details/History windows ship unbound so nothing disruptive is one stray keystroke away.
+  - **Needs no Accessibility permission.** Shortcuts are claimed through `RegisterEventHotKey`, so the window server delivers only the specific combinations Battlify registers — the app never sees anything else you type.
+  - A brief **on-screen HUD** confirms what fired, since toggling something invisible like Low Power Mode is otherwise indistinguishable from a shortcut that isn't working. Combinations another app already owns are flagged as "in use" in Settings rather than failing silently, and the menu tooltips now show each action's shortcut.
+
+- Stop the two settings that let a closed Mac stay awake in a bag.
+
+  "Super Save when lid closed" already cut the radios, Low Power Mode, Power Nap, wake-on-network and TCP keep-alive — and restored each one exactly as it was on wake. It missed the only two settings that decide whether the Mac sleeps **at all**:
+
+  - **Wake when a nearby device is close** (`proximitywake`) — an iPhone or Watch nearby wakes the Mac. In a bag that isn't one wake, it's a wake every time your phone stirs, all night.
+  - **Stay awake for terminal sessions** (`ttyskeepawake`) — an open terminal or SSH session blocks sleep outright. Lid shut, in a bag, fully awake and warm.
+
+  Both are now switched off by Super Save on lid close, snapshotted first and put back verbatim on wake. Both also appear as their own rows in **Sleep & Power › Wake while closed**, so you can control them independently of lid close.
+
+  Turning radios off saves milliwatts; these two decide whether the machine sleeps in the first place. If your Mac has been coming out of your bag hot and empty, this is almost certainly why.
+
+  For the largest remaining win, set **Sleep & Power › Deep** — powering memory down (`hibernatemode 25`) does more for a Mac left closed for hours than every radio toggle combined.
+
 ## 0.16.0
 
 ### Minor Changes
