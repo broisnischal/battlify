@@ -47,7 +47,13 @@ final class AutomationStore: ObservableObject {
     private var deepSaveActive = false
 
     /// The sleep/wake power toggles deep save turns off (and restores on wake).
-    private static let deepSaveToggles: [PowerToggle] = [.powerNap, .wakeOnNetwork, .tcpKeepAlive]
+    // Everything deep save switches off, and therefore everything it snapshots and
+    // puts back on wake. `proximityWake` and `ttysKeepAwake` matter most of all: the
+    // first wakes the Mac every time a nearby iPhone stirs, and the second stops it
+    // sleeping at all while a terminal session is open — the two reasons a closed Mac
+    // comes out of a bag warm and empty.
+    private static let deepSaveToggles: [PowerToggle] =
+        [.powerNap, .wakeOnNetwork, .tcpKeepAlive, .proximityWake, .ttysKeepAwake]
 
     private enum Keys {
         static let wifi = "automation.wifiOffOnLidClose"
@@ -265,9 +271,11 @@ final class AutomationStore: ObservableObject {
         if bluetoothWasOn { RadioControl.setBluetooth(false) }
 
         _ = try? ControlClient.send(.setLowPowerMode(true))
-        _ = try? ControlClient.send(.setPowerToggle(.powerNap, false))
-        _ = try? ControlClient.send(.setPowerToggle(.wakeOnNetwork, false))
-        _ = try? ControlClient.send(.setPowerToggle(.tcpKeepAlive, false))
+        // Drive the same list we snapshot, so nothing can be switched off here and
+        // then forgotten on wake.
+        for toggle in Self.deepSaveToggles {
+            _ = try? ControlClient.send(.setPowerToggle(toggle, false))
+        }
         deepSaveActive = true
     }
 }
