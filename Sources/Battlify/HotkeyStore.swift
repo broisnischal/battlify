@@ -56,8 +56,9 @@ final class HotkeyStore: ObservableObject {
         monitor.onFire = { [weak self] action in self?.perform(action) }
     }
 
-    /// Wire up the targets and start listening. Called once from the menu bar label,
-    /// which is the one view guaranteed to exist from launch.
+    /// Wire up the targets and start listening. Called from the menu bar label's body,
+    /// the one thing that renders at launch, and idempotent so re-evaluating that body
+    /// costs nothing.
     func attach(chargeLimit: ChargeLimitStore,
                 caffeine: CaffeineManager,
                 systemActions: SystemActions,
@@ -106,7 +107,7 @@ final class HotkeyStore: ObservableObject {
 
     private func reregister() {
         monitor.apply(bindings, enabled: enabled)
-        // Only publish a real change: `attach()` runs from a view's `onAppear`, and an
+        // Only publish a real change: `attach()` runs from a view body, and an
         // unconditional assignment there would notify SwiftUI mid-update for nothing.
         let rejected = monitor.rejected
         if rejected != unavailable { unavailable = rejected }
@@ -116,8 +117,7 @@ final class HotkeyStore: ObservableObject {
 
     private func perform(_ action: HotkeyAction) {
         if action.requiresPro, license?.isPro != true {
-            HotkeyHUD.shared.show("Battlify Pro", detail: "\(action.title) needs a licence.",
-                                  icon: "lock")
+            HotkeyHUD.shared.show("Battlify Pro", detail: "\(action.title) needs a licence.")
             return
         }
 
@@ -133,20 +133,20 @@ final class HotkeyStore: ObservableObject {
         case .toggleCaffeine:
             guard let caffeine else { return }
             caffeine.toggle()
-            hud(action, caffeine.active ? "On" : "Off",
+            hud(caffeine.active ? "Keep Awake On" : "Keep Awake Off",
                 detail: caffeine.active ? "Display and system won't sleep" : nil)
 
         case .toggleKeepAwake:
             guard let charge = requireDaemon() else { return }
             charge.keepAwake.toggle()
             charge.apply()
-            hud(action, charge.keepAwake ? "On" : "Off",
+            hud(charge.keepAwake ? "Always Active On" : "Always Active Off",
                 detail: charge.keepAwake ? "Stays awake with the lid closed, on AC" : nil)
 
         case .toggleDimDisplay:
             guard let systemActions else { return }
             systemActions.toggleDim()
-            hud(action, systemActions.dimmed ? "Display Dimmed" : "Brightness Restored")
+            hud(systemActions.dimmed ? "Display Dimmed" : "Brightness Restored")
 
         case .displayOff:
             systemActions?.turnDisplayOff()
@@ -166,8 +166,7 @@ final class HotkeyStore: ObservableObject {
         guard let chargeLimit else { return nil }
         guard chargeLimit.daemonAvailable else {
             HotkeyHUD.shared.show("Helper Not Running",
-                                  detail: "Install it in Settings › General.",
-                                  icon: "alert")
+                                  detail: "Install it in Settings › General.")
             return nil
         }
         return chargeLimit
@@ -177,8 +176,7 @@ final class HotkeyStore: ObservableObject {
         guard let charge = requireDaemon() else { return }
         charge.limitEnabled.toggle()
         charge.apply()
-        hud(.toggleChargeLimit,
-            charge.limitEnabled ? "Charge Limit On" : "Charge Limit Off",
+        hud(charge.limitEnabled ? "Charge Limit On" : "Charge Limit Off",
             detail: charge.limitEnabled ? "Holding at \(charge.limit)%" : "Charges to 100%")
     }
 
@@ -188,25 +186,24 @@ final class HotkeyStore: ObservableObject {
         guard let charge = requireDaemon() else { return }
         let next = min(100, max(50, charge.limit + delta))
         guard next != charge.limit || !charge.limitEnabled else {
-            hud(delta > 0 ? .chargeLimitUp : .chargeLimitDown,
-                "Charge Limit \(charge.limit)%", detail: delta > 0 ? "Already at the top"
+            hud("Charge Limit \(charge.limit)%", detail: delta > 0 ? "Already at the top"
                                                                   : "Already at the bottom")
             return
         }
         charge.limit = next
         charge.limitEnabled = true
         charge.apply()
-        hud(delta > 0 ? .chargeLimitUp : .chargeLimitDown, "Charge Limit \(next)%")
+        hud("Charge Limit \(next)%")
     }
 
     private func togglePauseCharging() {
         guard let charge = requireDaemon() else { return }
         if charge.isPaused {
             charge.resumeCharging()
-            hud(.togglePauseCharging, "Charging Resumed")
+            hud("Charging Resumed")
         } else {
             charge.pauseCharging(minutes: -1)   // -1 = until resumed
-            hud(.togglePauseCharging, "Charging Paused", detail: "Until you resume")
+            hud("Charging Paused", detail: "Until you resume")
         }
     }
 
@@ -216,26 +213,25 @@ final class HotkeyStore: ObservableObject {
         let index = all.firstIndex(of: charge.mode) ?? 0
         let next = all[(index + 1) % all.count]
         charge.applyMode(next)
-        hud(.cycleSaveMode, next.title, detail: next.summary)
+        hud("Save Mode: \(next.title)", detail: next.summary)
     }
 
     private func toggleLowPowerMode() {
         guard let charge = requireDaemon() else { return }
         let next = !charge.lowPowerMode
         charge.setLowPowerMode(next)
-        hud(.toggleLowPowerMode, next ? "Low Power Mode On" : "Low Power Mode Off")
+        hud(next ? "Low Power Mode On" : "Low Power Mode Off")
     }
 
     private func toggleDischarge() {
         guard let charge = requireDaemon() else { return }
         guard charge.dischargeSupported else {
-            hud(.toggleDischarge, "Not Supported", detail: "This Mac has no adapter control.")
+            hud("Not Supported", detail: "This Mac has no adapter control.")
             return
         }
         charge.dischargeEnabled.toggle()
         charge.apply()
-        hud(.toggleDischarge,
-            charge.dischargeEnabled ? "Force Discharge On" : "Force Discharge Off",
+        hud(charge.dischargeEnabled ? "Force Discharge On" : "Force Discharge Off",
             detail: charge.dischargeEnabled ? "Running off the battery while plugged in" : nil)
     }
 
@@ -244,7 +240,7 @@ final class HotkeyStore: ObservableObject {
         openWindow?(id)
     }
 
-    private func hud(_ action: HotkeyAction, _ title: String, detail: String? = nil) {
-        HotkeyHUD.shared.show(title, detail: detail, icon: action.icon)
+    private func hud(_ title: String, detail: String? = nil) {
+        HotkeyHUD.shared.show(title, detail: detail)
     }
 }

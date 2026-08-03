@@ -19,6 +19,11 @@ extension HotkeyModifiers {
 
 /// The click-to-record shortcut field used by each row in the Shortcuts tab.
 ///
+/// Every state — set, unset, recording, needs-a-modifier, taken by another app — is
+/// drawn inside one fixed-size pill, and the clear button is overlaid rather than
+/// placed beside it. So nothing in the row moves as the state changes: no reflow when
+/// a warning appears, no gap where an absent button used to be.
+///
 /// Which row is recording is owned by the parent, so starting a new recording ends
 /// any other — two fields can't both hold first responder.
 struct HotkeyRecorderField: View {
@@ -33,54 +38,58 @@ struct HotkeyRecorderField: View {
 
     /// Set when the user types something without ⌃/⌥/⌘, which we won't accept.
     @State private var needsModifier = false
+    @State private var hovering = false
+
+    // Sized to hold the longest label ("Needs ⌃⌥⌘") without the text having to
+    // shrink, so every row's pill is the same width and the column stays straight.
+    private let pillWidth: CGFloat = 112
+    private let pillHeight: CGFloat = 26
 
     var body: some View {
-        HStack(spacing: 6) {
-            if needsModifier {
-                Text("Add ⌃, ⌥ or ⌘")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            } else if unavailable, !isRecording {
-                Text("In use by another app")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-
-            Button {
-                needsModifier = false
-                isRecording ? onCancel() : onBegin()
-            } label: {
-                Text(label)
-                    .font(.callout.weight(hotkey == nil ? .regular : .medium))
-                    .monospaced()
-                    .foregroundStyle(foreground)
-                    .frame(minWidth: 96)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(background, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(isRecording ? Color.accentColor : .clear, lineWidth: 1.5)
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(isRecording ? "Type the shortcut, or press ⎋ to cancel"
-                              : "Click to set a shortcut")
-
-            // Only offered when there's something to remove, so the row doesn't carry
-            // a permanently dead button.
-            Button(action: { needsModifier = false; onClear() }) {
-                HugeIcon("cancel", size: 12)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Remove this shortcut")
-            .opacity(hotkey != nil && !isRecording ? 1 : 0)
-            .disabled(hotkey == nil || isRecording)
+        Button {
+            needsModifier = false
+            isRecording ? onCancel() : onBegin()
+        } label: {
+            Text(label)
+                .font(.system(size: 12, weight: hotkey == nil ? .regular : .medium,
+                              design: .monospaced))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .foregroundStyle(foreground)
+                // Room on the right for the clear button so a long shortcut never
+                // runs underneath it.
+                .padding(.leading, 8)
+                .padding(.trailing, hotkey != nil ? 22 : 8)
+                .frame(width: pillWidth, height: pillHeight)
+                .background(background, in: shape)
+                .overlay(shape.strokeBorder(border, lineWidth: 1))
+                .contentShape(shape)
         }
-        // Zero-sized and non-interactive: it exists only to hold first responder
-        // while recording, and is torn down the moment recording ends.
+        .buttonStyle(PressableShortcutStyle())
+        .help(helpText)
+        // Overlaid, not adjacent: an inline button would leave a hole in the row
+        // whenever there was no shortcut to clear.
+        .overlay(alignment: .trailing) {
+            if hotkey != nil, !isRecording {
+                Button {
+                    needsModifier = false
+                    onClear()
+                } label: {
+                    HugeIcon("cancel", size: 11)
+                        .foregroundStyle(hovering ? Color.primary.opacity(0.7) : .secondary)
+                        .frame(width: 20, height: 20)      // hit area, not visual size
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Remove this shortcut")
+                // Fades rather than appears: the pill is a single object, and a
+                // button blinking into existence inside it reads as a glitch.
+                .opacity(hovering ? 1 : 0)
+                .padding(.trailing, 3)
+                .animation(.easeOut(duration: 0.12), value: hovering)
+            }
+        }
+        // The zero-sized catcher exists only to hold first responder while recording.
         .overlay(alignment: .trailing) {
             if isRecording {
                 KeyCatcher(
@@ -99,24 +108,58 @@ struct HotkeyRecorderField: View {
                 .allowsHitTesting(false)
             }
         }
+        .onHover { hovering = $0 }
         .onChange(of: isRecording) { _, recording in
             if !recording { needsModifier = false }
         }
     }
 
+    private var shape: RoundedRectangle {
+        // Concentric with the 12pt card it sits in, minus the row's inset.
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+    }
+
+    /// Every state reads out here, so the row never has to grow to explain itself.
     private var label: String {
+        if needsModifier { return "Needs ⌃⌥⌘" }
         if isRecording { return "Type…" }
         return hotkey?.displayString ?? "Not set"
     }
 
     private var foreground: Color {
-        if isRecording { return .primary }
+        if needsModifier { return .orange }
+        if isRecording { return .accentColor }
+        if unavailable { return .orange }
         return hotkey == nil ? .secondary : .primary
     }
 
     private var background: AnyShapeStyle {
         if isRecording { return AnyShapeStyle(Color.accentColor.opacity(0.12)) }
+        if unavailable { return AnyShapeStyle(Color.orange.opacity(0.10)) }
         return AnyShapeStyle(.quaternary.opacity(0.6))
+    }
+
+    private var border: Color {
+        if isRecording { return .accentColor.opacity(0.9) }
+        if unavailable { return .orange.opacity(0.45) }
+        return .clear
+    }
+
+    private var helpText: String {
+        if isRecording { return "Type the shortcut, or press ⎋ to cancel" }
+        if unavailable {
+            return "Another app already owns \(hotkey?.displayString ?? "this shortcut") — pick a different one."
+        }
+        return hotkey == nil ? "Click to set a shortcut" : "Click to change this shortcut"
+    }
+}
+
+/// Scale-on-press so the pill acknowledges the click that starts recording.
+private struct PressableShortcutStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

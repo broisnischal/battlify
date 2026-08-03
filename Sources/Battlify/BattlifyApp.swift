@@ -145,6 +145,16 @@ struct MenuBarLabel: View {
             && (celebrating || (settings.animateMenuBarIcon && snap.isCharging))
         // The label renders at launch — a reliable hook to start notification detection.
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
+        // Same reason, and it has to be here rather than in `onAppear`: a status-item
+        // label's `onAppear` doesn't fire at launch, so registering shortcuts there
+        // left every one of them dead until the menu had been opened. `attach` is
+        // idempotent, so calling it on each body evaluation costs nothing.
+        hotkeys.attach(chargeLimit: chargeLimit, caffeine: caffeine,
+                       systemActions: actions, license: license,
+                       openWindow: { id in
+                           NSApplication.shared.activate(ignoringOtherApps: true)
+                           openWindow(id: id)
+                       })
         return HStack(spacing: 2) {
             // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
             // labels, and the renderer draws the charging bolt inside the glyph.
@@ -190,15 +200,7 @@ struct MenuBarLabel: View {
         }
         // The status item exists from launch, so this is where the automation
         // rules start watching — they must run whether or not the menu is opened.
-        .onAppear {
-            triggers.attach(chargeLimit: chargeLimit, battery: battery)
-            hotkeys.attach(chargeLimit: chargeLimit, caffeine: caffeine,
-                           systemActions: actions, license: license,
-                           openWindow: { id in
-                               NSApplication.shared.activate(ignoringOtherApps: true)
-                               openWindow(id: id)
-                           })
-        }
+        .onAppear { triggers.attach(chargeLimit: chargeLimit, battery: battery) }
     }
 
     /// Truly full, or held at the user's charge limit.
