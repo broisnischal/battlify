@@ -15,9 +15,15 @@ struct SettingsView: View {
     @EnvironmentObject private var network: NetworkProfileStore
     @EnvironmentObject private var endurance: EnduranceStore
     @EnvironmentObject private var triggers: TriggerStore
+    @EnvironmentObject private var hotkeys: HotkeyStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     @State private var selection: Tab = .charging
+    /// Which shortcut row is capturing keys (nil = none). Held here rather than per
+    /// row so starting one recording ends any other.
+    @State private var recordingAction: HotkeyAction?
+    /// Last shortcut reassignment, to explain which action lost its binding.
+    @State private var displacedNote: String?
     /// Schedule being edited/added in the sheet (nil = sheet closed).
     @State private var editingSchedule: ChargeSchedule?
     @State private var editingIsNew = false
@@ -30,7 +36,7 @@ struct SettingsView: View {
     /// Hand-rolled tab bar instead of `TabView`, which on recent macOS collapses
     /// into an overflow popup instead of showing real tabs.
     private enum Tab: String, CaseIterable, Identifiable {
-        case charging, schedule, automation, sleepPower, general, about
+        case charging, schedule, automation, sleepPower, shortcuts, general, about
         var id: String { rawValue }
 
         var title: String {
@@ -39,6 +45,7 @@ struct SettingsView: View {
             case .schedule: return "Schedule"
             case .automation: return "Automation"
             case .sleepPower: return "Sleep & Power"
+            case .shortcuts: return "Shortcuts"
             case .general: return "General"
             case .about: return "About"
             }
@@ -49,6 +56,7 @@ struct SettingsView: View {
             case .schedule: return "clock"
             case .automation: return "wand"
             case .sleepPower: return "sleep"
+            case .shortcuts: return "key"
             case .general: return "settings"
             case .about: return "info"
             }
@@ -65,14 +73,16 @@ struct SettingsView: View {
                 case .schedule:   scheduleTab
                 case .automation: automationTab
                 case .sleepPower: sleepPowerTab
+                case .shortcuts:  shortcutsTab
                 case .general:    generalTab
                 case .about:      aboutTab
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Wide enough for six tabs to sit on one row without crowding.
-        .frame(width: 560, height: 580)
+        // Wide enough for all seven tabs to sit on one row without crowding —
+        // "Sleep & Power" is the one that clips first when this shrinks.
+        .frame(width: 620, height: 580)
         .sheet(item: $editingSchedule) { schedule in
             ScheduleEditorView(
                 schedule: schedule,
@@ -711,6 +721,82 @@ struct SettingsView: View {
     }
 
     // MARK: - General
+
+    // MARK: - Shortcuts
+
+    private var shortcutsTab: some View {
+        tab {
+            card("Global Shortcuts") {
+                toggleRow("Enable keyboard shortcuts",
+                          "Works from any app. Battlify claims only the combinations below — it never watches what you type.",
+                          isOn: $hotkeys.enabled)
+                if let displacedNote {
+                    divider
+                    infoRow(displacedNote, systemImage: "info")
+                }
+            }
+
+            ForEach(HotkeyAction.Category.allCases) { category in
+                card(category.title) {
+                    let actions = HotkeyAction.inCategory(category)
+                    ForEach(Array(actions.enumerated()), id: \.element) { index, action in
+                        if index > 0 { divider }
+                        shortcutRow(action)
+                    }
+                }
+            }
+
+            HStack {
+                Button("Reset to Defaults") {
+                    recordingAction = nil
+                    displacedNote = nil
+                    hotkeys.resetToDefaults()
+                }
+                .disabled(hotkeys.bindings.isDefault)
+                Spacer()
+                Text("⌫ removes a shortcut · ⎋ cancels")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        // Recording grabs the keyboard, so it must not survive leaving the tab.
+        .onChange(of: selection) { _, _ in recordingAction = nil }
+    }
+
+    private func shortcutRow(_ action: HotkeyAction) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            HugeIcon(action.icon, size: 16, weight: 2)
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.title).font(.callout)
+                if !action.subtitle.isEmpty {
+                    Text(action.subtitle).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            HotkeyRecorderField(
+                hotkey: hotkeys.bindings.hotkey(for: action),
+                isRecording: recordingAction == action,
+                unavailable: hotkeys.unavailable.contains(action),
+                onBegin: { recordingAction = action },
+                onCapture: { key in
+                    let displaced = hotkeys.set(key, for: action)
+                    displacedNote = displaced.map {
+                        "\(key.displayString) moved to “\(action.title)” — “\($0.title)” now has no shortcut."
+                    }
+                    recordingAction = nil
+                },
+                onCancel: { recordingAction = nil },
+                onClear: {
+                    hotkeys.clear(action)
+                    recordingAction = nil
+                })
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .opacity(hotkeys.enabled ? 1 : 0.5)
+        .disabled(!hotkeys.enabled)
+    }
 
     private var generalTab: some View {
         tab {

@@ -10,6 +10,11 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
     case wakeOnNetwork = "womp"
     case tcpKeepAlive = "tcpkeepalive"
     case dimOnBattery = "lessbright"
+    /// Wakes when an iPhone/Watch comes near. In a bag that fires over and over.
+    case proximityWake = "proximitywake"
+    /// Blocks sleep outright while a terminal/SSH session is alive — the classic
+    /// "why was my Mac hot and empty in my bag".
+    case ttysKeepAwake = "ttyskeepawake"
 
     /// Where a toggle belongs in the UI.
     public enum Category: Sendable {
@@ -26,7 +31,8 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
 
     public var category: Category {
         switch self {
-        case .powerNap, .wakeOnNetwork, .tcpKeepAlive: return .sleepWake
+        case .powerNap, .wakeOnNetwork, .tcpKeepAlive, .proximityWake, .ttysKeepAwake:
+            return .sleepWake
         case .dimOnBattery: return .batteryOptions
         }
     }
@@ -45,6 +51,8 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
         case .wakeOnNetwork: return "Wake for network access"
         case .tcpKeepAlive: return "Keep network alive in sleep"
         case .dimOnBattery: return "Slightly dim the display on battery"
+        case .proximityWake: return "Wake when a nearby device is close"
+        case .ttysKeepAwake: return "Stay awake for terminal sessions"
         }
     }
 
@@ -54,6 +62,8 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
         case .wakeOnNetwork: return "Lets other devices wake this Mac over the network"
         case .tcpKeepAlive: return "Keeps Find My & push active during sleep"
         case .dimOnBattery: return "Lowers brightness a little when unplugged to stretch battery life"
+        case .proximityWake: return "Lets an iPhone or Watch nearby wake this Mac — repeatedly, in a bag"
+        case .ttysKeepAwake: return "Keeps the Mac fully awake while any terminal or SSH session is open"
         }
     }
 }
