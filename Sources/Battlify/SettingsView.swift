@@ -845,75 +845,6 @@ struct SettingsView: View {
                             systemImage: "info")
                 }
 
-                card("Plug-in feedback (experimental)") {
-                    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                        toggleRow("Animate anyway",
-                                  "macOS Reduce Motion is on, so Battlify's animations — the charging icon, this overlay, the charge-complete flash — are all switched off. Turn this on to play them anyway; nothing else on your Mac is affected.",
-                                  isOn: $settings.animateWithReduceMotion)
-                        divider
-                    }
-                    toggleRow("Tap the trackpad when you plug in",
-                              "Two taps on connect, one on unplug, three when the charge limit is reached. Needs a Force Touch trackpad — a desktop Mac, or a laptop you're driving from an external keyboard, has nothing to tap with, and the trackpad is asleep while the lid is shut.",
-                              isOn: $settings.hapticsEnabled)
-                    divider
-                    toggleRow("Show an animation when you plug in",
-                              "Flashes over whatever you're doing for about a second, then gets out of the way. Click-through, so it can't swallow a click, and it skips the motion entirely if Reduce Motion is on.",
-                              isOn: $settings.chargeOverlayEnabled)
-                    if settings.chargeOverlayEnabled {
-                        divider
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Animation").font(.callout)
-                                Spacer()
-                                Picker("", selection: $settings.chargeOverlayStyle) {
-                                    ForEach(ChargeOverlayStyle.allCases) {
-                                        Text($0.displayName).tag($0)
-                                    }
-                                }
-                                .labelsHidden().frame(width: 160)
-                                Button("Preview") {
-                                    overlay.show(style: settings.chargeOverlayStyle,
-                                                 duration: settings.chargeOverlayDuration,
-                                                 percentage: battery.snapshot.percentage,
-                                                 allowMotion: settings.motionAllowed)
-                                }
-                                .controlSize(.small)
-                            }
-                            Text(settings.chargeOverlayStyle.summary)
-                                .font(.caption).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if settings.chargeOverlayStyle == .custom {
-                                let count = ChargeFrameSequence.frameURLs().count
-                                HStack(spacing: 8) {
-                                    Button("Reveal Frames Folder…") {
-                                        ChargeFrameSequence.revealInFinder()
-                                    }
-                                    .controlSize(.small)
-                                    Text(count == 0
-                                         ? "No frames yet — the dot grid plays until you add some."
-                                         : "\(count) frame\(count == 1 ? "" : "s") found, played in filename order.")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Text("Export a numbered image sequence (frame_001.png, frame_002.png, …) from Rive, Lottie or After Effects — up to \(ChargeFrameSequence.maxFrames) frames, scaled to fit and centred. No plug-in or runtime needed.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 10)
-                        divider
-                        stepperRow("How long",
-                                   value: String(format: "%.1f s", settings.chargeOverlayDuration),
-                                   binding: Binding(
-                                    get: { settings.chargeOverlayDuration * 10 },
-                                    set: { settings.chargeOverlayDuration = ($0.rounded() / 10) }),
-                                   range: 5...20)
-                        divider
-                        toggleRow("Play it when you unplug too",
-                                  "The same animation in a cooler colour, without the charge level.",
-                                  isOn: $settings.chargeOverlayOnUnplug)
-                    }
-                }
-
                 card("Caffeine (keep awake now)") {
                     infoRow(caffeineStateHint, systemImage: "coffee")
                     divider
@@ -1175,6 +1106,75 @@ struct SettingsView: View {
                     .padding(.horizontal, 12).padding(.vertical, 10)
                 }
             }
+
+                card("Plug-in feedback (experimental)") {
+                    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                        toggleRow("Animate anyway",
+                                  "macOS Reduce Motion is on, so Battlify's animations — the charging icon, this overlay, the charge-complete flash — are all switched off. Turn this on to play them anyway; nothing else on your Mac is affected.",
+                                  isOn: $settings.animateWithReduceMotion)
+                        divider
+                    }
+                    toggleRow("Tap the trackpad when you plug in",
+                              "Two taps on connect, one on unplug, three when the charge limit is reached. Needs a Force Touch trackpad — a desktop Mac, or a laptop you're driving from an external keyboard, has nothing to tap with, and the trackpad is asleep while the lid is shut.",
+                              isOn: $settings.hapticsEnabled)
+                    divider
+                    toggleRow("Show an animation when you plug in",
+                              "Flashes over whatever you're doing for about a second, then gets out of the way. Click-through, so it can't swallow a click, and it skips the motion entirely if Reduce Motion is on.",
+                              isOn: $settings.chargeOverlayEnabled)
+                    if settings.chargeOverlayEnabled {
+                        divider
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Animation").font(.callout)
+                                Spacer()
+                                Picker("", selection: $settings.chargeOverlayStyle) {
+                                    ForEach(ChargeOverlayStyle.allCases) {
+                                        Text($0.displayName).tag($0)
+                                    }
+                                }
+                                .labelsHidden().frame(width: 160)
+                                Button("Preview") {
+                                    overlay.show(style: settings.chargeOverlayStyle,
+                                                 duration: settings.chargeOverlayDuration,
+                                                 percentage: battery.snapshot.percentage,
+                                                 allowMotion: settings.motionAllowed)
+                                }
+                                .controlSize(.small)
+                            }
+                            Text(settings.chargeOverlayStyle.summary)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if settings.chargeOverlayStyle == .custom {
+                                let count = ChargeFrameSequence.frameURLs().count
+                                HStack(spacing: 8) {
+                                    Button("Reveal Frames Folder…") {
+                                        ChargeFrameSequence.revealInFinder()
+                                    }
+                                    .controlSize(.small)
+                                    Text(count == 0
+                                         ? "No frames yet — the dot grid plays until you add some."
+                                         : "\(count) frame\(count == 1 ? "" : "s") found, played in filename order.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Text("Export a numbered image sequence (frame_001.png, frame_002.png, …) from Rive, Lottie or After Effects — up to \(ChargeFrameSequence.maxFrames) frames, scaled to fit and centred. No plug-in or runtime needed.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        divider
+                        stepperRow("How long",
+                                   value: String(format: "%.1f s", settings.chargeOverlayDuration),
+                                   binding: Binding(
+                                    get: { settings.chargeOverlayDuration * 10 },
+                                    set: { settings.chargeOverlayDuration = ($0.rounded() / 10) }),
+                                   range: 5...20)
+                        divider
+                        toggleRow("Play it when you unplug too",
+                                  "The same animation in a cooler colour, without the charge level.",
+                                  isOn: $settings.chargeOverlayOnUnplug)
+                    }
+                }
 
             card("Startup") {
                 toggleRow("Launch at login", isOn: Binding(

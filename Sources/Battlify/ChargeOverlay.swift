@@ -147,38 +147,61 @@ private struct ChargeOverlayView: View {
 
     // MARK: - Styles
 
+    /// A dense field of small dots with pulses travelling out from the port.
+    ///
+    /// Three fronts, not one: a single wave crosses once and is over, while pulses arriving
+    /// one after another read as something being pushed into the machine. The grid is fine
+    /// enough (16pt) that the wave has a shape rather than a staircase of dots.
+    ///
+    /// Dots are batched by brightness instead of drawn one at a time. At this density a
+    /// screen holds ~6,000 of them, and 6,000 separate fill calls per frame at 60fps is the
+    /// kind of thing that makes a battery app worth uninstalling; bucketing into six alpha
+    /// levels turns it into six fills of one path each.
     private func drawDotGrid(_ gc: GraphicsContext, size: CGSize, t: Double) {
-        let spacing: CGFloat = 26
+        let spacing: CGFloat = 16
         let from = origin(size)
         let maxDistance = hypot(size.width, size.height)
         let cols = Int(size.width / spacing) + 1
         let rows = Int(size.height / spacing) + 1
 
+        // Each pulse is the same front, launched a beat later.
+        let pulseOffsets: [Double] = [0, 0.26, 0.52]
+        let bandWidth = 0.26
+        let buckets = 6
+        var paths = [Path](repeating: Path(), count: buckets)
+
         for row in 0...rows {
             for col in 0...cols {
                 let base = CGPoint(x: CGFloat(col) * spacing, y: CGFloat(row) * spacing)
                 let d = hypot(base.x - from.x, base.y - from.y) / maxDistance
-                // One wave front travelling out. Dots ahead of it and well behind it
-                // stay dark, so the grid reads as a pulse crossing the screen.
-                // A narrow band, not a slow gradient: at 0.6 the lit window covered most
-                // of the screen at once and read as "dots everywhere" rather than a wave
-                // crossing it. 0.3 keeps a recognisable front with a short tail.
-                let phase = t * 2.3 - d * 1.5
-                guard phase > 0, phase < 0.3 else { continue }
-                let amp = sin(phase / 0.3 * .pi)
-                guard amp > 0.01 else { continue }
+                let travelled = t * 2.6 - d * 1.5
+
+                // Brightest pulse wins, so overlapping fronts don't cancel each other out.
+                var amp = 0.0
+                for offset in pulseOffsets {
+                    let phase = travelled - offset
+                    guard phase > 0, phase < bandWidth else { continue }
+                    amp = max(amp, sin(phase / bandWidth * .pi))
+                }
+                guard amp > 0.04 else { continue }
 
                 // Deterministic per-dot jitter — the "vibrating" part. Hashing the grid
-                // position keeps each dot's shake stable frame to frame instead of
-                // turning the whole grid into noise.
+                // position keeps each dot's shake stable frame to frame instead of turning
+                // the whole grid into noise.
                 let seed = sin(Double(col) * 12.9898 + Double(row) * 78.233) * 43758.5453
                 let jitter = (seed - seed.rounded(.down)) * 2 - 1
-                let shake = CGFloat(jitter * amp * 2.2)
-                let r = 1.3 + CGFloat(amp) * 2.6
+                let shake = CGFloat(jitter * amp * 1.6)
+                let r = 0.7 + CGFloat(amp) * 1.5
                 let rect = CGRect(x: base.x + shake - r, y: base.y + shake * 0.6 - r,
                                   width: r * 2, height: r * 2)
-                gc.fill(Path(ellipseIn: rect), with: .color(tint.opacity(0.14 + amp * 0.7)))
+                let bucket = min(buckets - 1, Int(amp * Double(buckets)))
+                paths[bucket].addEllipse(in: rect)
             }
+        }
+
+        for (index, path) in paths.enumerated() where !path.isEmpty {
+            let level = (Double(index) + 0.5) / Double(buckets)
+            gc.fill(path, with: .color(tint.opacity(0.1 + level * 0.75)))
         }
     }
 

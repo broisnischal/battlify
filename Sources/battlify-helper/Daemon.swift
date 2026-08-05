@@ -58,6 +58,8 @@ final class Daemon: @unchecked Sendable {
     private var lastDisableSleep: Bool?
     // Last scheduled-window verdict, so a window opening or closing is logged once.
     private var lastKeepAwakeArmed = false
+    /// Last hold state the LED reacted to, so the engage blink fires once per change.
+    private var lastHoldForLed = false
     // Force display off once per lid-closed spell while keep-awake holds; resets when the lid opens.
     private var displayForcedOffWhileClosed = false
 
@@ -643,9 +645,30 @@ final class Daemon: @unchecked Sendable {
         case .status:
             if settling { target = .off }               // waiting after wake
             else if !snap.onExternalPower { target = .system }  // truly unplugged
-            else if cfg.holdCharge { target = .orange } // deliberately not charging: amber
+            // Hold gets green, not amber: amber is what charging looks like, so using it
+            // for "deliberately not charging" made the two states identical — the light
+            // said nothing. The SMC offers only off, green and amber, so green (already
+            // the app's "holding" colour) is the one that distinguishes it. The moment
+            // hold engages there's a short blink below, so the change is noticeable
+            // rather than something you'd have to be watching for.
+            else if cfg.holdCharge { target = .green }
             else if desired { target = .orange }        // charging
             else { target = .green }                    // holding / discharging to limit
+        }
+
+        // Announce the moment hold engages: three quick amber/off blinks, then settle on
+        // the steady colour. One-off and only on the transition — a light that blinks
+        // forever is a fault indicator, not a status.
+        if cfg.magSafeLedMode == .status, cfg.holdCharge != lastHoldForLed {
+            lastHoldForLed = cfg.holdCharge
+            if cfg.holdCharge, snap.onExternalPower {
+                for _ in 0..<3 {
+                    try? charge.setMagSafeLED(.off)
+                    usleep(120_000)
+                    try? charge.setMagSafeLED(.orange)
+                    usleep(120_000)
+                }
+            }
         }
 
         // Re-assert on drift (macOS re-manages the LED); a cache would miss it and leave the light wrong.

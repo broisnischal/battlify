@@ -153,6 +153,10 @@ struct MenuBarLabel: View {
         // overridden it for this app. Read here so every animation below agrees.
         let motion = settings.motionAllowed
         let celebratingNow = celebrating && motion
+        // Plugged in and deliberately not charging. Worth a glyph of its own: without one
+        // the menu bar looks exactly like sitting at the limit, and the whole point of the
+        // switch is that you chose it.
+        let holdingNow = chargeLimit.holdCharge && snap.isPluggedIn
         // Success flash is green only when coloring is on; mono blinks by alpha instead.
         let tint: MenuBarTint =
             celebratingNow && settings.colorMenuBarIcon ? .colored(.systemGreen)
@@ -196,6 +200,7 @@ struct MenuBarLabel: View {
                 tint: tint,
                 frame: animFrame,
                 celebrating: celebratingNow,
+                holding: holdingNow,
                 transition: transition,
                 transitionStep: transitionStep))
             if let text = labelText(snap) {
@@ -248,6 +253,12 @@ struct MenuBarLabel: View {
             guard settings.motionAllowed else { return }
             celebrating = true
             celebrateTicks = 0
+        }
+        // Held on or off: morph the bolt into a pause mark and back.
+        .onChange(of: holdingNow) { was, isNow in
+            guard was != isNow, settings.motionAllowed else { return }
+            transitionStep = 0
+            transition = isNow ? .heldOn : .heldOff
         }
         // Plug and unplug feedback. Driven off the snapshot rather than a power-source
         // callback of its own: this view already re-renders on every snapshot change, and
