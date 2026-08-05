@@ -14,13 +14,18 @@ final class FakeKeepAwake: KeepAwakeAsserting, @unchecked Sendable {
     private var _held: Set<UInt32> = []
     private var _next: UInt32 = 1
 
+    private var _kinds: [KeepAwakeHold] = []
+
     var acquireCount: Int { lock.withLock { _acquireCount } }
     var releaseCount: Int { lock.withLock { _releaseCount } }
     var heldCount: Int { lock.withLock { _held.count } }
+    /// Every hold kind asked for, in order — so a test can assert on the swap.
+    var kinds: [KeepAwakeHold] { lock.withLock { _kinds } }
 
-    func acquire(reason: String) -> UInt32 {
+    func acquire(kind: KeepAwakeHold, reason: String) -> UInt32 {
         lock.withLock {
             _acquireCount += 1
+            _kinds.append(kind)
             let token = _next; _next += 1
             _held.insert(token)
             return token
@@ -36,7 +41,7 @@ final class FakeKeepAwake: KeepAwakeAsserting, @unchecked Sendable {
 
 /// Backend that always fails to acquire, to test the failure path.
 struct FailingKeepAwake: KeepAwakeAsserting {
-    func acquire(reason: String) -> UInt32 { 0 }
+    func acquire(kind: KeepAwakeHold, reason: String) -> UInt32 { 0 }
     func release(_ token: UInt32) {}
 }
 
@@ -72,6 +77,58 @@ struct CaffeineManagerTests {
         #expect(m.expiresAt == nil)
         #expect(fake.acquireCount == 0)
         #expect(fake.heldCount == 0)
+    }
+
+    // --- Power policy: what the hold covers on battery ---
+
+    @Test func onBatteryTheHoldDropsTheDisplayButKeepsWorkRunning() {
+        let fake = FakeKeepAwake()
+        let m = CaffeineManager(backend: fake)
+        m.activate()
+        #expect(m.hold == .displayOn, "on AC the screen stays lit")
+
+        m.applyPolicy(keepDisplayOnBattery: false, endOnBattery: false, onExternalPower: false)
+        #expect(m.active, "unplugging must not end the session")
+        #expect(m.hold == .systemOnly)
+        #expect(fake.heldCount == 1, "swapped, not stacked")
+        #expect(fake.kinds == [.displayOn, .systemOnly])
+
+        // Plugging back in restores the full hold.
+        m.applyPolicy(keepDisplayOnBattery: false, endOnBattery: false, onExternalPower: true)
+        #expect(m.hold == .displayOn)
+        #expect(fake.heldCount == 1)
+    }
+
+    @Test func keepDisplayOnBatteryOptsOutOfTheDowngrade() {
+        let fake = FakeKeepAwake()
+        let m = CaffeineManager(backend: fake)
+        m.activate()
+        m.applyPolicy(keepDisplayOnBattery: true, endOnBattery: false, onExternalPower: false)
+        #expect(m.hold == .displayOn)
+        #expect(fake.acquireCount == 1, "nothing to swap")
+    }
+
+    @Test func endOnBatteryReleasesEverythingWhenUnplugged() {
+        let fake = FakeKeepAwake()
+        let m = CaffeineManager(backend: fake)
+        m.activate(.hours2)
+        m.applyPolicy(keepDisplayOnBattery: false, endOnBattery: true, onExternalPower: false)
+        #expect(m.active == false)
+        #expect(m.hold == nil)
+        #expect(m.expiresAt == nil, "the timer goes with the session")
+        #expect(fake.heldCount == 0)
+    }
+
+    @Test func policyIsInertWhileInactive() {
+        let fake = FakeKeepAwake()
+        let m = CaffeineManager(backend: fake)
+        m.applyPolicy(keepDisplayOnBattery: false, endOnBattery: true, onExternalPower: false)
+        #expect(m.active == false)
+        #expect(fake.acquireCount == 0)
+        // A session started on battery takes the downgraded hold from the outset.
+        m.applyPolicy(keepDisplayOnBattery: false, endOnBattery: false, onExternalPower: false)
+        m.activate()
+        #expect(m.hold == .systemOnly)
     }
 
     @Test func activateIndefiniteHoldsExactlyOne() {

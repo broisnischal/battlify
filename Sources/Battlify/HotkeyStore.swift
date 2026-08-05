@@ -116,8 +116,14 @@ final class HotkeyStore: ObservableObject {
     // MARK: - Dispatch
 
     private func perform(_ action: HotkeyAction) {
+        // Every banner this action posts carries the action's own glyph — the same one
+        // its row shows in Settings › Shortcuts — so the icon says what fired before
+        // the text is read. Set once here rather than threaded through each handler.
+        hudIcon = action.icon
+
         if action.requiresPro, license?.isPro != true {
-            HotkeyHUD.shared.show("Battlify Pro", detail: "\(action.title) needs a licence.")
+            HotkeyHUD.shared.show("Battlify Pro", detail: "\(action.title) needs a licence.",
+                                  icon: "lock")
             return
         }
 
@@ -166,7 +172,8 @@ final class HotkeyStore: ObservableObject {
         guard let chargeLimit else { return nil }
         guard chargeLimit.daemonAvailable else {
             HotkeyHUD.shared.show("Helper Not Running",
-                                  detail: "Install it in Settings › General.")
+                                  detail: "Install it in Settings › General.",
+                                  icon: "alert")
             return nil
         }
         return chargeLimit
@@ -226,7 +233,7 @@ final class HotkeyStore: ObservableObject {
     private func toggleDischarge() {
         guard let charge = requireDaemon() else { return }
         guard charge.dischargeSupported else {
-            hud("Not Supported", detail: "This Mac has no adapter control.")
+            hud("Not Supported", detail: "This Mac has no adapter control.", icon: "alert")
             return
         }
         charge.dischargeEnabled.toggle()
@@ -240,7 +247,10 @@ final class HotkeyStore: ObservableObject {
         openWindow?(id)
     }
 
-    private func hud(_ title: String, detail: String? = nil) {
-        HotkeyHUD.shared.show(title, detail: detail)
+    /// The glyph for the action being performed, so handlers don't each have to pass one.
+    private var hudIcon: String?
+
+    private func hud(_ title: String, detail: String? = nil, icon: String? = nil) {
+        HotkeyHUD.shared.show(title, detail: detail, icon: icon ?? hudIcon)
     }
 }

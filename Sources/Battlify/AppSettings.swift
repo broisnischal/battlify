@@ -51,6 +51,16 @@ final class AppSettings: ObservableObject {
     @Published var notificationsEnabled: Bool {
         didSet { defaults.set(notificationsEnabled, forKey: Keys.notifications) }
     }
+    /// Caffeine: end the session the moment you unplug. Off by default — work keeps
+    /// running on battery, just without the screen (see below).
+    @Published var caffeineEndOnBattery: Bool {
+        didSet { defaults.set(caffeineEndOnBattery, forKey: Keys.caffeineEndOnBattery) }
+    }
+    /// Caffeine: keep the screen lit on battery too. Off by default: a lit idle screen
+    /// costs percents per hour, and keeping only the system awake finishes the same work.
+    @Published var caffeineKeepDisplayOnBattery: Bool {
+        didSet { defaults.set(caffeineKeepDisplayOnBattery, forKey: Keys.caffeineDisplayOnBattery) }
+    }
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -60,6 +70,8 @@ final class AppSettings: ObservableObject {
         static let animateIcon = "menubar.animateIcon"
         static let iconStyle = "menubar.iconStyle"
         static let notifications = "notifications.enabled"
+        static let caffeineEndOnBattery = "caffeine.endOnBattery"
+        static let caffeineDisplayOnBattery = "caffeine.keepDisplayOnBattery"
     }
 
     init() {
@@ -77,5 +89,7 @@ final class AppSettings: ObservableObject {
         batteryIconStyle = (defaults.string(forKey: Keys.iconStyle))
             .flatMap(BatteryIconStyle.init(rawValue:)) ?? .rounded
         notificationsEnabled = defaults.bool(forKey: Keys.notifications)
+        caffeineEndOnBattery = defaults.bool(forKey: Keys.caffeineEndOnBattery)
+        caffeineKeepDisplayOnBattery = defaults.bool(forKey: Keys.caffeineDisplayOnBattery)
     }
 }

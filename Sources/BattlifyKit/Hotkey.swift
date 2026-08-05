@@ -18,14 +18,19 @@ public struct HotkeyModifiers: OptionSet, Codable, Hashable, Sendable {
     public static let qualifying: HotkeyModifiers = [.command, .option, .control]
 
     /// macOS renders modifiers in a fixed order regardless of press order: ⌃⌥⇧⌘.
-    public var symbols: String {
-        var s = ""
-        if contains(.control) { s += "⌃" }
-        if contains(.option)  { s += "⌥" }
-        if contains(.shift)   { s += "⇧" }
-        if contains(.command) { s += "⌘" }
-        return s
+    /// One glyph per element so a view can space them out — set solid they read as
+    /// a single dense blob at small sizes.
+    public var glyphs: [String] {
+        var g: [String] = []
+        if contains(.control) { g.append("⌃") }
+        if contains(.option)  { g.append("⌥") }
+        if contains(.shift)   { g.append("⇧") }
+        if contains(.command) { g.append("⌘") }
+        return g
     }
+
+    /// The glyphs run together, for plain-text contexts (menus, help, warnings).
+    public var symbols: String { glyphs.joined() }
 }
 
 /// A global keyboard shortcut: a virtual key code plus modifier flags.
