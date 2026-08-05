@@ -12,6 +12,9 @@ enum BatteryIconStyle: String, CaseIterable, Identifiable, Codable {
     case ring      // circular gauge; the arc tracks the charge
     case segments  // stepped bars, tallest last, like a signal meter
     case dot       // a circle filling like liquid — the quietest of the set
+    case wave      // battery filled with liquid whose surface actually moves
+    case boltFill  // the lightning bolt itself is the gauge
+    case gauge     // half-circle dial with a travelling head
 
     var id: String { rawValue }
 
@@ -26,21 +29,35 @@ enum BatteryIconStyle: String, CaseIterable, Identifiable, Codable {
         case .ring:     return "Ring"
         case .segments: return "Meter"
         case .dot:      return "Dot"
+        case .wave:     return "Wave"
+        case .boltFill: return "Bolt"
+        case .gauge:    return "Dial"
         }
     }
+
+    /// True for styles whose look changes frame to frame even on battery, so the menu
+    /// bar can tick for them instead of only while charging.
+    var animatesOnBattery: Bool { self == .wave }
 
     /// The drawing box, in SVG viewBox units. The five horizontal styles share one box
     /// so switching between them never shifts the menu-bar layout; the upright and
     /// round styles are narrower by nature and get their own, which is a deliberate
     /// choice the user makes once rather than something that moves while they work.
+    ///
+    /// Every box is sized so the glyph lands at a sensible width at the menu bar's
+    /// 14pt: a tall, narrow box scales *down* to fit the height and leaves a sliver
+    /// nobody can read, so the upright battery is deliberately stout rather than
+    /// true-to-life, and the round styles get a nearly square box.
     var viewBox: (x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat) {
         switch self {
-        case .rounded, .bars, .classic, .minimal, .pixel:
+        case .rounded, .bars, .classic, .minimal, .pixel, .wave:
             return (1.1, 5.1, 21.8, 13.8)
-        case .vertical:  return (7.4, 1.8, 9.2, 20.4)
-        case .ring:      return (1.6, 1.6, 20.8, 20.8)
-        case .segments:  return (2.4, 4.0, 19.2, 16.0)
-        case .dot:       return (3.4, 3.4, 17.2, 17.2)
+        case .boltFill:  return (6.2, 1.6, 11.6, 20.8)
+        case .gauge:     return (1.4, 4.6, 21.2, 15.0)
+        case .vertical:  return (5.4, 2.4, 13.2, 17.2)
+        case .ring:      return (1.4, 1.4, 21.2, 21.2)
+        case .segments:  return (1.8, 5.2, 20.4, 13.6)
+        case .dot:       return (2.6, 2.6, 18.8, 18.8)
         }
     }
 }
@@ -73,6 +90,8 @@ enum BatteryIconRenderer {
             anim = pixelFillCount(pct: pct, charging: charging, frame: frame) // sweep step
         } else if charging {
             anim = phase(frame, sweepSteps)                                  // fill sweep + bolt pulse
+        } else if style.animatesOnBattery {
+            anim = phase(frame, sweepSteps)                                  // wave keeps moving
         } else {
             anim = 0
         }
@@ -124,8 +143,10 @@ enum BatteryIconRenderer {
 
         case .bars:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
-            if charging { drawBolt(color, frame: frame) }
-            else { drawBars(frac: frac) }
+            fillAndBolt(charging: charging, color: color, frame: frame,
+                        bolt: boltPath, width: 1.7) {
+                drawBars(frac: charging ? fillFrac : frac)
+            }
 
         case .classic:
             let body = NSBezierPath(roundedRect: NSRect(x: 2, y: 7, width: 16.4, height: 10),
@@ -157,10 +178,23 @@ enum BatteryIconRenderer {
             drawRing(frac: frac, charging: charging, color: color, frame: frame)
 
         case .segments:
-            drawSegments(frac: charging ? fillFrac : frac)
+            drawSegments(frac: charging ? fillFrac : frac, color: color)
 
         case .dot:
             drawDot(frac: fillFrac, charging: charging, color: color, frame: frame)
+
+        case .wave:
+            strokeSVG(bodyPath); strokeSVG(terminalPath)
+            fillAndBolt(charging: charging, color: color, frame: frame,
+                        bolt: boltPath, width: 1.7) {
+                drawWave(frac: fillFrac, frame: frame)
+            }
+
+        case .boltFill:
+            drawBoltGauge(frac: fillFrac, charging: charging, color: color)
+
+        case .gauge:
+            drawDial(frac: frac, charging: charging, color: color, frame: frame)
         }
     }
 
@@ -168,23 +202,27 @@ enum BatteryIconRenderer {
 
     /// Upright battery: cap on top, fill rising from the bottom. Drawn in a flipped
     /// context, so "up" is a smaller y — the fill grows by moving its origin down.
+    ///
+    /// Stout on purpose. A true-to-life upright cell is about half as wide as it is
+    /// tall, which at 14pt is a 6pt sliver with an invisible fill; widening the body
+    /// and shortening the can buys a glyph you can actually read in a menu bar.
     private static func drawVertical(frac: CGFloat, charging: Bool, color: NSColor, frame: Int) {
-        let body = NSRect(x: 8.6, y: 4.2, width: 6.8, height: 15.4)
-        let path = NSBezierPath(roundedRect: body, xRadius: 2.2, yRadius: 2.2)
-        path.lineWidth = stroke; path.stroke()
+        let body = NSRect(x: 6.6, y: 4.6, width: 10.8, height: 14.2)
+        let path = NSBezierPath(roundedRect: body, xRadius: 2.8, yRadius: 2.8)
+        path.lineWidth = 1.6; path.stroke()
         // Cap.
-        NSBezierPath(roundedRect: NSRect(x: 10.4, y: 2.4, width: 3.2, height: 1.6),
-                     xRadius: 0.7, yRadius: 0.7).fill()
+        NSBezierPath(roundedRect: NSRect(x: 9.6, y: 2.9, width: 4.8, height: 1.9),
+                     xRadius: 0.9, yRadius: 0.9).fill()
 
-        let inset = NSRect(x: body.minX + 1.4, y: body.minY + 1.4,
-                           width: body.width - 2.8, height: body.height - 2.8)
+        let inset = NSRect(x: body.minX + 1.6, y: body.minY + 1.6,
+                           width: body.width - 3.2, height: body.height - 3.2)
         fillAndBolt(charging: charging, color: color, frame: frame,
                     bolt: uprightBoltPath, width: 1.5) {
             guard frac > 0 else { return }
-            let h = min(inset.height, max(1.4, inset.height * frac))
+            let h = min(inset.height, max(2.0, inset.height * frac))
             NSBezierPath(roundedRect: NSRect(x: inset.minX, y: inset.maxY - h,
                                              width: inset.width, height: h),
-                         xRadius: 1.1, yRadius: 1.1).fill()
+                         xRadius: 1.4, yRadius: 1.4).fill()
         }
     }
 
@@ -192,71 +230,168 @@ enum BatteryIconRenderer {
     /// segment travels around the track, which reads as movement without the whole
     /// ring flickering.
     private static func drawRing(frac: CGFloat, charging: Bool, color: NSColor, frame: Int) {
-        let center = NSPoint(x: 12, y: 12), radius: CGFloat = 8.4
+        let center = NSPoint(x: 12, y: 12), radius: CGFloat = 8.2
+        // Thick enough to survive 14pt: a 1.6pt track at menu-bar size is a grey hint,
+        // not a track, and the gauge stops reading as a gauge.
         let track = NSBezierPath()
         track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
-        track.lineWidth = 1.6
-        color.withAlphaComponent(0.28).setStroke()
+        track.lineWidth = 2.6
+        color.withAlphaComponent(0.22).setStroke()
         track.stroke()
 
         color.setStroke()
-        let sweep = max(6, 360 * frac)          // always a visible tick of charge
+        let sweep = max(14, 360 * frac)          // always a visible tick of charge
         let arc = NSBezierPath()
         arc.appendArc(withCenter: center, radius: radius, startAngle: 90,
                       endAngle: 90 - sweep, clockwise: true)
-        arc.lineWidth = 2.2
+        arc.lineWidth = 2.8
         arc.lineCapStyle = .round
         arc.stroke()
 
         guard charging else { return }
-        // Leading segment, one step per frame around the whole track.
-        let lead = 90 - CGFloat(phase(frame, sweepSteps)) / CGFloat(sweepSteps) * 360
-        let marker = NSBezierPath()
-        marker.appendArc(withCenter: center, radius: radius, startAngle: lead,
-                         endAngle: lead - 38, clockwise: true)
-        marker.lineWidth = 2.2
-        marker.lineCapStyle = .round
-        color.withAlphaComponent(0.55).setStroke()
-        marker.stroke()
-        color.setStroke()
+        // A solid head travelling the track: at 14pt a dot holds its shape where a thin
+        // trailing arc smears into the track behind it.
+        let lead = (90 - sweep - CGFloat(phase(frame, sweepSteps)) / CGFloat(sweepSteps) * 360)
+            * .pi / 180
+        let head = NSPoint(x: center.x + cos(lead) * radius, y: center.y - sin(lead) * radius)
+        NSBezierPath(ovalIn: NSRect(x: head.x - 1.9, y: head.y - 1.9,
+                                    width: 3.8, height: 3.8)).fill()
     }
 
-    /// Signal-meter bars: five steps, each taller than the last, lit up to the level.
-    /// Unlit bars stay faintly visible so the meter reads as a scale, not a gap.
-    private static func drawSegments(frac: CGFloat) {
-        let lit = max(frac > 0.02 ? 1 : 0, min(5, Int((frac * 5).rounded())))
-        for k in 0..<5 {
-            let h = 4.0 + CGFloat(k) * 2.6
-            let rect = NSRect(x: 3.0 + CGFloat(k) * 3.6, y: 18.0 - h, width: 2.6, height: h)
-            let bar = NSBezierPath(roundedRect: rect, xRadius: 1.0, yRadius: 1.0)
+    /// Stepped meter: four blocks, each taller than the last, lit up to the level.
+    ///
+    /// Unlit steps are filled at low alpha rather than outlined — a 1.1pt outline at
+    /// menu-bar size is a smudge, while a dimmed block keeps its shape and still reads
+    /// as "a step that isn't lit". Four fat steps rather than five thin ones for the
+    /// same reason: at 14pt, 3.4pt of block beats 2.6pt of block plus a gap nobody sees.
+    private static func drawSegments(frac: CGFloat, color: NSColor) {
+        let lit = max(frac > 0.02 ? 1 : 0, min(4, Int((frac * 4).rounded())))
+        let base: CGFloat = 18.4                                  // shared baseline
+        for k in 0..<4 {
+            let h = 5.0 + CGFloat(k) * 2.9
+            let rect = NSRect(x: 2.6 + CGFloat(k) * 4.7, y: base - h, width: 3.4, height: h)
+            let bar = NSBezierPath(roundedRect: rect, xRadius: 1.1, yRadius: 1.1)
             if k < lit {
-                bar.fill()
+                color.setFill()
             } else {
-                bar.lineWidth = 1.1   // unlit steps stay outlined, so it reads as a scale
-                bar.stroke()
+                color.withAlphaComponent(0.22).setFill()
             }
+            bar.fill()
         }
+        color.setFill()   // leave the fill colour as the caller set it
+    }
+
+    /// Liquid inside the standard battery body, with a moving surface: two sine crests
+    /// across the width, the phase advancing one step per tick. The only style that
+    /// animates on battery as well as while charging — it's the point of it — and it
+    /// still stops dead when the animation toggle is off or Reduce Motion is on.
+    private static func drawWave(frac: CGFloat, frame: Int) {
+        guard frac > 0 else { return }
+        let x0: CGFloat = 3.9, x1: CGFloat = 17.1          // inside the body walls
+        let top: CGFloat = 8.3, bottom: CGFloat = 15.7     // flipped: bottom is larger y
+        let surface = bottom - max(1.3, (bottom - top) * frac)
+        let amplitude: CGFloat = min(0.85, (bottom - surface) / 2.4)
+        let phase = CGFloat(self.phase(frame, sweepSteps)) / CGFloat(sweepSteps) * 2 * .pi
+
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: x0, y: bottom))
+        let steps = 22
+        for i in 0...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            let x = x0 + (x1 - x0) * t
+            let y = surface + sin(phase + t * 2 * .pi * 2) * amplitude
+            i == 0 ? path.line(to: NSPoint(x: x, y: y)) : path.line(to: NSPoint(x: x, y: y))
+        }
+        path.line(to: NSPoint(x: x1, y: bottom))
+        path.close()
+        // Clip to the body's inner radius so the liquid can't square off the corners.
+        guard let cg = NSGraphicsContext.current?.cgContext else { return }
+        cg.saveGState()
+        NSBezierPath(roundedRect: NSRect(x: x0, y: top, width: x1 - x0, height: bottom - top),
+                     xRadius: 1.6, yRadius: 1.6).addClip()
+        path.fill()
+        cg.restoreGState()
+    }
+
+    /// The bolt *is* the gauge: a lightning silhouette that fills from the bottom, so
+    /// the shape says "power" and the fill says "how much". Charging inverts it —
+    /// the bolt goes solid — which needs no second mark crammed inside.
+    private static func drawBoltGauge(frac: CGFloat, charging: Bool, color: NSColor) {
+        let bolt = SVGPath.parse(boltGaugePath)
+        bolt.lineWidth = 1.6
+        bolt.lineJoinStyle = .round
+        // The empty part of the bolt still has to be a bolt: too faint and a nearly
+        // flat battery shows nothing at all in the menu bar.
+        color.withAlphaComponent(0.45).setStroke()
+        bolt.stroke()
+        color.setStroke()
+
+        guard let cg = NSGraphicsContext.current?.cgContext else { return }
+        cg.saveGState()
+        bolt.addClip()
+        if charging {
+            NSBezierPath(rect: NSRect(x: 5, y: 0, width: 14, height: 24)).fill()
+        } else if frac > 0 {
+            let bottom: CGFloat = 22.2, top: CGFloat = 1.8
+            // The tail is the narrowest part, so a proportional sliver there is invisible;
+            // a floor of 3 units keeps a low charge readable.
+            let h = max(3.0, (bottom - top) * frac)
+            NSBezierPath(rect: NSRect(x: 5, y: bottom - h, width: 14, height: h)).fill()
+        }
+        cg.restoreGState()
+    }
+
+    /// Half-circle dial: a wide track with the charge sweeping left to right and a solid
+    /// head where it stops. Reads like a fuel gauge, and the flat bottom edge sits
+    /// better next to menu-bar text than a full circle does.
+    private static func drawDial(frac: CGFloat, charging: Bool, color: NSColor, frame: Int) {
+        let center = NSPoint(x: 12, y: 17.4), radius: CGFloat = 7.8
+        let track = NSBezierPath()
+        // Flipped context: sweeping 180° → 360° draws the *upper* half.
+        track.appendArc(withCenter: center, radius: radius, startAngle: 180, endAngle: 360)
+        track.lineWidth = 2.6
+        track.lineCapStyle = .round
+        color.withAlphaComponent(0.22).setStroke()
+        track.stroke()
+
+        let end = 180 + max(8, 180 * frac)
+        let arc = NSBezierPath()
+        arc.appendArc(withCenter: center, radius: radius, startAngle: 180, endAngle: end)
+        arc.lineWidth = 2.8
+        arc.lineCapStyle = .round
+        color.setStroke()
+        arc.stroke()
+
+        // Head marker: while charging it runs the dial, otherwise it parks at the level.
+        let headDeg = charging
+            ? 180 + CGFloat(phase(frame, sweepSteps)) / CGFloat(sweepSteps) * 180
+            : end
+        let a = headDeg * .pi / 180
+        let head = NSPoint(x: center.x + cos(a) * radius, y: center.y + sin(a) * radius)
+        NSBezierPath(ovalIn: NSRect(x: head.x - 1.9, y: head.y - 1.9,
+                                    width: 3.8, height: 3.8)).fill()
     }
 
     /// A circle filling like liquid, clipped to the outline. The quietest style in the
-    /// set: no terminal, no bars, just how full it is.
+    /// set: no terminal, no steps, just how full it is.
+    ///
+    /// It's the one style with no bolt while charging. There is no room for one inside a
+    /// 14pt circle — every version of it came out a smudge — and the sweeping liquid
+    /// already says "charging" without adding a mark that only works when zoomed in.
     private static func drawDot(frac: CGFloat, charging: Bool, color: NSColor, frame: Int) {
-        let box = NSRect(x: 4.6, y: 4.6, width: 14.8, height: 14.8)
+        let box = NSRect(x: 3.8, y: 3.8, width: 16.4, height: 16.4)
         let outline = NSBezierPath(ovalIn: box)
-        outline.lineWidth = 1.6
+        outline.lineWidth = 1.8
         outline.stroke()
 
-        fillAndBolt(charging: charging, color: color, frame: frame,
-                    bolt: uprightBoltPath, width: 1.5) {
-            guard frac > 0, let cg = NSGraphicsContext.current?.cgContext else { return }
-            cg.saveGState()
-            let inner = box.insetBy(dx: 1.5, dy: 1.5)
-            NSBezierPath(ovalIn: inner).addClip()
-            let h = max(1.4, inner.height * frac)
-            NSBezierPath(rect: NSRect(x: inner.minX, y: inner.maxY - h,
-                                      width: inner.width, height: h)).fill()
-            cg.restoreGState()
-        }
+        guard frac > 0, let cg = NSGraphicsContext.current?.cgContext else { return }
+        cg.saveGState()
+        let inner = box.insetBy(dx: 1.7, dy: 1.7)
+        NSBezierPath(ovalIn: inner).addClip()
+        let h = max(2.2, inner.height * frac)
+        NSBezierPath(rect: NSRect(x: inner.minX, y: inner.maxY - h,
+                                  width: inner.width, height: h)).fill()
+        cg.restoreGState()
     }
 
     // MARK: - Animation helpers
@@ -280,6 +415,11 @@ enum BatteryIconRenderer {
     /// A bolt sized for the upright and round styles, which have no room for the wide
     /// horizontal one.
     private static let uprightBoltPath = "M13 8.4L10.4 12.1C10.2 12.4 10.4 12.7 10.7 12.7L12.6 12.7C12.9 12.7 13.1 13.0 12.9 13.3L10.9 16.2"
+
+    /// A *closed* bolt silhouette — the Bolt style fills and clips to it, which an open
+    /// stroked path can't do.
+    private static let boltGaugePath =
+        "M14.8 1.8L7.2 13.1H11.1L9.2 22.2L16.8 10.4H12.6Z"
 
     /// Non-negative modulo, so an animation tick can never index out of range.
     private static func phase(_ frame: Int, _ n: Int) -> Int {
@@ -335,7 +475,9 @@ enum BatteryIconRenderer {
         return n + frame % (pixelColumns - n + 1)
     }
 
-    private static let pixelColumns = 6
+    /// Four fat cells, not six thin ones: at 14pt a 0.5-unit gap closes up and the fill
+    /// reads as one solid barcode block instead of pixels.
+    private static let pixelColumns = 4
 
     /// Chunky 8-bit battery: outline of four bars with empty corner cells (the
     /// pixel-art notched corner), a blocky terminal, then `fill` fat columns.
@@ -351,8 +493,8 @@ enum BatteryIconRenderer {
         NSBezierPath(rect: NSRect(x: x0 + w, y: y0 + (h - 3 * u) / 2, width: u, height: 3 * u)).fill()
         guard fill > 0 else { return }
         for k in 0..<min(fill, pixelColumns) {
-            let x = 3.75 + CGFloat(k) * 2.25
-            NSBezierPath(rect: NSRect(x: x, y: 7.75, width: 1.75, height: 8.5)).fill()
+            let x = 3.7 + CGFloat(k) * 3.3
+            NSBezierPath(rect: NSRect(x: x, y: 7.75, width: 2.6, height: 8.5)).fill()
         }
     }
 
@@ -367,15 +509,15 @@ enum BatteryIconRenderer {
                      xRadius: radius, yRadius: radius).fill()
     }
 
+    /// Four discrete level blocks. Filled rounded rects, not strokes: at 14pt a 1.5pt
+    /// line lands between pixels and greys out, while a 2pt block stays a block.
     private static func drawBars(frac: CGFloat) {
         var n = Int((frac * 4).rounded())
         if frac > 0.02 && n == 0 { n = 1 }
         n = min(4, n)
         for k in 0..<max(0, n) {
-            let x = 6 + CGFloat(k) * 3
-            let bar = NSBezierPath()
-            bar.move(to: NSPoint(x: x, y: 10)); bar.line(to: NSPoint(x: x, y: 14))
-            bar.lineWidth = 1.5; bar.lineCapStyle = .round; bar.stroke()
+            let rect = NSRect(x: 4.9 + CGFloat(k) * 3.1, y: 9.3, width: 2.1, height: 5.4)
+            NSBezierPath(roundedRect: rect, xRadius: 0.8, yRadius: 0.8).fill()
         }
     }
 

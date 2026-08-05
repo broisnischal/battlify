@@ -147,7 +147,9 @@ struct MenuBarLabel: View {
         // animation is opt-in. The completion flash still runs when it fires: it's
         // bounded to about three seconds, not the whole charge.
         let animating = !reduceMotion
-            && (celebrating || (settings.animateMenuBarIcon && snap.isCharging))
+            && (celebrating
+                || (settings.animateMenuBarIcon
+                    && (snap.isCharging || settings.batteryIconStyle.animatesOnBattery)))
         // The label renders at launch — a reliable hook to start notification detection.
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
         // Same reason, and it has to be here rather than in `onAppear`: a status-item
