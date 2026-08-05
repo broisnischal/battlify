@@ -12,6 +12,7 @@ import BattlifyKit
 final class Daemon: @unchecked Sendable {
     private let smc = SMC()
     private let charge: ChargeController
+    private let fans: FanController
     private let lock = NSLock()
 
     // History sampling. Timed rather than counted in ticks, because the tick rate
@@ -86,6 +87,7 @@ final class Daemon: @unchecked Sendable {
 
     init() {
         charge = ChargeController(smc: smc)
+        fans = FanController(smc: smc)
     }
 
     static func run() {
@@ -186,6 +188,16 @@ final class Daemon: @unchecked Sendable {
             // sleeps the daemon's hook and this can race — both paths are idempotent.
             return status(ok: cutChargingForSleepLocked(), message: "sleep handled")
 
+        case .setFanMode(let mode):
+            var cfg = ConfigStore.load()
+            cfg.fanMode = mode
+            let applied = applyFanMode(mode)
+            do { try ConfigStore.save(cfg) } catch {
+                return status(ok: false, message: "fans set but save failed: \(error)")
+            }
+            return status(ok: applied,
+                          message: applied ? "fans set" : "the SMC refused the fan write")
+
         case .calibrateToFull(let on):
             var cfg = ConfigStore.load()
             cfg.calibrateToFull = on
@@ -253,6 +265,7 @@ final class Daemon: @unchecked Sendable {
             magSafeSupported: charge.isMagSafeSupported,
             dischargeSupported: charge.isAdapterControlSupported,
             discharging: charge.isAdapterControlSupported && !((try? charge.isAdapterEnabled()) ?? true),
+            fans: fans.readAll(),
             message: message
         )
     }
@@ -384,6 +397,7 @@ final class Daemon: @unchecked Sendable {
         lastPauseReason = desired ? (enable ? nil : "slow") : reason
         ensure(enabled: enable, current: charging)
         manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
+        updateFans(cfg, snap)
         updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
@@ -448,6 +462,68 @@ final class Daemon: @unchecked Sendable {
         // ~1.5 min per percentage point to charge, plus a 15-minute safety buffer.
         let minutesNeeded = Double(r.targetPercent - level) * 1.5 + 15
         return Double(minutesUntil) <= minutesNeeded
+    }
+
+    // MARK: - Fans
+
+    /// Keep the fans in the state the config asks for.
+    ///
+    /// Two jobs, and the second matters more. Applying a manual speed is straightforward.
+    /// But forced mode *persists in the SMC* across quit, logout and reboot — the same
+    /// property the charge inhibit relies on — so a build that forced the fans and was later
+    /// removed leaves them stuck at whatever it last wrote, with nothing running that knows
+    /// to undo it. A machine was found with both fans pinned at 6,800 RPM and a cool chassis
+    /// for exactly that reason. So: if the config says auto and the hardware says forced,
+    /// hand them back, every tick, indefinitely.
+    private func updateFans(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+        guard fans.isSupported else { return }
+
+        // Heat wins over the setting: a manual speed lower than the machine needs is the one
+        // way this feature can do damage.
+        if case .manual = cfg.fanMode, cfg.fanAutoAboveTempC > 0,
+           let temperature = snap.temperature, temperature >= cfg.fanAutoAboveTempC {
+            if fans.anyForced {
+                fans.restoreAuto()
+                log("fans handed back to macOS: \(String(format: "%.1f", temperature))°C ≥ guard \(cfg.fanAutoAboveTempC)°C")
+            }
+            return
+        }
+
+        switch cfg.fanMode {
+        case .auto:
+            guard fans.anyForced else { return }
+            if fans.restoreAuto() {
+                log("fans were left in forced mode; handed back to macOS")
+            } else {
+                err("fans are forced and the SMC refused to hand them back")
+            }
+        case .manual(let percent):
+            // Re-assert only when the hardware has drifted from what was asked for; writing
+            // every tick would be SMC traffic for nothing.
+            let readings = fans.readAll()
+            let needsWrite = readings.contains { reading in
+                guard reading.forced else { return true }
+                let span = reading.maximum - reading.minimum
+                let wanted = reading.minimum + span * Double(min(100, max(0, percent))) / 100
+                return abs(reading.target - wanted) > 50
+            }
+            guard needsWrite else { return }
+            if fans.setManual(percent: percent) {
+                log("fans held at \(percent)%")
+            } else {
+                err("the SMC refused the fan write")
+            }
+        }
+    }
+
+    /// Apply a mode immediately, for the control request.
+    @discardableResult
+    private func applyFanMode(_ mode: FanMode) -> Bool {
+        guard fans.isSupported else { return false }
+        switch mode {
+        case .auto: return fans.restoreAuto()
+        case .manual(let percent): return fans.setManual(percent: percent)
+        }
     }
 
     // MARK: - Sleep / wake
@@ -726,6 +802,9 @@ final class Daemon: @unchecked Sendable {
     /// (Uninstall re-enables explicitly, after unloading this daemon.)
     private func performCleanupAndExit() -> Never {
         lock.lock()   // hold through exit; serialize SMC access with tick()
+        // Forced fans outlive this process, so leaving them forced on the way out is exactly
+        // how a Mac ends up pinned at full speed by software that no longer exists.
+        if fans.isSupported { fans.restoreAuto() }
         PowerSettings.setDisableSleep(false)
         if ConfigStore.load().chargeLimitEnabled {
             try? charge.disableCharging()

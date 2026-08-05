@@ -58,6 +58,10 @@ final class ChargeLimitStore: ObservableObject {
     @Published var dischargeEnabled = false
     /// "Don't charge while plugged in": hold the level exactly where it is.
     @Published var holdCharge = false
+    /// Live fan state from the daemon (empty on a fanless Mac or an older helper).
+    @Published private(set) var fans: [FanReading] = []
+    @Published private(set) var fanMode: FanMode = .auto
+    var fansSupported: Bool { !fans.isEmpty }
     @Published private(set) var dischargeSupported = false
     @Published private(set) var discharging = false
     @Published var disableChargingBeforeSleep = false
@@ -198,6 +202,13 @@ final class ChargeLimitStore: ObservableObject {
         cfg.slowCharge = chargePower < 100   // keep the legacy flag in sync
         currentConfig = cfg
         command(.setConfig(cfg))
+    }
+
+    /// Fan mode goes through its own request rather than the whole config: the daemon has to
+    /// tell us whether the SMC accepted the write, which a config save can't express.
+    func setFanMode(_ mode: FanMode) {
+        fanMode = mode   // optimistic; the refresh corrects it if the SMC refused
+        command(.setFanMode(mode))
     }
 
     func setLowPowerMode(_ on: Bool) {
@@ -347,6 +358,8 @@ final class ChargeLimitStore: ObservableObject {
         set(\.magSafeSupported, r.magSafeSupported)
         set(\.dischargeEnabled, r.config.dischargeEnabled)
         set(\.holdCharge, r.config.holdCharge)
+        set(\.fans, r.fans)
+        set(\.fanMode, r.config.fanMode)
         set(\.dischargeSupported, r.dischargeSupported)
         set(\.discharging, r.discharging)
         set(\.disableChargingBeforeSleep, r.config.disableChargingBeforeSleep)

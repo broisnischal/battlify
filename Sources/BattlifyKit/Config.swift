@@ -68,6 +68,15 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// Legacy LED flag, kept for older daemon/GUI compat; `magSafeLedMode` is authoritative.
     public var magSafeLedEnabled: Bool
     public var magSafeLedMode: MagSafeLEDMode
+    /// What the fans should do: macOS's own curve, or held at a percentage of their range.
+    /// Forced mode survives quit, logout and reboot, so this is also the record the daemon
+    /// uses to notice fans left forced by a build that no longer exists and hand them back.
+    public var fanMode: FanMode
+    /// Hand the fans back to macOS at or above this °C, whatever `fanMode` says. A manual
+    /// speed below what the machine needs is the one way this feature can do harm.
+    /// 0 disables the guard.
+    public var fanAutoAboveTempC: Double
+
     /// Force-discharge (run off battery while plugged) to bring the level down to the limit.
     public var dischargeEnabled: Bool
     /// "Don't charge while plugged in": run the Mac off the adapter and leave the battery
@@ -136,6 +145,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 magSafeLedMode: MagSafeLEDMode? = nil,
                 dischargeEnabled: Bool = false,
                 holdCharge: Bool = false,
+                fanMode: FanMode = .auto,
+                fanAutoAboveTempC: Double = 85,
                 disableChargingBeforeSleep: Bool = false,
                 preventIdleSleep: Bool = false,
                 keepAwake: Bool = false,
@@ -166,6 +177,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.magSafeLedMode = magSafeLedMode ?? .status
         self.dischargeEnabled = dischargeEnabled
         self.holdCharge = holdCharge
+        self.fanMode = fanMode
+        self.fanAutoAboveTempC = fanAutoAboveTempC
         self.disableChargingBeforeSleep = disableChargingBeforeSleep
         self.preventIdleSleep = preventIdleSleep
         self.keepAwake = keepAwake
@@ -203,6 +216,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
             ?? (magSafeLedEnabled ? .status : .system)
         dischargeEnabled = try c.decodeIfPresent(Bool.self, forKey: .dischargeEnabled) ?? false
         holdCharge = try c.decodeIfPresent(Bool.self, forKey: .holdCharge) ?? false
+        fanMode = try c.decodeIfPresent(FanMode.self, forKey: .fanMode) ?? .auto
+        fanAutoAboveTempC = try c.decodeIfPresent(Double.self, forKey: .fanAutoAboveTempC) ?? 85
         disableChargingBeforeSleep = try c.decodeIfPresent(Bool.self, forKey: .disableChargingBeforeSleep) ?? false
         preventIdleSleep = try c.decodeIfPresent(Bool.self, forKey: .preventIdleSleep) ?? false
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false

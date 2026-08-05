@@ -794,6 +794,53 @@ struct SettingsView: View {
                     }
                 }
 
+                if chargeLimit.fansSupported {
+                    card("Fans") {
+                        ForEach(chargeLimit.fans) { fan in
+                            HStack(spacing: 10) {
+                                HugeIcon("refresh", size: 16).foregroundStyle(.secondary)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Fan \(fan.index + 1)").font(.callout)
+                                    Text("\(Int(fan.minimum.rounded()))–\(Int(fan.maximum.rounded())) rpm\(fan.forced ? " · held" : "")")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text("\(Int(fan.current.rounded())) rpm")
+                                    .font(.callout.weight(.semibold)).monospacedDigit()
+                                    .foregroundStyle(fan.forced ? Color.orange : .primary)
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            divider
+                        }
+                        pickerRow(chargeLimit.fanMode.isManual
+                                  ? "Held where you put them. The fans stay there until you set Auto back — this survives quitting Battlify and rebooting, because forced mode lives in the SMC, not in the app."
+                                  : "macOS decides, which is right almost always. Custom holds a speed of your choosing.") {
+                            Picker("", selection: Binding(
+                                get: { chargeLimit.fanMode.isManual },
+                                set: { manual in
+                                    chargeLimit.setFanMode(manual ? .manual(percent: 40) : .auto)
+                                })) {
+                                Text("Auto").tag(false)
+                                Text("Custom").tag(true)
+                            }
+                            .pickerStyle(.segmented).labelsHidden()
+                        }
+                        if let percent = chargeLimit.fanMode.percent {
+                            divider
+                            stepperRow("Speed",
+                                       value: "\(percent)% of range",
+                                       binding: Binding(
+                                        get: { Double(percent) },
+                                        set: { chargeLimit.setFanMode(.manual(percent: Int($0))) }),
+                                       range: 0...100)
+                            divider
+                            infoRow("0% is each fan's own minimum, not off — the SMC won't accept a speed below what the hardware allows. If the machine gets hot, control goes back to macOS automatically.",
+                                    systemImage: "thermometer")
+                        }
+                    }
+                }
+
                 card("Rest without closing the lid") {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {

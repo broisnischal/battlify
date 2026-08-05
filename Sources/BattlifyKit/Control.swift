@@ -81,6 +81,8 @@ public enum ControlRequest: Codable, Sendable {
     case prepareForSleep
     /// Start (true) or cancel (false) a one-shot charge-to-100% calibration.
     case calibrateToFull(Bool)
+    /// Set the fan mode (auto, or held at a percentage of each fan's range).
+    case setFanMode(FanMode)
     /// Delete the daemon-written history file. The GUI can't (root-owned dir), so it
     /// asks the daemon.
     case clearSamples
@@ -100,6 +102,8 @@ public struct ControlResponse: Codable, Sendable {
     public var magSafeSupported: Bool
     public var dischargeSupported: Bool
     public var discharging: Bool
+    /// Live fan state, empty on a fanless Mac or an older daemon.
+    public var fans: [FanReading]
     public var message: String?
     /// Protocol version of the responding daemon. Older daemons omit it → decode to 0 → outdated.
     public var daemonProtocolVersion: Int
@@ -113,6 +117,7 @@ public struct ControlResponse: Codable, Sendable {
                 powerToggles: [String: Bool] = [:],
                 pauseReason: String? = nil, magSafeSupported: Bool = false,
                 dischargeSupported: Bool = false, discharging: Bool = false,
+                fans: [FanReading] = [],
                 message: String? = nil,
                 daemonProtocolVersion: Int = ControlProtocol.version,
                 daemonBuildVersion: Int = HelperBuild.version) {
@@ -127,6 +132,7 @@ public struct ControlResponse: Codable, Sendable {
         self.magSafeSupported = magSafeSupported
         self.dischargeSupported = dischargeSupported
         self.discharging = discharging
+        self.fans = fans
         self.message = message
         self.daemonProtocolVersion = daemonProtocolVersion
         self.daemonBuildVersion = daemonBuildVersion
@@ -146,6 +152,7 @@ public struct ControlResponse: Codable, Sendable {
         magSafeSupported = try c.decodeIfPresent(Bool.self, forKey: .magSafeSupported) ?? false
         dischargeSupported = try c.decodeIfPresent(Bool.self, forKey: .dischargeSupported) ?? false
         discharging = try c.decodeIfPresent(Bool.self, forKey: .discharging) ?? false
+        fans = try c.decodeIfPresent([FanReading].self, forKey: .fans) ?? []
         message = try c.decodeIfPresent(String.self, forKey: .message)
         daemonProtocolVersion = try c.decodeIfPresent(Int.self, forKey: .daemonProtocolVersion) ?? 0
         daemonBuildVersion = try c.decodeIfPresent(Int.self, forKey: .daemonBuildVersion) ?? 0
@@ -187,7 +194,11 @@ public enum HelperBuild {
     ///       asks and the option is ticked, so it lets the battery charge past the limit
     ///       to full while the Mac sleeps — it has to be replaced, not just re-run.
     ///       Also adds the "don't charge while plugged in" hold and its amber LED.
-    public static let version = 7
+    ///   v8: fan control, and — the reason this must reach every install — a v8 helper hands
+    ///       fans back to macOS whenever the config says auto but the SMC says forced. Forced
+    ///       mode persists across reboots, so a Mac left pinned by the removed fan-boost
+    ///       feature stays pinned until a helper that knows to undo it runs.
+    public static let version = 8
 }
 
 public enum ControlError: Error, CustomStringConvertible {
