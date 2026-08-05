@@ -56,6 +56,8 @@ final class ChargeLimitStore: ObservableObject {
     @Published var magSafeLedMode: MagSafeLEDMode = .status   // new-install default
     @Published private(set) var magSafeSupported = false
     @Published var dischargeEnabled = false
+    /// "Don't charge while plugged in": hold the level exactly where it is.
+    @Published var holdCharge = false
     @Published private(set) var dischargeSupported = false
     @Published private(set) var discharging = false
     @Published var disableChargingBeforeSleep = false
@@ -174,6 +176,7 @@ final class ChargeLimitStore: ObservableObject {
         cfg.magSafeLedMode = magSafeLedMode
         cfg.magSafeLedEnabled = (magSafeLedMode == .status) // keep legacy flag in sync
         cfg.dischargeEnabled = dischargeEnabled
+        cfg.holdCharge = holdCharge
         cfg.disableChargingBeforeSleep = disableChargingBeforeSleep
         cfg.preventIdleSleep = preventIdleSleep
         // An auto-off deadline means nothing once the toggle is off (switched off by
@@ -343,6 +346,7 @@ final class ChargeLimitStore: ObservableObject {
         set(\.magSafeLedMode, r.config.magSafeLedMode)
         set(\.magSafeSupported, r.magSafeSupported)
         set(\.dischargeEnabled, r.config.dischargeEnabled)
+        set(\.holdCharge, r.config.holdCharge)
         set(\.dischargeSupported, r.dischargeSupported)
         set(\.discharging, r.discharging)
         set(\.disableChargingBeforeSleep, r.config.disableChargingBeforeSleep)

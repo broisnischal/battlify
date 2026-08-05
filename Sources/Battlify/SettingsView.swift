@@ -8,6 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
     @EnvironmentObject private var automation: AutomationStore
     @EnvironmentObject private var caffeine: CaffeineManager
+    @EnvironmentObject private var overlay: ChargeOverlayController
     @EnvironmentObject private var license: LicenseManager
     @EnvironmentObject private var startup: StartupManager
     @EnvironmentObject private var updater: UpdaterManager
@@ -272,6 +273,19 @@ struct SettingsView: View {
         tab {
             if chargeLimit.daemonAvailable {
                 proGate {
+                    card("Hold") {
+                        toggleRow("Don't charge while plugged in",
+                                  chargeLimit.magSafeSupported
+                                  ? "Run the Mac off the adapter and leave the battery exactly where it is — no charging, whatever the level or the limit. The MagSafe light stays amber while it's held, so you can see it's deliberate. Only a pause overrides it."
+                                  : "Run the Mac off the adapter and leave the battery exactly where it is — no charging, whatever the level or the limit. Only a pause overrides it.",
+                                  isOn: bind(\.holdCharge))
+                        if chargeLimit.holdCharge {
+                            divider
+                            infoRow("Charging is held. The battery will neither rise nor drain while you stay plugged in — turn this off when you want it to charge again.",
+                                    systemImage: "pause")
+                        }
+                    }
+
                     card("Enforcement") {
                         toggleRow("Stop charging before sleep",
                                   chargeLimit.limitEnabled
@@ -776,6 +790,52 @@ struct SettingsView: View {
                     } else {
                         infoRow("Measuring drain… run on battery with the mode on and off for a few minutes to compare.\(nowSuffix)",
                                 systemImage: "gauge")
+                    }
+                }
+
+                card("Plug-in feedback (experimental)") {
+                    toggleRow("Tap the trackpad when you plug in",
+                              "Two taps on connect, one on unplug, three when the charge limit is reached. Needs a Force Touch trackpad — a desktop Mac, or a laptop you're driving from an external keyboard, has nothing to tap with, and the trackpad is asleep while the lid is shut.",
+                              isOn: $settings.hapticsEnabled)
+                    divider
+                    toggleRow("Show an animation when you plug in",
+                              "Flashes over whatever you're doing for about a second, then gets out of the way. Click-through, so it can't swallow a click, and it skips the motion entirely if Reduce Motion is on.",
+                              isOn: $settings.chargeOverlayEnabled)
+                    if settings.chargeOverlayEnabled {
+                        divider
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Animation").font(.callout)
+                                Spacer()
+                                Picker("", selection: $settings.chargeOverlayStyle) {
+                                    ForEach(ChargeOverlayStyle.allCases) {
+                                        Text($0.displayName).tag($0)
+                                    }
+                                }
+                                .labelsHidden().frame(width: 160)
+                                Button("Preview") {
+                                    overlay.show(style: settings.chargeOverlayStyle,
+                                                 duration: settings.chargeOverlayDuration,
+                                                 percentage: battery.snapshot.percentage)
+                                }
+                                .controlSize(.small)
+                            }
+                            Text(settings.chargeOverlayStyle.summary)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        divider
+                        stepperRow("How long",
+                                   value: String(format: "%.1f s", settings.chargeOverlayDuration),
+                                   binding: Binding(
+                                    get: { settings.chargeOverlayDuration * 10 },
+                                    set: { settings.chargeOverlayDuration = ($0.rounded() / 10) }),
+                                   range: 5...20)
+                        divider
+                        toggleRow("Play it when you unplug too",
+                                  "The same animation in a cooler colour, without the charge level.",
+                                  isOn: $settings.chargeOverlayOnUnplug)
                     }
                 }
 

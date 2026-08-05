@@ -65,6 +65,26 @@ final class AppSettings: ObservableObject {
     @Published var restReminderEnabled: Bool {
         didSet { defaults.set(restReminderEnabled, forKey: Keys.restReminder) }
     }
+    /// Experimental: flash an animation over the screen when the adapter connects.
+    @Published var chargeOverlayEnabled: Bool {
+        didSet { defaults.set(chargeOverlayEnabled, forKey: Keys.overlayEnabled) }
+    }
+    @Published var chargeOverlayStyle: ChargeOverlayStyle {
+        didSet { defaults.set(chargeOverlayStyle.rawValue, forKey: Keys.overlayStyle) }
+    }
+    /// How long the animation runs, in seconds. Capped low on purpose — it covers the
+    /// screen, so it has to be over before it becomes something to wait out.
+    @Published var chargeOverlayDuration: Double {
+        didSet { defaults.set(chargeOverlayDuration, forKey: Keys.overlayDuration) }
+    }
+    /// Also play it (in its cooler variant) when the adapter is pulled out.
+    @Published var chargeOverlayOnUnplug: Bool {
+        didSet { defaults.set(chargeOverlayOnUnplug, forKey: Keys.overlayOnUnplug) }
+    }
+    /// Tap the trackpad on plug and unplug.
+    @Published var hapticsEnabled: Bool {
+        didSet { defaults.set(hapticsEnabled, forKey: Keys.haptics) }
+    }
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -77,6 +97,11 @@ final class AppSettings: ObservableObject {
         static let caffeineEndOnBattery = "caffeine.endOnBattery"
         static let caffeineDisplayOnBattery = "caffeine.keepDisplayOnBattery"
         static let restReminder = "rest.reminderEnabled"
+        static let overlayEnabled = "overlay.enabled"
+        static let overlayStyle = "overlay.style"
+        static let overlayDuration = "overlay.duration"
+        static let overlayOnUnplug = "overlay.onUnplug"
+        static let haptics = "feedback.haptics"
     }
 
     init() {
@@ -97,5 +122,13 @@ final class AppSettings: ObservableObject {
         caffeineEndOnBattery = defaults.bool(forKey: Keys.caffeineEndOnBattery)
         caffeineKeepDisplayOnBattery = defaults.bool(forKey: Keys.caffeineDisplayOnBattery)
         restReminderEnabled = defaults.object(forKey: Keys.restReminder) as? Bool ?? true
+        chargeOverlayEnabled = defaults.bool(forKey: Keys.overlayEnabled)
+        chargeOverlayStyle = defaults.string(forKey: Keys.overlayStyle)
+            .flatMap(ChargeOverlayStyle.init(rawValue:)) ?? .dotGrid
+        // 0 means "never set" — a fresh install gets the default, not an instant flash.
+        let storedDuration = defaults.double(forKey: Keys.overlayDuration)
+        chargeOverlayDuration = storedDuration > 0 ? min(2.0, max(0.5, storedDuration)) : 1.0
+        chargeOverlayOnUnplug = defaults.bool(forKey: Keys.overlayOnUnplug)
+        hapticsEnabled = defaults.bool(forKey: Keys.haptics)
     }
 }

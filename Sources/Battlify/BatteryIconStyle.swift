@@ -1,4 +1,5 @@
 import AppKit
+import BattlifyKit
 
 /// Selectable menu-bar battery glyph styles; all fill to the real charge except
 /// `bars`, which is intentionally stepped.
@@ -85,7 +86,7 @@ enum BatteryIconRenderer {
         let pct = max(0, min(100, percentage))
         let anim: Int
         if celebrating {
-            anim = phase(frame, 2)                                          // blink on/off
+            anim = phase(frame, 4)                                          // bolt → check morph
         } else if charging && style == .pixel {
             anim = pixelFillCount(pct: pct, charging: charging, frame: frame) // sweep step
         } else if charging {
@@ -108,6 +109,9 @@ enum BatteryIconRenderer {
         let vb = style.viewBox
         let s = height / vb.h
         let size = NSSize(width: vb.w * s, height: vb.h * s)
+        // Celebration keeps its own frame so the morph runs 0 → 1 from the flash's start,
+        // rather than picking up wherever the shared tick happened to be.
+        let celebrateFrame = celebrating ? phase(frame, 4) : 0
 
         let image = NSImage(size: size, flipped: false) { _ in
             guard let cg = NSGraphicsContext.current?.cgContext else { return true }
@@ -115,7 +119,8 @@ enum BatteryIconRenderer {
             cg.translateBy(x: 0, y: size.height)
             cg.scaleBy(x: s, y: -s)
             cg.translateBy(x: -vb.x, y: -vb.y)
-            draw(style: style, pct: effPct, charging: effCharging, color: color, frame: frame)
+            draw(style: style, pct: effPct, charging: effCharging, color: color,
+                 frame: frame, celebrating: celebrating, celebrateFrame: celebrateFrame)
             return true
         }
         image.isTemplate = tint.isNeutral
@@ -126,7 +131,8 @@ enum BatteryIconRenderer {
     // MARK: - Per-style drawing (viewBox coordinates)
 
     private static func draw(style: BatteryIconStyle, pct: Int, charging: Bool, color: NSColor,
-                             frame: Int = 0) {
+                             frame: Int = 0, celebrating: Bool = false,
+                             celebrateFrame: Int = 0) {
         color.setStroke(); color.setFill()
         let frac = CGFloat(pct) / 100
         // While charging the fill rises from the real level towards full and restarts,
@@ -136,14 +142,16 @@ enum BatteryIconRenderer {
         switch style {
         case .rounded:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
-            fillAndBolt(charging: charging, color: color, frame: frame,
+            fillAndBolt(charging: charging, celebrating: celebrating,
+                        celebrateFrame: celebrateFrame, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
                 fillBar(x: 4.6, y: 9, maxW: 11.6, h: 6, r: 1.5, frac: fillFrac)
             }
 
         case .bars:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
-            fillAndBolt(charging: charging, color: color, frame: frame,
+            fillAndBolt(charging: charging, celebrating: celebrating,
+                        celebrateFrame: celebrateFrame, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
                 drawBars(frac: charging ? fillFrac : frac)
             }
@@ -154,7 +162,8 @@ enum BatteryIconRenderer {
             body.lineWidth = stroke; body.stroke()
             NSBezierPath(roundedRect: NSRect(x: 19, y: 9.6, width: 1.9, height: 4.8),
                          xRadius: 0.7, yRadius: 0.7).fill()
-            fillAndBolt(charging: charging, color: color, frame: frame,
+            fillAndBolt(charging: charging, celebrating: celebrating,
+                        celebrateFrame: celebrateFrame, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
                 fillBar(x: 3.7, y: 8.7, maxW: 13, h: 6.6, r: 1.2, frac: fillFrac)
             }
@@ -163,7 +172,8 @@ enum BatteryIconRenderer {
             let pill = NSBezierPath(roundedRect: NSRect(x: 2, y: 8, width: 18, height: 8),
                                     xRadius: 4, yRadius: 4)
             pill.lineWidth = stroke; pill.stroke()
-            fillAndBolt(charging: charging, color: color, frame: frame,
+            fillAndBolt(charging: charging, celebrating: celebrating,
+                        celebrateFrame: celebrateFrame, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
                 fillBar(x: 3.6, y: 9.6, maxW: 14.8, h: 4.8, r: 2.4, frac: fillFrac)
             }
@@ -185,7 +195,8 @@ enum BatteryIconRenderer {
 
         case .wave:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
-            fillAndBolt(charging: charging, color: color, frame: frame,
+            fillAndBolt(charging: charging, celebrating: celebrating,
+                        celebrateFrame: celebrateFrame, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
                 drawWave(frac: fillFrac, frame: frame)
             }
@@ -416,6 +427,13 @@ enum BatteryIconRenderer {
     /// horizontal one.
     private static let uprightBoltPath = "M13 8.4L10.4 12.1C10.2 12.4 10.4 12.7 10.7 12.7L12.6 12.7C12.9 12.7 13.1 13.0 12.9 13.3L10.9 16.2"
 
+    /// A wider bolt, morphed towards while charging so the mark breathes in shape and
+    /// not just in opacity.
+    private static let boltFatPath = "M11.3 8.6L8.6 11.3C8.3 11.6 8.5 12.1 8.9 12.2L11.6 12.7C12.1 12.8 12.3 13.3 12.0 13.7L9.0 15.6"
+
+    /// The completion mark the bolt grows into.
+    private static let checkPath = "M8.8 12.2L10.9 14.5L15.2 9.4"
+
     /// A *closed* bolt silhouette — the Bolt style fills and clips to it, which an open
     /// stroked path can't do.
     private static let boltGaugePath =
@@ -433,10 +451,14 @@ enum BatteryIconRenderer {
     /// it, leaving a transparent halo the bolt then sits in. That reads at any fill
     /// level, from a sliver to full, and survives the template treatment (macOS tints
     /// by alpha, and the halo is alpha).
-    private static func fillAndBolt(charging: Bool, color: NSColor, frame: Int,
+    private static func fillAndBolt(charging: Bool, celebrating: Bool = false,
+                                    celebrateFrame: Int = 0,
+                                    color: NSColor, frame: Int,
                                     bolt: String, width: CGFloat,
                                     fill: () -> Void) {
-        guard charging, let cg = NSGraphicsContext.current?.cgContext else {
+        let glyph = overlayGlyph(charging: charging, celebrating: celebrating,
+                                 celebrateFrame: celebrateFrame, frame: frame, bolt: bolt)
+        guard let glyph, let cg = NSGraphicsContext.current?.cgContext else {
             fill()
             return
         }
@@ -445,10 +467,45 @@ enum BatteryIconRenderer {
         cg.saveGState()
         cg.setBlendMode(.destinationOut)   // erases only this layer's own pixels
         color.setStroke()
-        strokeSVG(bolt, width: width + 1.5)
+        stroke(glyph, width: width + 1.5)
         cg.restoreGState()
         cg.endTransparencyLayer()
-        drawBolt(color, frame: frame, path: bolt, width: width)
+
+        // The bolt breathes by alpha as well as by shape; the checkmark stays solid,
+        // because a completion mark that dims looks like it's failing.
+        let alpha = celebrating ? 1 : boltPulse[phase(frame, boltPulse.count)]
+        color.withAlphaComponent(alpha).setStroke()
+        stroke(glyph, width: width)
+        color.setStroke()
+    }
+
+    /// The mark drawn over the fill, *morphed* between shapes rather than swapped.
+    ///
+    /// Charging breathes between a slim and a fat bolt — the same amount of energy,
+    /// arriving — and the completion flash grows that bolt into a checkmark. Both go
+    /// through `PathMorph`, which resamples the two outlines by arc length, so the
+    /// in-between frames are real intermediate shapes instead of a cross-fade of two
+    /// glyphs sitting on top of each other. Every frame is cached by the renderer, so
+    /// the resampling happens a handful of times per state, not per redraw.
+    private static func overlayGlyph(charging: Bool, celebrating: Bool,
+                                     celebrateFrame: Int, frame: Int,
+                                     bolt: String) -> NSBezierPath? {
+        let slim = SVGPath.parse(bolt)
+        if celebrating {
+            let t = min(1, CGFloat(celebrateFrame) / 2)     // grow over two ticks, then hold
+            return PathMorph.morph(from: slim, to: SVGPath.parse(checkPath), t: t)
+        }
+        guard charging else { return nil }
+        let u = CGFloat(phase(frame, sweepSteps)) / CGFloat(sweepSteps)
+        let t = 1 - abs(2 * u - 1)                          // 0 → 1 → 0, no jump at the wrap
+        return PathMorph.morph(from: slim, to: SVGPath.parse(boltFatPath), t: t)
+    }
+
+    private static func stroke(_ path: NSBezierPath, width: CGFloat) {
+        path.lineWidth = width
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.stroke()
     }
 
     /// Restores the stroke colour afterward so the rest of the glyph draws at

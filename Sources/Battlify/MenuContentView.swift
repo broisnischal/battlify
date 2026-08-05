@@ -292,6 +292,29 @@ struct MenuContentView: View {
         }
     }
 
+    /// "Don't charge" as a switch rather than a timed pause: the level stays put for as
+    /// long as it's on, and the MagSafe light goes amber so it's visible from outside
+    /// the app.
+    @ViewBuilder
+    private var holdChargeControl: some View {
+        HStack(spacing: 8) {
+            HugeIcon("plug", size: 17)
+                .foregroundStyle(chargeLimit.holdCharge ? Color.orange : .secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Don't charge").font(.callout)
+                Text(chargeLimit.holdCharge
+                     ? "Holding — plugged in, battery left alone"
+                     : "Run off the adapter, leave the battery as-is")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Toggle("", isOn: Binding(
+                get: { chargeLimit.holdCharge },
+                set: { chargeLimit.holdCharge = $0; chargeLimit.apply() }))
+                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+        }
+    }
+
     @ViewBuilder
     private var calibrationControl: some View {
         if chargeLimit.calibrating {
@@ -333,6 +356,7 @@ struct MenuContentView: View {
             sectionHeader("Charge Limit", "battery")
 
             if chargeLimit.daemonAvailable {
+                holdChargeControl
                 pauseChargingControl
 
                 if chargeLimit.daemonOutdated {

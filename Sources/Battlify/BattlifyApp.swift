@@ -28,6 +28,7 @@ struct BattlifyApp: App {
     @StateObject private var triggers = TriggerStore()
     @StateObject private var hotkeys = HotkeyStore()
     @StateObject private var restReminder = RestReminder()
+    @StateObject private var overlay = ChargeOverlayController()
 
     var body: some Scene {
         MenuBarExtra {
@@ -61,7 +62,7 @@ struct BattlifyApp: App {
             MenuBarLabel(battery: battery, chargeLimit: chargeLimit,
                          settings: settings, notifier: notifier, triggers: triggers,
                          hotkeys: hotkeys, caffeine: caffeine, actions: actions,
-                         license: license, restReminder: restReminder)
+                         license: license, restReminder: restReminder, overlay: overlay)
         }
         .menuBarExtraStyle(.window)
 
@@ -81,6 +82,7 @@ struct BattlifyApp: App {
                 .environmentObject(endurance)
                 .environmentObject(triggers)
                 .environmentObject(hotkeys)
+                .environmentObject(overlay)
         }
         .windowResizability(.contentSize)
 
@@ -124,6 +126,7 @@ struct MenuBarLabel: View {
     let actions: SystemActions
     let license: LicenseManager
     let restReminder: RestReminder
+    let overlay: ChargeOverlayController
     @Environment(\.openWindow) private var openWindow
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
@@ -206,12 +209,28 @@ struct MenuBarLabel: View {
         }
         // Flash only when it lands full/at-limit right after charging, not on wake-already-holding.
         .onChange(of: chargeComplete(snap)) { _, done in
-            guard done, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
             let justCharged = snap.isCharging
                 || (chargeStoppedAt.map { Date().timeIntervalSince($0) < 120 } ?? false)
-            guard justCharged else { return }
+            guard done, justCharged else { return }
+            if settings.hapticsEnabled { HapticFeedback.limitReached() }
+            guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
             celebrating = true
             celebrateTicks = 0
+        }
+        // Plug and unplug feedback. Driven off the snapshot rather than a power-source
+        // callback of its own: this view already re-renders on every snapshot change, and
+        // `onChange` fires once per real transition rather than on every poll.
+        .onChange(of: snap.isPluggedIn) { was, isNow in
+            guard was != isNow else { return }
+            if settings.hapticsEnabled {
+                isNow ? HapticFeedback.chargeConnected() : HapticFeedback.chargeDisconnected()
+            }
+            guard settings.chargeOverlayEnabled,
+                  isNow || settings.chargeOverlayOnUnplug else { return }
+            overlay.show(style: settings.chargeOverlayStyle,
+                         duration: settings.chargeOverlayDuration,
+                         percentage: snap.percentage,
+                         plugging: isNow)
         }
         // The status item exists from launch, so this is where the automation
         // rules start watching — they must run whether or not the menu is opened.

@@ -70,6 +70,11 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     public var magSafeLedMode: MagSafeLEDMode
     /// Force-discharge (run off battery while plugged) to bring the level down to the limit.
     public var dischargeEnabled: Bool
+    /// "Don't charge while plugged in": run the Mac off the adapter and leave the battery
+    /// exactly where it is, whatever the level or the limit. Overrides everything except
+    /// an explicit pause — a level of hold no other setting expresses, since the limit
+    /// still charges *up to* its ceiling and a schedule only holds inside its window.
+    public var holdCharge: Bool
     /// Cut charging before sleep so macOS can't top up past the limit while the daemon is frozen.
     public var disableChargingBeforeSleep: Bool
     /// Hold a power assertion (while plugged) so idle-sleep can't interrupt limit enforcement.
@@ -130,6 +135,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 magSafeLedEnabled: Bool = false,
                 magSafeLedMode: MagSafeLEDMode? = nil,
                 dischargeEnabled: Bool = false,
+                holdCharge: Bool = false,
                 disableChargingBeforeSleep: Bool = false,
                 preventIdleSleep: Bool = false,
                 keepAwake: Bool = false,
@@ -159,6 +165,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         // in `init(from:)`.
         self.magSafeLedMode = magSafeLedMode ?? .status
         self.dischargeEnabled = dischargeEnabled
+        self.holdCharge = holdCharge
         self.disableChargingBeforeSleep = disableChargingBeforeSleep
         self.preventIdleSleep = preventIdleSleep
         self.keepAwake = keepAwake
@@ -195,6 +202,7 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         magSafeLedMode = try c.decodeIfPresent(MagSafeLEDMode.self, forKey: .magSafeLedMode)
             ?? (magSafeLedEnabled ? .status : .system)
         dischargeEnabled = try c.decodeIfPresent(Bool.self, forKey: .dischargeEnabled) ?? false
+        holdCharge = try c.decodeIfPresent(Bool.self, forKey: .holdCharge) ?? false
         disableChargingBeforeSleep = try c.decodeIfPresent(Bool.self, forKey: .disableChargingBeforeSleep) ?? false
         preventIdleSleep = try c.decodeIfPresent(Bool.self, forKey: .preventIdleSleep) ?? false
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false

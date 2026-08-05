@@ -92,6 +92,7 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
     case cycleSaveMode
     case toggleLowPowerMode
     case toggleDischarge
+    case toggleHoldCharge
 
     // Sleep & display
     case toggleCaffeine
@@ -116,6 +117,7 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .cycleSaveMode:       return "Cycle save mode"
         case .toggleLowPowerMode:  return "Toggle Low Power Mode"
         case .toggleDischarge:     return "Toggle force discharge"
+        case .toggleHoldCharge:    return "Toggle don't-charge"
         case .toggleCaffeine:      return "Toggle Caffeine"
         case .toggleKeepAwake:     return "Toggle Always Active"
         case .toggleDimDisplay:    return "Dim / restore display"
@@ -136,6 +138,7 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .cycleSaveMode:       return "Off → Normal → Super Saver → Off."
         case .toggleLowPowerMode:  return "The system Low Power Mode setting."
         case .toggleDischarge:     return "Run off the battery while plugged in. Needs adapter control."
+        case .toggleHoldCharge:    return "Stay plugged in without charging — the battery holds where it is."
         case .toggleCaffeine:      return "Keep the Mac awake — display and system won't sleep."
         case .toggleKeepAwake:     return "Keep working with the lid closed (AC only)."
         case .toggleDimDisplay:    return "Drop to 20% brightness, or back to where it was."
@@ -157,6 +160,7 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .cycleSaveMode:       return "gauge"
         case .toggleLowPowerMode:  return "batteryLow"
         case .toggleDischarge:     return "bolt"
+        case .toggleHoldCharge:    return "plug"
         case .toggleCaffeine:      return "coffee"
         case .toggleKeepAwake:     return "eye"
         case .toggleDimDisplay:    return "sunLow"
@@ -183,7 +187,7 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
     public var category: Category {
         switch self {
         case .toggleChargeLimit, .chargeLimitUp, .chargeLimitDown, .togglePauseCharging,
-             .cycleSaveMode, .toggleLowPowerMode, .toggleDischarge:
+             .cycleSaveMode, .toggleLowPowerMode, .toggleDischarge, .toggleHoldCharge:
             return .charging
         case .toggleCaffeine, .toggleKeepAwake, .toggleDimDisplay, .displayOff, .sleepNow:
             return .sleep
@@ -217,6 +221,7 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .toggleKeepAwake:     return Hotkey(keyCode: 40, modifiers: base)  // K
         case .toggleDimDisplay:    return Hotkey(keyCode: 2, modifiers: base)   // D
         case .openSettings:        return Hotkey(keyCode: 1, modifiers: base)   // S
+        case .toggleHoldCharge:    return Hotkey(keyCode: 4, modifiers: base)   // H
         case .displayOff, .sleepNow, .toggleDischarge, .openDetails, .openHistory:
             return nil
         }

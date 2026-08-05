@@ -135,6 +135,7 @@ final class HotkeyStore: ObservableObject {
         case .cycleSaveMode:       cycleSaveMode()
         case .toggleLowPowerMode:  toggleLowPowerMode()
         case .toggleDischarge:     toggleDischarge()
+        case .toggleHoldCharge:    toggleHoldCharge()
 
         case .toggleCaffeine:
             guard let caffeine else { return }
@@ -240,6 +241,14 @@ final class HotkeyStore: ObservableObject {
         charge.apply()
         hud(charge.dischargeEnabled ? "Force Discharge On" : "Force Discharge Off",
             detail: charge.dischargeEnabled ? "Running off the battery while plugged in" : nil)
+    }
+
+    private func toggleHoldCharge() {
+        guard let charge = requireDaemon() else { return }
+        charge.holdCharge.toggle()
+        charge.apply()
+        hud(charge.holdCharge ? "Don't Charge On" : "Don't Charge Off",
+            detail: charge.holdCharge ? "Plugged in, battery held where it is" : nil)
     }
 
     private func open(_ id: String) {

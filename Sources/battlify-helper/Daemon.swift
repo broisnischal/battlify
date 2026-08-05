@@ -326,6 +326,11 @@ final class Daemon: @unchecked Sendable {
         if paused {
             // pause overrides everything
             desired = false; reason = "paused"
+        } else if cfg.holdCharge && snap.onExternalPower {
+            // "Don't charge while plugged in": hold the level wherever it is. Sits above
+            // the limit, schedules and top-ups on purpose — it's the switch you reach for
+            // when you want the battery left alone, and it shouldn't be second-guessed.
+            desired = false; reason = "hold"
         } else if settling {
             desired = false; reason = "settling"
         } else if let s = activeSchedule, s.action == .hold || s.action == .discharge {
@@ -638,6 +643,7 @@ final class Daemon: @unchecked Sendable {
         case .status:
             if settling { target = .off }               // waiting after wake
             else if !snap.onExternalPower { target = .system }  // truly unplugged
+            else if cfg.holdCharge { target = .orange } // deliberately not charging: amber
             else if desired { target = .orange }        // charging
             else { target = .green }                    // holding / discharging to limit
         }
