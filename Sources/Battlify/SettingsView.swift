@@ -808,9 +808,20 @@ struct SettingsView: View {
                                        percentage: battery.snapshot.percentage)
                 }
                 divider
-                toggleRow("Show battery percentage",
-                          "Turn off to show just the icon.",
-                          isOn: $settings.showMenuBarPercentage)
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show").font(.callout)
+                        Text("Time remaining is time to full while charging, time to empty on battery.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Picker("", selection: $settings.menuBarDisplay) {
+                        ForEach(MenuBarDisplay.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().frame(width: 160)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
                 divider
                 toggleRow("Color icon by charge state",
                           "Green while charging, red when low or warm. Off keeps it monochrome.",

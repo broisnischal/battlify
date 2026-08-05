@@ -1,11 +1,38 @@
 import Foundation
 import Combine
 
+/// What text (if any) sits next to the menu-bar battery icon.
+enum MenuBarDisplay: String, CaseIterable, Identifiable {
+    /// Icon only.
+    case icon
+    /// "82%"
+    case percentage
+    /// "2:15" — time to full while charging, time to empty on battery.
+    case timeRemaining
+    /// "82% · 2:15"
+    case both
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .icon:          return "Icon only"
+        case .percentage:    return "Percentage"
+        case .timeRemaining: return "Time remaining"
+        case .both:          return "Percentage & time"
+        }
+    }
+
+    var showsPercentage: Bool { self == .percentage || self == .both }
+    var showsTime: Bool { self == .timeRemaining || self == .both }
+}
+
 /// GUI-only display preferences (UserDefaults), separate from the daemon's charge policy.
 @MainActor
 final class AppSettings: ObservableObject {
-    @Published var showMenuBarPercentage: Bool {
-        didSet { defaults.set(showMenuBarPercentage, forKey: Keys.showPct) }
+    /// What the menu-bar item shows next to the icon.
+    @Published var menuBarDisplay: MenuBarDisplay {
+        didSet { defaults.set(menuBarDisplay.rawValue, forKey: Keys.display) }
     }
     @Published var colorMenuBarIcon: Bool {
         didSet { defaults.set(colorMenuBarIcon, forKey: Keys.colorIcon) }
@@ -27,7 +54,8 @@ final class AppSettings: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private enum Keys {
-        static let showPct = "menubar.showPercentage"
+        static let showPct = "menubar.showPercentage"   // legacy Bool, migrated below
+        static let display = "menubar.display"
         static let colorIcon = "menubar.colorIcon"
         static let animateIcon = "menubar.animateIcon"
         static let iconStyle = "menubar.iconStyle"
@@ -35,7 +63,15 @@ final class AppSettings: ObservableObject {
     }
 
     init() {
-        showMenuBarPercentage = defaults.object(forKey: Keys.showPct) as? Bool ?? true
+        // Migrate the old show-percentage Bool: off → icon only, on (or unset,
+        // the first-run default) → percentage.
+        if let raw = defaults.string(forKey: Keys.display),
+           let mode = MenuBarDisplay(rawValue: raw) {
+            menuBarDisplay = mode
+        } else {
+            menuBarDisplay = (defaults.object(forKey: Keys.showPct) as? Bool ?? true)
+                ? .percentage : .icon
+        }
         colorMenuBarIcon = defaults.object(forKey: Keys.colorIcon) as? Bool ?? true
         animateMenuBarIcon = defaults.bool(forKey: Keys.animateIcon)
         batteryIconStyle = (defaults.string(forKey: Keys.iconStyle))

@@ -165,8 +165,9 @@ struct MenuBarLabel: View {
                 tint: tint,
                 frame: animFrame,
                 celebrating: celebratingNow))
-            if settings.showMenuBarPercentage {
-                Text("\(snap.percentage)%")
+            if let text = labelText(snap) {
+                // Monospaced digits so the item doesn't shift width as it ticks.
+                Text(text).monospacedDigit()
             }
         }
         .help(helpText(snap))
@@ -223,6 +224,30 @@ struct MenuBarLabel: View {
         if chargeLimit.pauseReason == "heat" { return true }
         if let t = snap.temperature, t >= 40 { return true }
         return false
+    }
+
+    /// Text beside the icon, per the display preference. Time-remaining falls back
+    /// to the percentage when macOS has no estimate (right after a plug change, or
+    /// while holding at the limit) rather than blanking out.
+    private func labelText(_ snap: BatterySnapshot) -> String? {
+        let mode = settings.menuBarDisplay
+        let pct = mode.showsPercentage ? "\(snap.percentage)%" : nil
+        let time = mode.showsTime ? remainingText(snap) : nil
+        switch (pct, time) {
+        case let (p?, t?):  return "\(p) · \(t)"
+        case let (p?, nil): return p
+        case let (nil, t?): return t
+        case (nil, nil):    return mode.showsTime ? "\(snap.percentage)%" : nil
+        }
+    }
+
+    /// "1:25" — time to full while charging, time to empty on battery. Nil when
+    /// macOS hasn't got an estimate (it reports −1 while recalculating, which
+    /// `BatteryMonitor` already drops).
+    private func remainingText(_ snap: BatterySnapshot) -> String? {
+        let minutes = snap.isCharging ? snap.timeToFull : snap.timeToEmpty
+        guard let minutes, minutes > 0 else { return nil }
+        return String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
 
     private func helpText(_ snap: BatterySnapshot) -> String {

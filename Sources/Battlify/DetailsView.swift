@@ -15,6 +15,7 @@ struct DetailsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 statsCard(snap)
                 powerFlowCard
+                adapterCard
                 systemCard
                 healthCard(snap)
                 energyCard
@@ -131,6 +132,53 @@ struct DetailsView: View {
         if f.batteryWatts > 0.5 { return "Battery charging" }
         if f.batteryWatts < -0.5 { return "Battery draining" }
         return "Battery idle"
+    }
+
+    // MARK: - Adapter
+
+    /// Who's actually supplying the power: adapter identity, the wattage the Mac
+    /// negotiated, and a warning when the adapter could give more than it's being
+    /// asked for (nearly always a cable or port limit). Hidden when nothing is
+    /// plugged in — there's nothing to say.
+    @ViewBuilder
+    private var adapterCard: some View {
+        if let a = battery.powerFlow.adapter {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Power Adapter").font(.title3.weight(.semibold))
+                    Spacer()
+                    if let w = a.watts {
+                        Text("\(w) W").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(spacing: 0) {
+                    statRow("Adapter", a.name ?? a.manufacturer ?? "Connected")
+                    if let v = supplyText(a) { Divider(); statRow("Supplying", v) }
+                    if let m = a.maxAvailableWatts { Divider(); statRow("Adapter maximum", "\(m) W") }
+                    if a.name != nil, let mfg = a.manufacturer { Divider(); statRow("Manufacturer", mfg) }
+                    if let model = a.model { Divider(); statRow("Model", model) }
+                    if let serial = a.serial { Divider(); statRow("Serial", serial) }
+                    if a.isWireless { Divider(); statRow("Connection", "Wireless") }
+                }
+                .padding(.vertical, 4)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                if a.isUnderNegotiated, let w = a.watts, let m = a.maxAvailableWatts {
+                    Label("This adapter can supply \(m) W but the Mac negotiated \(w) W. That's usually the cable — a charge cable rated below the adapter caps the whole chain.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// "20.0 V · 3.0 A" from the negotiated supply, when the adapter reports both.
+    private func supplyText(_ a: AdapterInfo) -> String? {
+        guard let mv = a.voltageMv, let ma = a.currentMa else { return nil }
+        return String(format: "%.1f V · %.1f A", Double(mv) / 1000, Double(ma) / 1000)
     }
 
     // MARK: - System (lid sensor)

@@ -108,7 +108,11 @@ change is never a mystery.
 - **Battery Health** card with the numbers that matter (cycle count, capacity,
   temperature) and plain-language tips.
 - **Usage history** charts, plus a per-close readout of how much charge a closed-lid
-  session actually cost you.
+  session actually cost you — exportable as CSV (samples, daily summary, lid sessions).
+- **Power adapter card** showing what's actually feeding the Mac: negotiated wattage,
+  voltage and current, and the adapter's own maximum. If your adapter can give more
+  than the Mac negotiated, it tells you — that gap is nearly always the cable.
+- **Menu bar, your way** — icon only, percentage, time remaining, or both.
 - **Lid / clamshell sensor** that warns you when you're docked-and-closed at a high
   charge — the worst-case aging scenario.
 - **Quick Actions** — dim or brighten the display, blank it, or sleep the Mac.
