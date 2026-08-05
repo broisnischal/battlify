@@ -32,6 +32,8 @@ final class HotkeyStore: ObservableObject {
     private enum Keys {
         static let enabled = "hotkeys.enabled"
         static let bindings = "hotkeys.bindings"
+        /// Action ids this install has already been offered defaults for.
+        static let seeded = "hotkeys.seededActions"
     }
 
     // Weak: the app owns these for its whole lifetime, and a strong ref here would
@@ -51,10 +53,12 @@ final class HotkeyStore: ObservableObject {
         if let data = defaults.data(forKey: Keys.bindings),
            let saved = try? JSONDecoder().decode(HotkeyBindings.self, from: data) {
             bindings = saved
+            seedNewActions()
         } else {
             // First launch: ship the defaults rather than nothing, so the feature is
             // discoverable without a trip to Settings.
             bindings = .default
+            markAllSeeded()
         }
         monitor.onFire = { [weak self] action in self?.perform(action) }
     }
@@ -112,6 +116,33 @@ final class HotkeyStore: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(bindings) else { return }
         defaults.set(data, forKey: Keys.bindings)
+    }
+
+    /// Give actions added by an update their default shortcut.
+    ///
+    /// Saved bindings were previously used exactly as stored, so every action added after a
+    /// user's first launch arrived unbound — the shortcut existed in Settings with "Not set"
+    /// beside it and nothing shipped it. Defaults are only applied to actions this install
+    /// has never seen, tracked by id: a shortcut the user deliberately cleared must stay
+    /// cleared, and re-seeding it on every launch would be worse than never seeding it.
+    private func seedNewActions() {
+        let seen = Set(defaults.stringArray(forKey: Keys.seeded) ?? [])
+        var seeded = false
+        for action in HotkeyAction.allCases where !seen.contains(action.id) {
+            guard let candidate = action.defaultHotkey,
+                  bindings.hotkey(for: action) == nil,
+                  // Never take a combination the user has already given to something else.
+                  bindings.action(for: candidate) == nil
+            else { continue }
+            _ = bindings.set(candidate, for: action)
+            seeded = true
+        }
+        markAllSeeded()
+        if seeded { persist() }
+    }
+
+    private func markAllSeeded() {
+        defaults.set(HotkeyAction.allCases.map(\.id), forKey: Keys.seeded)
     }
 
     private func reregister() {

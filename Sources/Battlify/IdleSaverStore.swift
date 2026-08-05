@@ -108,13 +108,19 @@ final class IdleSaverStore: ObservableObject {
     private func reschedule() {
         timer?.invalidate()
         timer = nil
-        guard autoEnabled else { return }
-        // A minute's resolution is plenty for a 30-minute threshold, and a slow timer is
-        // the only defensible kind in an app whose job is saving power.
-        let t = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+        // Runs while watching for idleness *or* while resting — resting needs the timer even
+        // with the automatic trigger off, because that's what notices you're back.
+        guard autoEnabled || resting else { return }
+        // Two cadences, for two jobs. Waiting for a 30-minute threshold needs no better than
+        // a minute's resolution, and a fast timer for that in an app whose job is saving
+        // power would be absurd. Coming *back* is different: the display has already woken on
+        // the keypress, so anything still held — Low Power Mode, the radios — has to be put
+        // back promptly or the Mac feels throttled after you've returned to it.
+        let interval: TimeInterval = resting ? 2 : 60
+        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
-        t.tolerance = 15
+        t.tolerance = resting ? 0.5 : 15
         RunLoop.main.add(t, forMode: .common)
         timer = t
         tick()
@@ -124,9 +130,16 @@ final class IdleSaverStore: ObservableObject {
         let idle = Self.idleSeconds()
 
         if resting {
-            // Any input at all means they're back: the display is already awake, so the
-            // rest of the state has to come back with it.
-            if idle < 30 { endResting(); return }
+            // The click or keystroke that started resting is itself activity — pressing
+            // ⌃⌥⌘R leaves idle at zero — so without this the first poll would wake it
+            // straight back up. Four seconds is longer than two polls and shorter than
+            // anyone's patience.
+            if let since = restingSince, Date().timeIntervalSince(since) < 4 { return }
+            // After that, any input at all means they're back: the display has already woken
+            // on the keypress, so whatever is still held has to be put back with it. The
+            // threshold sits just above the 2s poll — long enough that the poll can't race a
+            // genuine wake, short enough to land within a couple of seconds of the keypress.
+            if idle < 3 { endResting(); return }
             if sleepAfterMinutes > 0, let since = restingSince,
                Date().timeIntervalSince(since) >= Double(sleepAfterMinutes) * 60 {
                 sleepNow()
@@ -146,6 +159,7 @@ final class IdleSaverStore: ObservableObject {
     private func beginResting() {
         resting = true
         restingSince = Date()
+        reschedule()   // switch to the fast poll that notices you coming back
 
         if lowPowerWhileResting {
             if let status = try? ControlClient.send(.getStatus) {
@@ -167,6 +181,7 @@ final class IdleSaverStore: ObservableObject {
     private func endResting() {
         resting = false
         restingSince = nil
+        reschedule()   // back to the slow idle watch (or no timer, if that's off)
 
         if let previous = savedLowPowerMode {
             _ = try? ControlClient.send(.setLowPowerMode(previous))
