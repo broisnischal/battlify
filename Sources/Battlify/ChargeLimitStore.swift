@@ -75,6 +75,10 @@ final class ChargeLimitStore: ObservableObject {
     @Published var sleepWhenTaskDone = false
     /// How deeply the Mac sleeps when closed and idle.
     @Published var sleepDepth: SleepDepth = .normal
+    /// Windows during which Always Active holds (empty = whenever the toggle is on).
+    @Published var keepAwakeSchedules: [AwakeSchedule] = []
+    /// When Always Active switches itself off (nil = no timer).
+    @Published private(set) var keepAwakeUntil: Date?
     @Published var schedules: [ChargeSchedule] = []
     /// Once-daily "ready by" top-up target.
     @Published var readyBy = ReadyByTarget()
@@ -172,6 +176,9 @@ final class ChargeLimitStore: ObservableObject {
         cfg.dischargeEnabled = dischargeEnabled
         cfg.disableChargingBeforeSleep = disableChargingBeforeSleep
         cfg.preventIdleSleep = preventIdleSleep
+        // An auto-off deadline means nothing once the toggle is off (switched off by
+        // hand, or by a schedule edit), and a stale countdown in the UI would be a lie.
+        if !keepAwake { keepAwakeUntil = nil }
         cfg.keepAwake = keepAwake
         cfg.keepAwakeOnBattery = keepAwakeOnBattery
         cfg.keepAwakeRequiresTask = keepAwakeRequiresTask
@@ -180,6 +187,8 @@ final class ChargeLimitStore: ObservableObject {
         cfg.keepAwakeMaxTempC = keepAwakeMaxTempC
         cfg.sleepWhenTaskDone = sleepWhenTaskDone
         cfg.sleepDepth = sleepDepth
+        cfg.keepAwakeSchedules = keepAwakeSchedules
+        cfg.keepAwakeUntil = keepAwakeUntil
         cfg.schedules = schedules
         cfg.readyBy = readyBy
         cfg.chargePower = chargePower
@@ -247,6 +256,58 @@ final class ChargeLimitStore: ObservableObject {
         schedules.first { $0.isActive(at: Date()) }
     }
 
+    // MARK: - Always Active windows and timer
+
+    func updateOrAddAwakeSchedule(_ schedule: AwakeSchedule) {
+        if let i = keepAwakeSchedules.firstIndex(where: { $0.id == schedule.id }) {
+            keepAwakeSchedules[i] = schedule
+        } else {
+            keepAwakeSchedules.append(schedule)
+        }
+        apply()
+    }
+
+    func updateAwakeSchedule(_ schedule: AwakeSchedule) {
+        guard let i = keepAwakeSchedules.firstIndex(where: { $0.id == schedule.id }) else { return }
+        keepAwakeSchedules[i] = schedule
+        apply()
+    }
+
+    func removeAwakeSchedule(_ schedule: AwakeSchedule) {
+        keepAwakeSchedules.removeAll { $0.id == schedule.id }
+        apply()
+    }
+
+    /// The window holding the Mac awake right now, if any (first match wins).
+    var activeAwakeSchedule: AwakeSchedule? {
+        keepAwakeSchedules.first { $0.isActive(at: Date()) }
+    }
+
+    /// True once any window is armed, at which point the timetable — not just the
+    /// toggle — decides when Always Active holds.
+    var hasAwakeSchedules: Bool { keepAwakeSchedules.contains { $0.enabled } }
+
+    /// Whether Always Active is holding as far as the timetable and timer are concerned.
+    /// The daemon layers the power, task and heat gates on top of this.
+    var keepAwakeArmed: Bool {
+        BattlifyConfig.keepAwakeArmed(enabled: keepAwake, until: keepAwakeUntil,
+                                      schedules: keepAwakeSchedules)
+    }
+
+    /// Turn Always Active on, optionally with an auto-off deadline (nil = until turned
+    /// off). The daemon owns the expiry, so the timer still fires with the Mac asleep
+    /// or the app quit.
+    func startKeepAwake(minutes: Int? = nil) {
+        keepAwakeUntil = minutes.map { Date().addingTimeInterval(Double($0) * 60) }
+        keepAwake = true
+        apply()
+    }
+
+    func stopKeepAwake() {
+        keepAwake = false   // apply() clears the deadline
+        apply()
+    }
+
     func setPowerToggle(_ toggle: PowerToggle, _ on: Bool) {
         command(.setPowerToggle(toggle, on))
     }
@@ -294,6 +355,8 @@ final class ChargeLimitStore: ObservableObject {
         set(\.keepAwakeMaxTempC, r.config.keepAwakeMaxTempC)
         set(\.sleepWhenTaskDone, r.config.sleepWhenTaskDone)
         set(\.sleepDepth, r.config.sleepDepth)
+        set(\.keepAwakeSchedules, r.config.keepAwakeSchedules)
+        set(\.keepAwakeUntil, r.config.keepAwakeUntil)
         set(\.schedules, r.config.schedules)
         set(\.readyBy, r.config.readyBy)
         set(\.slowCharge, r.config.slowCharge)

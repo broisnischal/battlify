@@ -69,6 +69,7 @@ struct BattlifyApp: App {
                 .environmentObject(battery)
                 .environmentObject(chargeLimit)
                 .environmentObject(automation)
+                .environmentObject(caffeine)
                 .environmentObject(license)
                 .environmentObject(startup)
                 .environmentObject(updater)
@@ -155,6 +156,13 @@ struct MenuBarLabel: View {
                            NSApplication.shared.activate(ignoringOtherApps: true)
                            openWindow(id: id)
                        })
+        // The label also re-renders on every snapshot change, which is exactly when
+        // Caffeine's
+        // power policy needs re-evaluating (unplugging must stop it holding the screen
+        // awake and draining). The call is idempotent, so re-sending costs nothing.
+        caffeine.applyPolicy(keepDisplayOnBattery: settings.caffeineKeepDisplayOnBattery,
+                             endOnBattery: settings.caffeineEndOnBattery,
+                             onExternalPower: snap.onExternalPower)
         return HStack(spacing: 2) {
             // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
             // labels, and the renderer draws the charging bolt inside the glyph.

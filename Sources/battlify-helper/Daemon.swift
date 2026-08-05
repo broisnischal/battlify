@@ -54,6 +54,8 @@ final class Daemon: @unchecked Sendable {
     // "Always Active" state; nil disablesleep = not yet written, so we pmset only on change.
     private var keepAwakeAssertion: IOPMAssertionID = 0
     private var lastDisableSleep: Bool?
+    // Last scheduled-window verdict, so a window opening or closing is logged once.
+    private var lastKeepAwakeArmed = false
     // Force display off once per lid-closed spell while keep-awake holds; resets when the lid opens.
     private var displayForcedOffWhileClosed = false
 
@@ -287,6 +289,17 @@ final class Daemon: @unchecked Sendable {
         }
         let paused = cfg.pauseUntil != nil
 
+        // A keep-awake timer that has run out clears the toggle too, so the GUI shows
+        // "off" rather than an on switch that no longer holds anything. Written back
+        // here (not just evaluated) because the deadline may have passed while the Mac
+        // was asleep, or with no GUI running at all.
+        if let until = cfg.keepAwakeUntil, now >= until {
+            cfg.keepAwakeUntil = nil
+            cfg.keepAwake = false
+            try? ConfigStore.save(cfg)
+            log("keep-awake timer elapsed; Always Active turned off")
+        }
+
         // One-shot calibration ends the moment the battery reaches full.
         if cfg.calibrateToFull && (snap.isFullyCharged || level >= 100) {
             cfg.calibrateToFull = false
@@ -431,9 +444,17 @@ final class Daemon: @unchecked Sendable {
     /// assertion for idle sleep. It doesn't survive a reboot, so the first tick re-applies
     /// it (`lastDisableSleep` starts nil).
     private func updateKeepAwake(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+        // `keepAwakeArmed` folds in the timetable and any auto-off timer, so a window
+        // closing releases the hold on the next tick without the user touching anything.
+        let armed = cfg.keepAwakeArmed()
+        if armed != lastKeepAwakeArmed, !cfg.keepAwakeSchedules.filter(\.enabled).isEmpty {
+            log("keep-awake schedule window \(armed ? "opened" : "closed")")
+        }
+        lastKeepAwakeArmed = armed
+
         // AC by default (onExternalPower survives force-discharge but releases on a real
         // unplug); keepAwakeOnBattery opts out, guarded by the thermal limit below.
-        var want = cfg.keepAwake && (cfg.keepAwakeOnBattery || snap.onExternalPower)
+        var want = armed && (cfg.keepAwakeOnBattery || snap.onExternalPower)
 
         // Task-gated: only hold while a matching task runs, so the Mac sleeps when work finishes.
         let taskGated = want && cfg.keepAwakeRequiresTask
