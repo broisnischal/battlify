@@ -27,6 +27,7 @@ struct BattlifyApp: App {
     @StateObject private var endurance = EnduranceStore()
     @StateObject private var triggers = TriggerStore()
     @StateObject private var hotkeys = HotkeyStore()
+    @StateObject private var restReminder = RestReminder()
 
     var body: some Scene {
         MenuBarExtra {
@@ -46,6 +47,7 @@ struct BattlifyApp: App {
                 .environmentObject(endurance)
                 .environmentObject(triggers)
                 .environmentObject(hotkeys)
+                .environmentObject(restReminder)
                 .onAppear {
                     network.chargeLimit = chargeLimit
                     automation.chargeLimit = chargeLimit
@@ -59,7 +61,7 @@ struct BattlifyApp: App {
             MenuBarLabel(battery: battery, chargeLimit: chargeLimit,
                          settings: settings, notifier: notifier, triggers: triggers,
                          hotkeys: hotkeys, caffeine: caffeine, actions: actions,
-                         license: license)
+                         license: license, restReminder: restReminder)
         }
         .menuBarExtraStyle(.window)
 
@@ -115,11 +117,13 @@ struct MenuBarLabel: View {
     // Not observed: the label doesn't render from these. They're here because the
     // label is the one view that exists from launch, which is where global shortcuts
     // have to start listening — waiting for the dropdown's first open would mean the
-    // shortcuts silently didn't work until you'd clicked the menu bar once.
+    // shortcuts silently didn't work until you'd clicked the menu bar once. The rest
+    // reminder and Caffeine's power policy start from here for the same reason.
     let hotkeys: HotkeyStore
     let caffeine: CaffeineManager
     let actions: SystemActions
     let license: LicenseManager
+    let restReminder: RestReminder
     @Environment(\.openWindow) private var openWindow
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
@@ -156,13 +160,13 @@ struct MenuBarLabel: View {
                            NSApplication.shared.activate(ignoringOtherApps: true)
                            openWindow(id: id)
                        })
-        // The label also re-renders on every snapshot change, which is exactly when
-        // Caffeine's
+        // The label re-renders on every snapshot change, which is exactly when Caffeine's
         // power policy needs re-evaluating (unplugging must stop it holding the screen
         // awake and draining). The call is idempotent, so re-sending costs nothing.
         caffeine.applyPolicy(keepDisplayOnBattery: settings.caffeineKeepDisplayOnBattery,
                              endOnBattery: settings.caffeineEndOnBattery,
                              onExternalPower: snap.onExternalPower)
+        restReminder.startIfNeeded(settings: settings, battery: battery)
         return HStack(spacing: 2) {
             // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
             // labels, and the renderer draws the charging bolt inside the glyph.

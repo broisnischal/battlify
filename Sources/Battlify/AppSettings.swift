@@ -61,6 +61,10 @@ final class AppSettings: ObservableObject {
     @Published var caffeineKeepDisplayOnBattery: Bool {
         didSet { defaults.set(caffeineKeepDisplayOnBattery, forKey: Keys.caffeineDisplayOnBattery) }
     }
+    /// Occasionally suggest a restart once the Mac has been running a long time.
+    @Published var restReminderEnabled: Bool {
+        didSet { defaults.set(restReminderEnabled, forKey: Keys.restReminder) }
+    }
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -72,6 +76,7 @@ final class AppSettings: ObservableObject {
         static let notifications = "notifications.enabled"
         static let caffeineEndOnBattery = "caffeine.endOnBattery"
         static let caffeineDisplayOnBattery = "caffeine.keepDisplayOnBattery"
+        static let restReminder = "rest.reminderEnabled"
     }
 
     init() {
@@ -91,5 +96,6 @@ final class AppSettings: ObservableObject {
         notificationsEnabled = defaults.bool(forKey: Keys.notifications)
         caffeineEndOnBattery = defaults.bool(forKey: Keys.caffeineEndOnBattery)
         caffeineKeepDisplayOnBattery = defaults.bool(forKey: Keys.caffeineDisplayOnBattery)
+        restReminderEnabled = defaults.object(forKey: Keys.restReminder) as? Bool ?? true
     }
 }
