@@ -794,6 +794,12 @@ struct SettingsView: View {
                 }
 
                 card("Plug-in feedback (experimental)") {
+                    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                        toggleRow("Animate anyway",
+                                  "macOS Reduce Motion is on, so Battlify's animations — the charging icon, this overlay, the charge-complete flash — are all switched off. Turn this on to play them anyway; nothing else on your Mac is affected.",
+                                  isOn: $settings.animateWithReduceMotion)
+                        divider
+                    }
                     toggleRow("Tap the trackpad when you plug in",
                               "Two taps on connect, one on unplug, three when the charge limit is reached. Needs a Force Touch trackpad — a desktop Mac, or a laptop you're driving from an external keyboard, has nothing to tap with, and the trackpad is asleep while the lid is shut.",
                               isOn: $settings.hapticsEnabled)
@@ -816,7 +822,8 @@ struct SettingsView: View {
                                 Button("Preview") {
                                     overlay.show(style: settings.chargeOverlayStyle,
                                                  duration: settings.chargeOverlayDuration,
-                                                 percentage: battery.snapshot.percentage)
+                                                 percentage: battery.snapshot.percentage,
+                                                 allowMotion: settings.motionAllowed)
                                 }
                                 .controlSize(.small)
                             }

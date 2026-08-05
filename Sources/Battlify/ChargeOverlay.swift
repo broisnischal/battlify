@@ -43,8 +43,11 @@ final class ChargeOverlayController: ObservableObject {
     private var dismissal: Task<Void, Never>?
 
     /// `plugging` false runs the unplug variant (cooler colour, no level).
+    /// `allowMotion` false draws the still variant — the caller owns that decision, so
+    /// the system's Reduce Motion setting and the user's override for this app are
+    /// resolved in one place rather than read again down here.
     func show(style: ChargeOverlayStyle, duration: Double, percentage: Int,
-              plugging: Bool = true) {
+              plugging: Bool = true, allowMotion: Bool = true) {
         dismissal?.cancel()
         teardown()
 
@@ -69,7 +72,7 @@ final class ChargeOverlayController: ObservableObject {
         panel.contentView = NSHostingView(
             rootView: ChargeOverlayView(style: style, duration: duration,
                                         percentage: percentage, plugging: plugging,
-                                        start: Date()))
+                                        allowMotion: allowMotion, start: Date()))
         panel.setFrame(frame, display: false)
         panel.orderFrontRegardless()
         window = panel
@@ -95,6 +98,7 @@ private struct ChargeOverlayView: View {
     let duration: Double
     let percentage: Int
     let plugging: Bool
+    let allowMotion: Bool
     let start: Date
 
     var body: some View {
@@ -102,7 +106,7 @@ private struct ChargeOverlayView: View {
             let elapsed = context.date.timeIntervalSince(start)
             let t = max(0, min(1, elapsed / duration))
             Canvas { gc, size in
-                if reduceMotion {
+                if !allowMotion {
                     drawStill(gc, size: size, t: t)
                 } else {
                     switch style {
@@ -116,10 +120,6 @@ private struct ChargeOverlayView: View {
             .allowsHitTesting(false)
         }
         .ignoresSafeArea()
-    }
-
-    private var reduceMotion: Bool {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
     /// In fast, out slower: arriving deserves the attention, leaving shouldn't ask for any.
@@ -154,9 +154,12 @@ private struct ChargeOverlayView: View {
                 let d = hypot(base.x - from.x, base.y - from.y) / maxDistance
                 // One wave front travelling out. Dots ahead of it and well behind it
                 // stay dark, so the grid reads as a pulse crossing the screen.
-                let phase = t * 1.9 - d * 1.25
-                guard phase > 0, phase < 0.6 else { continue }
-                let amp = sin(phase / 0.6 * .pi)
+                // A narrow band, not a slow gradient: at 0.6 the lit window covered most
+                // of the screen at once and read as "dots everywhere" rather than a wave
+                // crossing it. 0.3 keeps a recognisable front with a short tail.
+                let phase = t * 2.3 - d * 1.5
+                guard phase > 0, phase < 0.3 else { continue }
+                let amp = sin(phase / 0.3 * .pi)
                 guard amp > 0.01 else { continue }
 
                 // Deterministic per-dot jitter — the "vibrating" part. Hashing the grid

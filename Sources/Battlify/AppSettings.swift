@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 /// What text (if any) sits next to the menu-bar battery icon.
 enum MenuBarDisplay: String, CaseIterable, Identifiable {
@@ -85,6 +86,21 @@ final class AppSettings: ObservableObject {
     @Published var hapticsEnabled: Bool {
         didSet { defaults.set(hapticsEnabled, forKey: Keys.haptics) }
     }
+    /// Play Battlify's animations even when macOS's Reduce Motion is on.
+    ///
+    /// Reduce Motion is respected by default, as it should be. But it's a system-wide
+    /// preference, and someone who turns on a charging animation *in this app* has said
+    /// what they want for this app — without an override, every animation here silently
+    /// does nothing and looks broken instead of considerate.
+    @Published var animateWithReduceMotion: Bool {
+        didSet { defaults.set(animateWithReduceMotion, forKey: Keys.animateAnyway) }
+    }
+
+    /// Whether motion is allowed right now: either the system isn't asking us to reduce
+    /// it, or the user has explicitly overridden that for Battlify.
+    var motionAllowed: Bool {
+        animateWithReduceMotion || !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -102,6 +118,7 @@ final class AppSettings: ObservableObject {
         static let overlayDuration = "overlay.duration"
         static let overlayOnUnplug = "overlay.onUnplug"
         static let haptics = "feedback.haptics"
+        static let animateAnyway = "motion.overrideReduceMotion"
     }
 
     init() {
@@ -130,5 +147,6 @@ final class AppSettings: ObservableObject {
         chargeOverlayDuration = storedDuration > 0 ? min(2.0, max(0.5, storedDuration)) : 1.0
         chargeOverlayOnUnplug = defaults.bool(forKey: Keys.overlayOnUnplug)
         hapticsEnabled = defaults.bool(forKey: Keys.haptics)
+        animateWithReduceMotion = defaults.bool(forKey: Keys.animateAnyway)
     }
 }

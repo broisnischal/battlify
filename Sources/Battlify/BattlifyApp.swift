@@ -62,7 +62,8 @@ struct BattlifyApp: App {
             MenuBarLabel(battery: battery, chargeLimit: chargeLimit,
                          settings: settings, notifier: notifier, triggers: triggers,
                          hotkeys: hotkeys, caffeine: caffeine, actions: actions,
-                         license: license, restReminder: restReminder, overlay: overlay)
+                         license: license, restReminder: restReminder, overlay: overlay,
+                         endurance: endurance)
         }
         .menuBarExtraStyle(.window)
 
@@ -127,6 +128,7 @@ struct MenuBarLabel: View {
     let license: LicenseManager
     let restReminder: RestReminder
     let overlay: ChargeOverlayController
+    let endurance: EnduranceStore
     @Environment(\.openWindow) private var openWindow
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
@@ -136,11 +138,16 @@ struct MenuBarLabel: View {
     @State private var celebrateTicks = 0
     /// When charging last stopped — to tell "just finished" from arriving full via wake.
     @State private var chargeStoppedAt: Date?
+    /// A one-off connect/disconnect animation, and how far through it we are.
+    @State private var transition: IconTransition?
+    @State private var transitionStep = 0
 
     var body: some View {
         let snap = battery.snapshot
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let celebratingNow = celebrating && !reduceMotion
+        // One source of truth for motion: the system's Reduce Motion, unless the user has
+        // overridden it for this app. Read here so every animation below agrees.
+        let motion = settings.motionAllowed
+        let celebratingNow = celebrating && motion
         // Success flash is green only when coloring is on; mono blinks by alpha instead.
         let tint: MenuBarTint =
             celebratingNow && settings.colorMenuBarIcon ? .colored(.systemGreen)
@@ -149,7 +156,7 @@ struct MenuBarLabel: View {
         // core sustained — the entire time the Mac was plugged in. So the charging
         // animation is opt-in. The completion flash still runs when it fires: it's
         // bounded to about three seconds, not the whole charge.
-        let animating = !reduceMotion
+        let animating = motion
             && (celebrating
                 || (settings.animateMenuBarIcon
                     && (snap.isCharging || settings.batteryIconStyle.animatesOnBattery)))
@@ -160,7 +167,7 @@ struct MenuBarLabel: View {
         // left every one of them dead until the menu had been opened. `attach` is
         // idempotent, so calling it on each body evaluation costs nothing.
         hotkeys.attach(chargeLimit: chargeLimit, caffeine: caffeine,
-                       systemActions: actions, license: license,
+                       systemActions: actions, endurance: endurance, license: license,
                        openWindow: { id in
                            NSApplication.shared.activate(ignoringOtherApps: true)
                            openWindow(id: id)
@@ -181,7 +188,9 @@ struct MenuBarLabel: View {
                 charging: snap.isCharging,
                 tint: tint,
                 frame: animFrame,
-                celebrating: celebratingNow))
+                celebrating: celebratingNow,
+                transition: transition,
+                transitionStep: transitionStep))
             if let text = labelText(snap) {
                 // Monospaced digits so the item doesn't shift width as it ticks.
                 Text(text).monospacedDigit()
@@ -203,6 +212,19 @@ struct MenuBarLabel: View {
                 }
             }
         }
+        // The transition runs on its own clock: the shared 500ms tick is far too slow to
+        // read as a morph, and this only lasts about half a second.
+        .task(id: transition) {
+            guard transition != nil else { transitionStep = 0; return }
+            for step in 0..<BatteryIconRenderer.transitionSteps {
+                transitionStep = step
+                try? await Task.sleep(
+                    nanoseconds: UInt64(BatteryIconRenderer.transitionStepDuration * 1_000_000_000))
+                if Task.isCancelled { return }
+            }
+            transition = nil
+            transitionStep = 0
+        }
         // Record when charging stops, *before* the completion check below reads it.
         .onChange(of: snap.isCharging) { old, new in
             if old && !new { chargeStoppedAt = Date() }
@@ -213,7 +235,7 @@ struct MenuBarLabel: View {
                 || (chargeStoppedAt.map { Date().timeIntervalSince($0) < 120 } ?? false)
             guard done, justCharged else { return }
             if settings.hapticsEnabled { HapticFeedback.limitReached() }
-            guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+            guard settings.motionAllowed else { return }
             celebrating = true
             celebrateTicks = 0
         }
@@ -225,12 +247,20 @@ struct MenuBarLabel: View {
             if settings.hapticsEnabled {
                 isNow ? HapticFeedback.chargeConnected() : HapticFeedback.chargeDisconnected()
             }
+            // The glyph itself reacts: the bolt grows out of a flat spark on connect and
+            // collapses back into one on unplug, so the menu bar tells you what changed
+            // even with no overlay and no sound.
+            if settings.motionAllowed {
+                transitionStep = 0
+                transition = isNow ? .connected : .disconnected
+            }
             guard settings.chargeOverlayEnabled,
                   isNow || settings.chargeOverlayOnUnplug else { return }
             overlay.show(style: settings.chargeOverlayStyle,
                          duration: settings.chargeOverlayDuration,
                          percentage: snap.percentage,
-                         plugging: isNow)
+                         plugging: isNow,
+                         allowMotion: settings.motionAllowed)
         }
         // The status item exists from launch, so this is where the automation
         // rules start watching — they must run whether or not the menu is opened.

@@ -39,6 +39,7 @@ final class HotkeyStore: ObservableObject {
     private weak var chargeLimit: ChargeLimitStore?
     private weak var caffeine: CaffeineManager?
     private weak var systemActions: SystemActions?
+    private weak var endurance: EnduranceStore?
     private weak var license: LicenseManager?
     /// SwiftUI's `openWindow` only exists inside a View, so it's injected.
     private var openWindow: ((String) -> Void)?
@@ -62,12 +63,14 @@ final class HotkeyStore: ObservableObject {
     func attach(chargeLimit: ChargeLimitStore,
                 caffeine: CaffeineManager,
                 systemActions: SystemActions,
+                endurance: EnduranceStore,
                 license: LicenseManager,
                 openWindow: @escaping (String) -> Void) {
         guard self.chargeLimit == nil else { return }
         self.chargeLimit = chargeLimit
         self.caffeine = caffeine
         self.systemActions = systemActions
+        self.endurance = endurance
         self.license = license
         self.openWindow = openWindow
         reregister()
@@ -136,6 +139,22 @@ final class HotkeyStore: ObservableObject {
         case .toggleLowPowerMode:  toggleLowPowerMode()
         case .toggleDischarge:     toggleDischarge()
         case .toggleHoldCharge:    toggleHoldCharge()
+        case .toggleEndurance:     toggleEndurance()
+        case .brightnessUp:        nudgeBrightness(by: 0.1)
+        case .brightnessDown:      nudgeBrightness(by: -0.1)
+
+        case .toggleWiFi:
+            let next = !RadioControl.isWiFiOn
+            guard RadioControl.setWiFi(next) else {
+                hud("Wi-Fi Unchanged", detail: "macOS refused the change.", icon: "alert")
+                return
+            }
+            hud(next ? "Wi-Fi On" : "Wi-Fi Off")
+
+        case .toggleBluetooth:
+            let next = !RadioControl.isBluetoothOn
+            RadioControl.setBluetooth(next)
+            hud(next ? "Bluetooth On" : "Bluetooth Off")
 
         case .toggleCaffeine:
             guard let caffeine else { return }
@@ -249,6 +268,32 @@ final class HotkeyStore: ObservableObject {
         charge.apply()
         hud(charge.holdCharge ? "Don't Charge On" : "Don't Charge Off",
             detail: charge.holdCharge ? "Plugged in, battery held where it is" : nil)
+    }
+
+    /// Brightness in 10% steps, reported as a percentage so the HUD says what happened
+    /// even when the change is at the top or bottom of the range.
+    private func nudgeBrightness(by delta: Float) {
+        guard BrightnessControl.isSupported, let current = BrightnessControl.current() else {
+            hud("Not Supported", detail: "This Mac's display brightness isn't controllable.",
+                icon: "alert")
+            return
+        }
+        let next = min(1, max(0, current + delta))
+        guard BrightnessControl.set(next) else {
+            hud("Brightness Unchanged", detail: "macOS refused the change.", icon: "alert")
+            return
+        }
+        hud("Brightness \(Int((next * 100).rounded()))%")
+    }
+
+    private func toggleEndurance() {
+        guard let endurance else {
+            hud("Battery Saver Unavailable", icon: "alert")
+            return
+        }
+        endurance.toggle()
+        hud(endurance.active ? "Battery Saver On" : "Battery Saver Off",
+            detail: endurance.active ? "Dimmed, Low Power Mode, less background wake" : nil)
     }
 
     private func open(_ id: String) {
