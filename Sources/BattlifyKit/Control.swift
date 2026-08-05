@@ -182,7 +182,12 @@ public enum HelperBuild {
     ///       installed helper still running the fan policy must be replaced.
     ///   v6: idle back-off — the enforcement loop drops to a slow tick once the lid is
     ///       shut on battery, so it stops doing work inside maintenance dark wakes.
-    public static let version = 6
+    ///   v7: the daemon registers for sleep itself and cuts charging on the way down
+    ///       whenever a limit is enforced. An installed v6 helper only cuts when the GUI
+    ///       asks and the option is ticked, so it lets the battery charge past the limit
+    ///       to full while the Mac sleeps — it has to be replaced, not just re-run.
+    ///       Also adds the "don't charge while plugged in" hold and its amber LED.
+    public static let version = 7
 }
 
 public enum ControlError: Error, CustomStringConvertible {
