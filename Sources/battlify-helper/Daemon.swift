@@ -39,6 +39,8 @@ final class Daemon: @unchecked Sendable {
     // Post-wake settle: a tick gap ≫ interval implies we slept; hold charging + LED off briefly.
     private var lastTickAt: Date?
     private var settleUntil: Date?
+    /// Our own sleep/wake hook, so the pre-sleep charge cut doesn't depend on the GUI.
+    private let sleepWatcher = SleepWatcher()
     /// What the run loop waits after the current tick; `nextInterval` sets it from
     /// `TickPolicy`, which is where the reasoning about cadence lives.
     private var tickInterval = TickPolicy.active
@@ -105,6 +107,13 @@ final class Daemon: @unchecked Sendable {
         }
         server.start()
 
+        // Our own sleep hook. Enforcement stops dead while the Mac is asleep, so the
+        // last thing we tell the SMC has to be safe — and we can't rely on the GUI to
+        // ask for that, since it may not be running.
+        sleepWatcher.onWillSleep = { [weak self] in self?.cutChargingForSleep() }
+        sleepWatcher.onDidWake = { [weak self] in self?.reevaluateAfterWake() }
+        sleepWatcher.start()
+
         log("daemon started (scheme: \(charge.schemeDescription))")
 
         while true {
@@ -170,15 +179,10 @@ final class Daemon: @unchecked Sendable {
             catch { return status(ok: false, message: "save failed: \(error)") }
 
         case .prepareForSleep:
-            // Cut charging before sleep so macOS can't top up while the daemon is
-            // frozen; the SMC inhibit persists through sleep, re-evaluated on wake.
-            let cfg = ConfigStore.load()
-            if cfg.disableChargingBeforeSleep && cfg.chargeLimitEnabled {
-                try? charge.disableCharging()
-                lastPauseReason = "sleep"
-                return status(ok: true, message: "charging cut for sleep")
-            }
-            return status(ok: true, message: "no-op")
+            // The GUI asking for what the daemon now also does for itself. Kept so an
+            // older app build still gets the cut, and because the app sees lid-close
+            // sleeps the daemon's hook and this can race — both paths are idempotent.
+            return status(ok: cutChargingForSleepLocked(), message: "sleep handled")
 
         case .calibrateToFull(let on):
             var cfg = ConfigStore.load()
@@ -437,6 +441,50 @@ final class Daemon: @unchecked Sendable {
         // ~1.5 min per percentage point to charge, plus a 15-minute safety buffer.
         let minutesNeeded = Double(r.targetPercent - level) * 1.5 + 15
         return Double(minutesUntil) <= minutesNeeded
+    }
+
+    // MARK: - Sleep / wake
+
+    /// Cut charging on the way into sleep, so the battery can't cross the limit while
+    /// nothing is watching. Called from the watcher's thread — takes the same lock the
+    /// tick loop uses, because both talk to the SMC.
+    private func cutChargingForSleep() {
+        lock.lock()
+        defer { lock.unlock() }
+        _ = cutChargingForSleepLocked()
+    }
+
+    /// The cut itself. Applies whenever a limit is being enforced, not only when the
+    /// "stop charging before sleep" option is on: the limit exists precisely to keep the
+    /// battery off full, and the daemon is frozen through sleep, so leaving charging
+    /// enabled hands macOS an unsupervised run to 100%. Charge still creeps up towards
+    /// the limit during the maintenance wakes macOS takes anyway, since the tick runs
+    /// then and re-enables while below the resume threshold.
+    ///
+    /// Caller must hold `lock`. Returns whether anything was cut.
+    private func cutChargingForSleepLocked() -> Bool {
+        let cfg = ConfigStore.load()
+        guard cfg.chargeLimitEnabled || cfg.disableChargingBeforeSleep else { return false }
+        // Charging past the limit is only possible when it's allowed right now.
+        guard ((try? charge.isChargingEnabled()) ?? true) else { return true }
+        do {
+            try charge.disableCharging()
+            lastPauseReason = "sleep"
+            log("charging cut for sleep (limit \(cfg.chargeLimit)%)")
+            return true
+        } catch {
+            err("failed to cut charging for sleep: \(error)")
+            return false
+        }
+    }
+
+    /// Re-enforce as soon as the Mac is back, rather than waiting out the tick interval
+    /// — the wake itself may be the moment the adapter starts pushing charge again.
+    private func reevaluateAfterWake() {
+        lock.lock()
+        defer { lock.unlock() }
+        settleUntil = Date().addingTimeInterval(wakeSettleDuration)
+        tick()
     }
 
     /// "Always Active": keep the Mac awake with the lid closed. `pmset disablesleep`

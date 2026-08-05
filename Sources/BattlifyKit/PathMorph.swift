@@ -97,7 +97,7 @@ public enum PathMorph {
     /// Flatten a path to its points. `flattened()` turns every curve into line
     /// segments, so afterwards only move/line/close elements remain.
     private static func polyline(_ path: NSBezierPath) -> [NSPoint] {
-        let flat = path.flattened
+        let flat = path.flattenedForMorph
         var points: [NSPoint] = []
         var element = [NSPoint](repeating: .zero, count: 3)
         for i in 0..<flat.elementCount {
@@ -117,13 +117,13 @@ public enum PathMorph {
 }
 
 extension NSBezierPath {
-    /// `bezierPathByFlatteningPath` at a flatness fine enough that the polyline is
-    /// smooth at glyph sizes. Restores the global default afterwards — it's process-wide
-    /// state, and leaving it changed would quietly affect every other path in the app.
-    var flattened: NSBezierPath {
+    /// Flattened at a fineness that keeps the polyline smooth at glyph sizes. Restores
+    /// the global default afterwards — flatness is process-wide state, and leaving it
+    /// changed would quietly affect every other path the app draws.
+    var flattenedForMorph: NSBezierPath {
         let previous = NSBezierPath.defaultFlatness
         NSBezierPath.defaultFlatness = 0.08
         defer { NSBezierPath.defaultFlatness = previous }
-        return bezierPathByFlatteningPath
+        return flattened
     }
 }

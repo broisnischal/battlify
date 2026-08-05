@@ -274,7 +274,9 @@ struct SettingsView: View {
                 proGate {
                     card("Enforcement") {
                         toggleRow("Stop charging before sleep",
-                                  "Cuts charging as the Mac sleeps so it can't top up past the limit.",
+                                  chargeLimit.limitEnabled
+                                  ? "Already on: nothing can enforce a limit while the Mac is asleep, so charging is always cut on the way into sleep and resumes on wake. Turn this on as well to cut charging at sleep when no limit is set."
+                                  : "Cuts charging as the Mac goes to sleep. With a charge limit set this happens anyway — the limit can't be enforced while asleep.",
                                   isOn: bind(\.disableChargingBeforeSleep))
                         divider
                         toggleRow("Prevent idle sleep while plugged in",
