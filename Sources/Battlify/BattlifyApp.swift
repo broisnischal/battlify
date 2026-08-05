@@ -29,6 +29,7 @@ struct BattlifyApp: App {
     @StateObject private var hotkeys = HotkeyStore()
     @StateObject private var restReminder = RestReminder()
     @StateObject private var overlay = ChargeOverlayController()
+    @StateObject private var idleSaver = IdleSaverStore()
 
     var body: some Scene {
         MenuBarExtra {
@@ -49,6 +50,7 @@ struct BattlifyApp: App {
                 .environmentObject(triggers)
                 .environmentObject(hotkeys)
                 .environmentObject(restReminder)
+                .environmentObject(idleSaver)
                 .onAppear {
                     network.chargeLimit = chargeLimit
                     automation.chargeLimit = chargeLimit
@@ -63,7 +65,7 @@ struct BattlifyApp: App {
                          settings: settings, notifier: notifier, triggers: triggers,
                          hotkeys: hotkeys, caffeine: caffeine, actions: actions,
                          license: license, restReminder: restReminder, overlay: overlay,
-                         endurance: endurance)
+                         endurance: endurance, idleSaver: idleSaver)
         }
         .menuBarExtraStyle(.window)
 
@@ -84,6 +86,7 @@ struct BattlifyApp: App {
                 .environmentObject(triggers)
                 .environmentObject(hotkeys)
                 .environmentObject(overlay)
+                .environmentObject(idleSaver)
         }
         .windowResizability(.contentSize)
 
@@ -129,6 +132,7 @@ struct MenuBarLabel: View {
     let restReminder: RestReminder
     let overlay: ChargeOverlayController
     let endurance: EnduranceStore
+    let idleSaver: IdleSaverStore
     @Environment(\.openWindow) private var openWindow
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
@@ -179,6 +183,7 @@ struct MenuBarLabel: View {
                              endOnBattery: settings.caffeineEndOnBattery,
                              onExternalPower: snap.onExternalPower)
         restReminder.startIfNeeded(settings: settings, battery: battery)
+        idleSaver.startIfNeeded()
         return HStack(spacing: 2) {
             // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
             // labels, and the renderer draws the charging bolt inside the glyph.

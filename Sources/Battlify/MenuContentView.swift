@@ -13,6 +13,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var triggers: TriggerStore
     @EnvironmentObject private var hotkeys: HotkeyStore
     @EnvironmentObject private var restReminder: RestReminder
+    @EnvironmentObject private var idleSaver: IdleSaverStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near full height so the popover doesn't visibly grow on first open.
@@ -484,6 +485,16 @@ struct MenuContentView: View {
                              help: "Turn the display off now (the Mac stays awake)"
                                    + shortcutHint(.displayOff)) {
                     actions.turnDisplayOff()
+                }
+                // Resting is more than the display: it also holds Low Power Mode and,
+                // if asked, the radios — so it gets its own button rather than hiding
+                // behind "Off".
+                actionButton(idleSaver.resting ? "Wake" : "Rest",
+                             systemImage: idleSaver.resting ? "sun" : "sleep",
+                             help: idleSaver.resting
+                                 ? "Stop resting and put back what was changed"
+                                 : "Screen off and settings held, without closing the lid") {
+                    idleSaver.resting ? idleSaver.wake() : idleSaver.restNow()
                 }
                 actionButton("Sleep", systemImage: "sleep",
                              help: "Put the Mac to sleep now" + shortcutHint(.sleepNow)) {

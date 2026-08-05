@@ -9,6 +9,7 @@ struct SettingsView: View {
     @EnvironmentObject private var automation: AutomationStore
     @EnvironmentObject private var caffeine: CaffeineManager
     @EnvironmentObject private var overlay: ChargeOverlayController
+    @EnvironmentObject private var idleSaver: IdleSaverStore
     @EnvironmentObject private var license: LicenseManager
     @EnvironmentObject private var startup: StartupManager
     @EnvironmentObject private var updater: UpdaterManager
@@ -791,6 +792,57 @@ struct SettingsView: View {
                         infoRow("Measuring drain… run on battery with the mode on and off for a few minutes to compare.\(nowSuffix)",
                                 systemImage: "gauge")
                     }
+                }
+
+                card("Rest without closing the lid") {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Rest now").font(.callout)
+                            Text(idleSaver.resting
+                                 ? "Resting — the screen is off and settings are held. Touch anything to come back."
+                                 : "Screen and keyboard backlight off, and the settings below applied, without shutting the lid.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Button(idleSaver.resting ? "Wake" : "Rest Now") {
+                            idleSaver.resting ? idleSaver.wake() : idleSaver.restNow()
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    divider
+                    toggleRow("Rest automatically when I'm away",
+                              "Waits for no keyboard, mouse or trackpad activity at all, and never rests while an external display is connected — that usually means someone is looking at something.",
+                              isOn: $idleSaver.autoEnabled)
+                    if idleSaver.autoEnabled {
+                        divider
+                        stepperRow("After",
+                                   value: "\(idleSaver.afterMinutes) min",
+                                   binding: Binding(
+                                    get: { Double(idleSaver.afterMinutes) },
+                                    set: { idleSaver.afterMinutes = max(5, Int($0)) }),
+                                   range: 5...120)
+                        divider
+                        stepperRow("Then sleep after",
+                                   value: idleSaver.sleepAfterMinutes > 0
+                                        ? "\(idleSaver.sleepAfterMinutes) min more" : "Never",
+                                   binding: Binding(
+                                    get: { Double(idleSaver.sleepAfterMinutes) },
+                                    set: { idleSaver.sleepAfterMinutes = max(0, Int($0)) }),
+                                   range: 0...180)
+                    }
+                    divider
+                    toggleRow("Low Power Mode while resting",
+                              "Restored to whatever it was when you come back.",
+                              isOn: $idleSaver.lowPowerWhileResting)
+                    divider
+                    toggleRow("Wi-Fi and Bluetooth off while resting",
+                              "Off by default: losing the network mid-download or mid-call costs more than the power it saves. Only the radios Battlify switched off are switched back on.",
+                              isOn: $idleSaver.radiosOffWhileResting)
+                    divider
+                    infoRow("Fans aren't controllable on Apple silicon — the SMC refuses the write. They wind down on their own once the Mac is actually idle, which is what resting it achieves.",
+                            systemImage: "info")
                 }
 
                 card("Plug-in feedback (experimental)") {
