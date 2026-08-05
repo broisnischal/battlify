@@ -1387,8 +1387,12 @@ struct BatteryStylePicker: View {
 
     @State private var hovering: BatteryIconStyle?
 
+    /// A grid, not a row: nine styles in one line would squeeze each tile below the
+    /// width its glyph needs to be recognisable.
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
+
     var body: some View {
-        HStack(spacing: 8) {
+        LazyVGrid(columns: columns, spacing: 8) {
             ForEach(BatteryIconStyle.allCases) { style in
                 let isSelected = style == selection
                 let isHovering = hovering == style
