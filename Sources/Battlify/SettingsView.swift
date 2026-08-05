@@ -7,6 +7,7 @@ struct SettingsView: View {
     @EnvironmentObject private var battery: BatteryStore
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
     @EnvironmentObject private var automation: AutomationStore
+    @EnvironmentObject private var caffeine: CaffeineManager
     @EnvironmentObject private var license: LicenseManager
     @EnvironmentObject private var startup: StartupManager
     @EnvironmentObject private var updater: UpdaterManager
@@ -21,6 +22,9 @@ struct SettingsView: View {
     /// Schedule being edited/added in the sheet (nil = sheet closed).
     @State private var editingSchedule: ChargeSchedule?
     @State private var editingIsNew = false
+    /// Always Active window being edited/added in the sheet (nil = sheet closed).
+    @State private var editingAwakeSchedule: AwakeSchedule?
+    @State private var editingAwakeIsNew = false
     /// Automation rule being edited/added in the sheet (nil = sheet closed).
     @State private var editingRule: TriggerRule?
     @State private var editingRuleIsNew = false
@@ -79,6 +83,13 @@ struct SettingsView: View {
                 isNew: editingIsNew,
                 onSave: { chargeLimit.updateOrAddSchedule($0) },
                 onDelete: editingIsNew ? nil : { chargeLimit.removeSchedule(schedule) })
+        }
+        .sheet(item: $editingAwakeSchedule) { schedule in
+            AwakeScheduleEditorView(
+                schedule: schedule,
+                isNew: editingAwakeIsNew,
+                onSave: { chargeLimit.updateOrAddAwakeSchedule($0) },
+                onDelete: editingAwakeIsNew ? nil : { chargeLimit.removeAwakeSchedule(schedule) })
         }
         .sheet(item: $editingRule) { rule in
             TriggerRuleEditorView(
@@ -265,6 +276,12 @@ struct SettingsView: View {
                                   isOn: bind(\.keepAwake))
                         if chargeLimit.keepAwake {
                             divider
+                            keepAwakeTimerRow
+                            if chargeLimit.hasAwakeSchedules {
+                                divider
+                                keepAwakeWindowsRow
+                            }
+                            divider
                             toggleRow("Also keep awake on battery",
                                       "Keep running with the lid closed even when unplugged. The battery drains quickly and a closed Mac can run hot — set a temperature guardrail below. Off by default.",
                                       isOn: bind(\.keepAwakeOnBattery))
@@ -365,6 +382,135 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Always Active timing
+
+    /// Auto-off timer. The deadline lives in the daemon's config, so it still fires with
+    /// the Mac asleep or Battlify quit — and it shows the wall-clock time it ends rather
+    /// than a countdown, which would need a ticking timer to stay honest.
+    private var keepAwakeTimerRow: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Turn off automatically").font(.callout)
+                Text(chargeLimit.keepAwakeUntil == nil
+                     ? "Always Active stays on until you switch it off."
+                     : "Always Active switches itself off then, even if the Mac is asleep or Battlify isn't running.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Menu(keepAwakeTimerLabel) {
+                Button("Don't turn off") { chargeLimit.startKeepAwake(minutes: nil) }
+                Divider()
+                ForEach([30, 60, 120, 300, 480], id: \.self) { minutes in
+                    Button(Self.durationLabel(minutes)) { chargeLimit.startKeepAwake(minutes: minutes) }
+                }
+            }
+            .controlSize(.small)
+            .fixedSize()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    /// Caffeine's live state in one line, including how far the hold reaches — the
+    /// difference between "screen on" and "tasks only" is the difference between
+    /// percents per hour and almost nothing.
+    private var caffeineStateHint: String {
+        guard caffeine.active else {
+            return "Caffeine is off — the Mac sleeps and dims normally. Turn it on from the menu bar."
+        }
+        let reach = (caffeine.hold ?? .displayOn).title.lowercased()
+        guard let until = caffeine.expiresAt else { return "Caffeine is holding — \(reach)." }
+        return "Caffeine is holding until \(Self.clockFormatter.string(from: until)) — \(reach)."
+    }
+
+    private var keepAwakeTimerLabel: String {
+        guard let until = chargeLimit.keepAwakeUntil else { return "Don't turn off" }
+        return "Until \(Self.clockFormatter.string(from: until))"
+    }
+
+    private static func durationLabel(_ minutes: Int) -> String {
+        if minutes < 60 { return "After \(minutes) minutes" }
+        let h = Double(minutes) / 60
+        let text = h == h.rounded() ? "\(Int(h))" : String(format: "%.1f", h)
+        return "After \(text) hour\(minutes == 60 ? "" : "s")"
+    }
+
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
+
+    /// Shown once windows exist, so the switch's meaning is never a mystery: on means
+    /// "hold during these hours", not "hold right now".
+    private var keepAwakeWindowsRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("Scheduled hours").font(.callout)
+                    if chargeLimit.keepAwakeArmed { activeBadge("HOLDING") } else { waitingBadge }
+                }
+                ForEach(chargeLimit.keepAwakeSchedules.filter(\.enabled)) { window in
+                    Text(window.scheduleSummary)
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+                Text("Outside these hours the Mac sleeps normally.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("Edit…") { selection = .schedule }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    private func activeBadge(_ text: String = "ACTIVE") -> some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Color.green.opacity(0.25), in: Capsule())
+            .foregroundStyle(.green)
+    }
+
+    private var waitingBadge: some View {
+        Text("WAITING")
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Color.secondary.opacity(0.2), in: Capsule())
+            .foregroundStyle(.secondary)
+    }
+
+    private func awakeScheduleRow(_ s: AwakeSchedule) -> some View {
+        Button {
+            editingAwakeIsNew = false
+            editingAwakeSchedule = s
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "cup.and.saucer.fill")
+                    .frame(width: 22)
+                    .foregroundStyle(s.enabled ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(s.label.isEmpty ? "Awake window" : s.label).font(.callout)
+                        if s.enabled, chargeLimit.activeAwakeSchedule?.id == s.id { activeBadge() }
+                    }
+                    Text(s.scheduleSummary)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { s.enabled },
+                    set: { var c = s; c.enabled = $0; chargeLimit.updateAwakeSchedule(c) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Schedule
 
     private var scheduleTab: some View {
@@ -386,6 +532,32 @@ struct SettingsView: View {
                                 editingIsNew = true
                                 editingSchedule = ChargeSchedule()
                             } label: { Label("Add Schedule", systemImage: "plus") }
+                                .controlSize(.small)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                    }
+
+                    card("Always Active hours") {
+                        if chargeLimit.keepAwakeSchedules.isEmpty {
+                            infoRow("No hours set — Always Active simply holds whenever its switch is on. Add a window to have it switch itself on and off, for example weekdays from 9 AM for 9 hours.",
+                                    systemImage: "clock")
+                        } else {
+                            ForEach(chargeLimit.keepAwakeSchedules) { window in
+                                awakeScheduleRow(window)
+                                divider
+                            }
+                            if !chargeLimit.keepAwake {
+                                infoRow("Always Active is switched off, so these hours won't do anything until you turn it on under Charging.",
+                                        systemImage: "info")
+                                divider
+                            }
+                        }
+                        HStack {
+                            Button {
+                                editingAwakeIsNew = true
+                                editingAwakeSchedule = AwakeSchedule()
+                            } label: { Label("Add Hours", systemImage: "plus") }
                                 .controlSize(.small)
                             Spacer()
                         }
@@ -451,13 +623,7 @@ struct SettingsView: View {
                     HStack(spacing: 6) {
                         Text(s.label.isEmpty ? s.action.title : s.label)
                             .font(.callout)
-                        if chargeLimit.activeSchedule?.id == s.id {
-                            Text("ACTIVE")
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Color.green.opacity(0.25), in: Capsule())
-                                .foregroundStyle(.green)
-                        }
+                        if chargeLimit.activeSchedule?.id == s.id { activeBadge() }
                     }
                     Text("\(s.windowLabel()) · \(s.days.summary)")
                         .font(.caption).foregroundStyle(.secondary)
@@ -598,6 +764,20 @@ struct SettingsView: View {
                     } else {
                         infoRow("Measuring drain… run on battery with the mode on and off for a few minutes to compare.\(nowSuffix)",
                                 systemImage: "gauge")
+                    }
+                }
+
+                card("Caffeine (keep awake now)") {
+                    infoRow(caffeineStateHint, systemImage: "coffee")
+                    divider
+                    toggleRow("End it when I unplug",
+                              "Caffeine stops the moment you switch to battery, so nothing holds the Mac awake while it's left alone.",
+                              isOn: $settings.caffeineEndOnBattery)
+                    if !settings.caffeineEndOnBattery {
+                        divider
+                        toggleRow("Keep the screen on when on battery",
+                                  "Leave this off unless you need the screen lit: on battery Caffeine then keeps your work running but lets the screen sleep. A lit idle screen draws several watts — percents of charge per hour — and is the most expensive thing this app can do to a battery.",
+                                  isOn: $settings.caffeineKeepDisplayOnBattery)
                     }
                 }
 

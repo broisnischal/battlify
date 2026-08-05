@@ -63,35 +63,22 @@ public enum ScheduleAction: String, Codable, Sendable, CaseIterable, Identifiabl
     }
 }
 
-/// A recurring charging window, e.g. "every day, starting 22:00, for 5 hours, hold".
-/// Times are stored as minutes-from-midnight in the user's local time; windows may
-/// wrap past midnight (start + duration > 1440).
-public struct ChargeSchedule: Codable, Sendable, Identifiable, Equatable {
-    public var id: UUID
-    public var enabled: Bool
-    public var label: String
-    public var days: Weekdays
+/// A weekly repeating time window — the shape shared by every timetable in the app
+/// (charging windows, keep-awake windows). Times are minutes-from-midnight in the
+/// user's local time, and a window may wrap past midnight (start + duration > 1440).
+public protocol RecurringWindow {
+    var enabled: Bool { get }
+    var days: Weekdays { get }
     /// Window start, minutes from local midnight (0…1439).
-    public var startMinute: Int
-    /// Window length in minutes (e.g. 5 h = 300). Clamped to 1…1440.
-    public var durationMinutes: Int
-    public var action: ScheduleAction
+    var startMinute: Int { get }
+    /// Window length in minutes. Clamped to 1…1440 by conformers' initialisers.
+    var durationMinutes: Int { get }
+}
 
-    public init(id: UUID = UUID(), enabled: Bool = true, label: String = "",
-                days: Weekdays = .everyday, startMinute: Int = 22 * 60,
-                durationMinutes: Int = 5 * 60, action: ScheduleAction = .hold) {
-        self.id = id
-        self.enabled = enabled
-        self.label = label
-        self.days = days
-        self.startMinute = max(0, min(1439, startMinute))
-        self.durationMinutes = max(1, min(1440, durationMinutes))
-        self.action = action
-    }
-
+extension RecurringWindow {
     public var endMinute: Int { startMinute + durationMinutes } // may exceed 1440
 
-    /// Whether this schedule is active at `date`, handling windows that wrap past
+    /// Whether this window is open at `date`, handling windows that wrap past
     /// midnight (the post-midnight tail belongs to the previous day's start).
     public func isActive(at date: Date, calendar: Calendar = .current) -> Bool {
         guard enabled else { return false }
@@ -116,12 +103,63 @@ public struct ChargeSchedule: Codable, Sendable, Identifiable, Equatable {
     }
 
     /// "22:00–03:00" style window label in local time.
-    public func windowLabel(calendar: Calendar = .current) -> String {
+    public func windowLabel() -> String {
         func fmt(_ m: Int) -> String {
             let mm = ((m % 1440) + 1440) % 1440
             return String(format: "%02d:%02d", mm / 60, mm % 60)
         }
         return "\(fmt(startMinute))–\(fmt(endMinute))"
+    }
+
+    /// "22:00–03:00 · Weekdays" — the one-line summary a settings row shows.
+    public var scheduleSummary: String { "\(windowLabel()) · \(days.summary)" }
+}
+
+/// A recurring charging window, e.g. "every day, starting 22:00, for 5 hours, hold".
+public struct ChargeSchedule: Codable, Sendable, Identifiable, Equatable, RecurringWindow {
+    public var id: UUID
+    public var enabled: Bool
+    public var label: String
+    public var days: Weekdays
+    /// Window start, minutes from local midnight (0…1439).
+    public var startMinute: Int
+    /// Window length in minutes (e.g. 5 h = 300). Clamped to 1…1440.
+    public var durationMinutes: Int
+    public var action: ScheduleAction
+
+    public init(id: UUID = UUID(), enabled: Bool = true, label: String = "",
+                days: Weekdays = .everyday, startMinute: Int = 22 * 60,
+                durationMinutes: Int = 5 * 60, action: ScheduleAction = .hold) {
+        self.id = id
+        self.enabled = enabled
+        self.label = label
+        self.days = days
+        self.startMinute = max(0, min(1439, startMinute))
+        self.durationMinutes = max(1, min(1440, durationMinutes))
+        self.action = action
+    }
+}
+
+/// A recurring window that switches "Always Active" on and off on a timetable, e.g.
+/// "weekdays, 09:00, for 9 hours". While at least one is enabled, keep-awake holds
+/// only inside a window and the Mac sleeps normally outside it.
+public struct AwakeSchedule: Codable, Sendable, Identifiable, Equatable, RecurringWindow {
+    public var id: UUID
+    public var enabled: Bool
+    public var label: String
+    public var days: Weekdays
+    public var startMinute: Int
+    public var durationMinutes: Int
+
+    public init(id: UUID = UUID(), enabled: Bool = true, label: String = "",
+                days: Weekdays = .weekdays, startMinute: Int = 9 * 60,
+                durationMinutes: Int = 9 * 60) {
+        self.id = id
+        self.enabled = enabled
+        self.label = label
+        self.days = days
+        self.startMinute = max(0, min(1439, startMinute))
+        self.durationMinutes = max(1, min(1440, durationMinutes))
     }
 }
 

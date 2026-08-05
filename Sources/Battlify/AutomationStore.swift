@@ -93,7 +93,10 @@ final class AutomationStore: ObservableObject {
     }
 
     private func shouldSaveClamshell() -> Bool {
-        guard let cl = chargeLimit, cl.keepAwake else { return false }
+        // keepAwakeArmed, not the raw toggle: outside a scheduled window (or past an
+        // auto-off timer) nothing is holding the Mac awake, so macOS handles the lid
+        // and we must not be forcing the display off.
+        guard let cl = chargeLimit, cl.keepAwakeArmed else { return false }
         guard SystemPower.isClamshellClosed(), !Self.hasExternalDisplay() else { return false }
         return cl.keepAwakeOnBattery || BatteryMonitor.read().onExternalPower
     }

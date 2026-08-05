@@ -55,7 +55,8 @@ struct BattlifyApp: App {
             // launch, which is where the automation rules get started (the dropdown's
             // `onAppear` wouldn't run until you first opened the menu).
             MenuBarLabel(battery: battery, chargeLimit: chargeLimit,
-                         settings: settings, notifier: notifier, triggers: triggers)
+                         settings: settings, notifier: notifier, caffeine: caffeine,
+                         triggers: triggers)
         }
         .menuBarExtraStyle(.window)
 
@@ -65,6 +66,7 @@ struct BattlifyApp: App {
                 .environmentObject(battery)
                 .environmentObject(chargeLimit)
                 .environmentObject(automation)
+                .environmentObject(caffeine)
                 .environmentObject(license)
                 .environmentObject(startup)
                 .environmentObject(updater)
@@ -105,6 +107,7 @@ struct MenuBarLabel: View {
     @ObservedObject var chargeLimit: ChargeLimitStore
     @ObservedObject var settings: AppSettings
     @ObservedObject var notifier: NotificationManager
+    @ObservedObject var caffeine: CaffeineManager
     let triggers: TriggerStore
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
@@ -126,6 +129,12 @@ struct MenuBarLabel: View {
         let animating = !reduceMotion && (snap.isCharging || celebrating)
         // The label renders at launch — a reliable hook to start notification detection.
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
+        // It also re-renders on every snapshot change, which is exactly when Caffeine's
+        // power policy needs re-evaluating (unplugging must stop it holding the screen
+        // awake and draining). The call is idempotent, so re-sending costs nothing.
+        caffeine.applyPolicy(keepDisplayOnBattery: settings.caffeineKeepDisplayOnBattery,
+                             endOnBattery: settings.caffeineEndOnBattery,
+                             onExternalPower: snap.onExternalPower)
         return HStack(spacing: 2) {
             // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
             // labels, and the renderer draws the charging bolt inside the glyph.
