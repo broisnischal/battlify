@@ -104,6 +104,8 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
     case sleepNow
 
     // Power & radios
+    case toggleRest
+    case cycleIconStyle
     case toggleEndurance
     case toggleWiFi
     case toggleBluetooth
@@ -130,6 +132,8 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .toggleDimDisplay:    return "Dim / restore display"
         case .brightnessUp:        return "Brightness up"
         case .brightnessDown:      return "Brightness down"
+        case .toggleRest:          return "Rest / wake the Mac"
+        case .cycleIconStyle:      return "Next menu-bar icon style"
         case .toggleEndurance:     return "Toggle battery saver"
         case .toggleWiFi:          return "Toggle Wi-Fi"
         case .toggleBluetooth:     return "Toggle Bluetooth"
@@ -156,6 +160,8 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .toggleDimDisplay:    return "Drop to 20% brightness, or back to where it was."
         case .brightnessUp:        return "Raise the built-in display by 10%."
         case .brightnessDown:      return "Lower the built-in display by 10% — the cheapest watts you can save."
+        case .toggleRest:          return "Screen off and settings held, without closing the lid — any key wakes it."
+        case .cycleIconStyle:      return "Cycle through the battery glyphs in the menu bar."
         case .toggleEndurance:     return "Turn Endurance on or off: dimmer screen, Low Power Mode, trimmed background wake."
         case .toggleWiFi:          return "Turn Wi-Fi on or off."
         case .toggleBluetooth:     return "Turn Bluetooth on or off."
@@ -183,6 +189,8 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .toggleDimDisplay:    return "sunLow"
         case .brightnessUp:        return "sun"
         case .brightnessDown:      return "sunLow"
+        case .toggleRest:          return "sleep"
+        case .cycleIconStyle:      return "battery"
         case .toggleEndurance:     return "heart"
         case .toggleWiFi:          return "wifi"
         case .toggleBluetooth:     return "bluetooth"
@@ -214,10 +222,12 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
              .toggleEndurance:
             return .charging
         case .toggleCaffeine, .toggleKeepAwake, .toggleDimDisplay, .displayOff, .sleepNow,
-             .brightnessUp, .brightnessDown:
+             .brightnessUp, .brightnessDown, .toggleRest:
             return .sleep
         case .toggleWiFi, .toggleBluetooth:
             return .radios
+        case .cycleIconStyle:
+            return .windows
         case .openSettings, .openDetails, .openHistory:
             return .windows
         }
@@ -252,6 +262,8 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .brightnessUp:        return Hotkey(keyCode: 30, modifiers: base)  // ]
         case .brightnessDown:      return Hotkey(keyCode: 33, modifiers: base)  // [
         case .toggleEndurance:     return Hotkey(keyCode: 14, modifiers: base)  // E
+        case .toggleRest:          return Hotkey(keyCode: 15, modifiers: base)  // R
+        case .cycleIconStyle:      return Hotkey(keyCode: 34, modifiers: base)  // I
         // Unbound on purpose: cutting Wi-Fi or Bluetooth by a mistyped chord is the kind
         // of surprise a shortcut should never spring on you.
         case .toggleWiFi, .toggleBluetooth:

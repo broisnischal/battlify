@@ -14,6 +14,8 @@ struct MenuContentView: View {
     @EnvironmentObject private var hotkeys: HotkeyStore
     @EnvironmentObject private var restReminder: RestReminder
     @EnvironmentObject private var idleSaver: IdleSaverStore
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var overlay: ChargeOverlayController
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near full height so the popover doesn't visibly grow on first open.
@@ -470,6 +472,42 @@ struct MenuContentView: View {
     // MARK: - Quick actions
 
     @ViewBuilder
+    /// Pick the plug-in animation from here, not just from Settings: it's the kind of
+    /// thing you want to try a few of, and a picker three windows deep gets tried once.
+    private var chargeAnimationMenu: some View {
+        Menu {
+            Toggle("Play on plug-in", isOn: Binding(
+                get: { settings.chargeOverlayEnabled },
+                set: { settings.chargeOverlayEnabled = $0 }))
+            Divider()
+            Picker("Animation", selection: Binding(
+                get: { settings.chargeOverlayStyle },
+                set: { settings.chargeOverlayStyle = $0 })) {
+                ForEach(ChargeOverlayStyle.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Play it now") {
+                overlay.show(style: settings.chargeOverlayStyle,
+                             duration: settings.chargeOverlayDuration,
+                             percentage: battery.snapshot.percentage,
+                             allowMotion: settings.motionAllowed)
+            }
+        } label: {
+            VStack(spacing: 3) {
+                HugeIcon("sparkles", size: 15)
+                Text("Animation").font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .background(.quaternary.opacity(0.45),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .help("Choose the animation played when you plug in, or play it now")
+    }
+
     private var quickActionsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Quick Actions", "wand")
@@ -489,6 +527,7 @@ struct MenuContentView: View {
                 // Resting is more than the display: it also holds Low Power Mode and,
                 // if asked, the radios — so it gets its own button rather than hiding
                 // behind "Off".
+                chargeAnimationMenu
                 actionButton(idleSaver.resting ? "Wake" : "Rest",
                              systemImage: idleSaver.resting ? "sun" : "sleep",
                              help: idleSaver.resting

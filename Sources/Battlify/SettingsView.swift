@@ -882,6 +882,22 @@ struct SettingsView: View {
                             Text(settings.chargeOverlayStyle.summary)
                                 .font(.caption).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
+                            if settings.chargeOverlayStyle == .custom {
+                                let count = ChargeFrameSequence.frameURLs().count
+                                HStack(spacing: 8) {
+                                    Button("Reveal Frames Folder…") {
+                                        ChargeFrameSequence.revealInFinder()
+                                    }
+                                    .controlSize(.small)
+                                    Text(count == 0
+                                         ? "No frames yet — the dot grid plays until you add some."
+                                         : "\(count) frame\(count == 1 ? "" : "s") found, played in filename order.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Text("Export a numbered image sequence (frame_001.png, frame_002.png, …) from Rive, Lottie or After Effects — up to \(ChargeFrameSequence.maxFrames) frames, scaled to fit and centred. No plug-in or runtime needed.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         .padding(.horizontal, 12).padding(.vertical, 10)
                         divider

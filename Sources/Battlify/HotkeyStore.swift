@@ -40,6 +40,8 @@ final class HotkeyStore: ObservableObject {
     private weak var caffeine: CaffeineManager?
     private weak var systemActions: SystemActions?
     private weak var endurance: EnduranceStore?
+    private weak var idleSaver: IdleSaverStore?
+    private weak var settings: AppSettings?
     private weak var license: LicenseManager?
     /// SwiftUI's `openWindow` only exists inside a View, so it's injected.
     private var openWindow: ((String) -> Void)?
@@ -64,6 +66,8 @@ final class HotkeyStore: ObservableObject {
                 caffeine: CaffeineManager,
                 systemActions: SystemActions,
                 endurance: EnduranceStore,
+                idleSaver: IdleSaverStore,
+                settings: AppSettings,
                 license: LicenseManager,
                 openWindow: @escaping (String) -> Void) {
         guard self.chargeLimit == nil else { return }
@@ -71,6 +75,8 @@ final class HotkeyStore: ObservableObject {
         self.caffeine = caffeine
         self.systemActions = systemActions
         self.endurance = endurance
+        self.idleSaver = idleSaver
+        self.settings = settings
         self.license = license
         self.openWindow = openWindow
         reregister()
@@ -140,6 +146,8 @@ final class HotkeyStore: ObservableObject {
         case .toggleDischarge:     toggleDischarge()
         case .toggleHoldCharge:    toggleHoldCharge()
         case .toggleEndurance:     toggleEndurance()
+        case .toggleRest:          toggleRest()
+        case .cycleIconStyle:      cycleIconStyle()
         case .brightnessUp:        nudgeBrightness(by: 0.1)
         case .brightnessDown:      nudgeBrightness(by: -0.1)
 
@@ -284,6 +292,26 @@ final class HotkeyStore: ObservableObject {
             return
         }
         hud("Brightness \(Int((next * 100).rounded()))%")
+    }
+
+    private func toggleRest() {
+        guard let idleSaver else { hud("Resting Unavailable", icon: "alert"); return }
+        if idleSaver.resting {
+            idleSaver.wake()
+            hud("Awake")
+        } else {
+            // The HUD has to be up before the screen goes dark, or it's a banner nobody sees.
+            hud("Resting", detail: "Screen off, settings held — press any key to come back")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { idleSaver.restNow() }
+        }
+    }
+
+    private func cycleIconStyle() {
+        guard let settings else { hud("Style Unavailable", icon: "alert"); return }
+        let all = BatteryIconStyle.allCases
+        let next = all[((all.firstIndex(of: settings.batteryIconStyle) ?? 0) + 1) % all.count]
+        settings.batteryIconStyle = next
+        hud("Icon: \(next.displayName)")
     }
 
     private func toggleEndurance() {

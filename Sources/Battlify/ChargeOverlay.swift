@@ -11,6 +11,9 @@ enum ChargeOverlayStyle: String, CaseIterable, Identifiable, Codable {
     case ring
     /// A soft glow rising off the bottom edge. The quiet one.
     case aurora
+    /// Whatever image sequence you've dropped in the frames folder — a Rive, Lottie or
+    /// After Effects export, played back frame by frame.
+    case custom
 
     var id: String { rawValue }
 
@@ -19,6 +22,7 @@ enum ChargeOverlayStyle: String, CaseIterable, Identifiable, Codable {
         case .dotGrid: return "Dot Grid"
         case .ring:    return "Rings"
         case .aurora:  return "Glow"
+        case .custom:  return "Custom"
         }
     }
 
@@ -27,6 +31,7 @@ enum ChargeOverlayStyle: String, CaseIterable, Identifiable, Codable {
         case .dotGrid: return "A grid of dots ripples out from the port, jittering as the wave passes."
         case .ring:    return "Rings push out from the port with the charge level in the middle."
         case .aurora:  return "A soft glow rises off the bottom edge and fades."
+        case .custom:  return "Plays your own frames — export a numbered image sequence from Rive, Lottie or After Effects and drop it in the folder."
         }
     }
 }
@@ -113,6 +118,7 @@ private struct ChargeOverlayView: View {
                     case .dotGrid: drawDotGrid(gc, size: size, t: t)
                     case .ring:    drawRings(gc, size: size, t: t)
                     case .aurora:  drawAurora(gc, size: size, t: t)
+                    case .custom:  drawCustom(gc, size: size, t: t)
                     }
                 }
             }
@@ -211,6 +217,24 @@ private struct ChargeOverlayView: View {
                     Gradient(colors: [tint.opacity(0), tint.opacity(0.42)]),
                     startPoint: CGPoint(x: 0, y: rect.minY),
                     endPoint: CGPoint(x: 0, y: rect.maxY)))
+    }
+
+    /// A frame from the user's own sequence, scaled to fit and centred so a square export
+    /// isn't stretched across a 16:10 display. With no frames to play it falls back to the
+    /// dot grid rather than flashing an empty screen at you.
+    private func drawCustom(_ gc: GraphicsContext, size: CGSize, t: Double) {
+        guard let frame = ChargeFrameSequence.frame(at: t) else {
+            drawDotGrid(gc, size: size, t: t)
+            return
+        }
+        let source = frame.size
+        guard source.width > 0, source.height > 0 else { return }
+        let scale = min(size.width / source.width, size.height / source.height)
+        let drawn = CGSize(width: source.width * scale, height: source.height * scale)
+        let rect = CGRect(x: (size.width - drawn.width) / 2,
+                          y: (size.height - drawn.height) / 2,
+                          width: drawn.width, height: drawn.height)
+        gc.draw(Image(nsImage: frame), in: rect)
     }
 
     /// Reduce Motion: the same information, no travel — just the level fading in place.

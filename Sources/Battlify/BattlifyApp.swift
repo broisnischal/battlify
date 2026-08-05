@@ -51,6 +51,7 @@ struct BattlifyApp: App {
                 .environmentObject(hotkeys)
                 .environmentObject(restReminder)
                 .environmentObject(idleSaver)
+                .environmentObject(overlay)
                 .onAppear {
                     network.chargeLimit = chargeLimit
                     automation.chargeLimit = chargeLimit
@@ -171,7 +172,8 @@ struct MenuBarLabel: View {
         // left every one of them dead until the menu had been opened. `attach` is
         // idempotent, so calling it on each body evaluation costs nothing.
         hotkeys.attach(chargeLimit: chargeLimit, caffeine: caffeine,
-                       systemActions: actions, endurance: endurance, license: license,
+                       systemActions: actions, endurance: endurance,
+                       idleSaver: idleSaver, settings: settings, license: license,
                        openWindow: { id in
                            NSApplication.shared.activate(ignoringOtherApps: true)
                            openWindow(id: id)
@@ -202,15 +204,18 @@ struct MenuBarLabel: View {
             }
         }
         .help(helpText(snap))
-        // One shared ~0.5s tick; task(id:) cancels it when nothing animates.
+        // One shared tick; task(id:) cancels it when nothing animates. 250ms — twice the
+        // rate of the old 500ms, because a six-step sweep at 2fps reads as a slideshow no
+        // matter how it's eased. It only runs while plugged in with animation opted into,
+        // and stops the moment nothing needs it.
         .task(id: animating) {
             guard animating else { animFrame = 0; return }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                try? await Task.sleep(nanoseconds: 250_000_000)
                 animFrame &+= 1
                 if celebrating {
                     celebrateTicks += 1
-                    if celebrateTicks >= 6 {   // ~3 s: three full blinks
+                    if celebrateTicks >= 12 {   // ~3 s at 250ms, as before
                         celebrating = false
                         celebrateTicks = 0
                     }
