@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import BattlifyKit
 
 /// Which animation the screen flashes when you plug in.
 enum ChargeOverlayStyle: String, CaseIterable, Identifiable, Codable {
@@ -28,7 +29,7 @@ enum ChargeOverlayStyle: String, CaseIterable, Identifiable, Codable {
 
     var summary: String {
         switch self {
-        case .dotGrid: return "A grid of dots ripples out from the port, jittering as the wave passes."
+        case .dotGrid: return "A dot matrix fills to your charge level, with one rise up to the line."
         case .ring:    return "Rings push out from the port with the charge level in the middle."
         case .aurora:  return "A soft glow rises off the bottom edge and fades."
         case .custom:  return "Plays your own frames — export a numbered image sequence from Rive, Lottie or After Effects and drop it in the folder."
@@ -147,62 +148,87 @@ private struct ChargeOverlayView: View {
 
     // MARK: - Styles
 
-    /// A dense field of small dots with pulses travelling out from the port.
+    /// Dot-matrix charge meter, in the spirit of Nothing's charging visual.
     ///
-    /// Three fronts, not one: a single wave crosses once and is over, while pulses arriving
-    /// one after another read as something being pushed into the machine. The grid is fine
-    /// enough (16pt) that the wave has a shape rather than a staircase of dots.
+    /// The previous version launched three fronts diagonally out of the port, one after
+    /// another, which read as something swinging out and back — a boomerang, not charging.
+    /// Three things fix that:
     ///
-    /// Dots are batched by brightness instead of drawn one at a time. At this density a
-    /// screen holds ~6,000 of them, and 6,000 separate fill calls per frame at 60fps is the
-    /// kind of thing that makes a battery app worth uninstalling; bucketing into six alpha
-    /// levels turns it into six fills of one path each.
+    ///   - The whole matrix is faintly lit the entire time. Before, only the moving band
+    ///     was drawn, so there was no grid to move *through* — just a stripe crossing the
+    ///     screen, which is what made the motion the subject instead of the charge.
+    ///   - Dots below your actual charge level are lit. The animation now says how full
+    ///     the battery is, which is the one thing a charging animation should say.
+    ///   - One rise, bottom to the fill line, and done. Charging goes up. Anything that
+    ///     repeats or reverses reads as a loading spinner.
     private func drawDotGrid(_ gc: GraphicsContext, size: CGSize, t: Double) {
         let spacing: CGFloat = 16
-        let from = origin(size)
-        let maxDistance = hypot(size.width, size.height)
-        let cols = Int(size.width / spacing) + 1
-        let rows = Int(size.height / spacing) + 1
+        let radius: CGFloat = 1.1
+        let level = CGFloat(max(0, min(100, percentage))) / 100
+        // Canvas y grows downward, so the fill line sits `level` up from the bottom.
+        let fillLine = size.height * (1 - level)
 
-        // Each pulse is the same front, launched a beat later.
-        let pulseOffsets: [Double] = [0, 0.26, 0.52]
-        let bandWidth = 0.26
+        // The highlight rises from the bottom edge to the fill line over the first part of
+        // the animation, eased so it leaves fast and settles — then holds while the
+        // envelope fades everything out.
+        let rise = CGFloat(Easing.outStrong(min(1, t / 0.62)))
+        let sweepY = size.height - rise * (size.height - fillLine)
+        let falloff: CGFloat = 46          // how far the highlight reaches, in points
+
         let buckets = 6
         var paths = [Path](repeating: Path(), count: buckets)
+        var rows = 0
+        var y: CGFloat = spacing / 2
+        while y < size.height {
+            var x: CGFloat = spacing / 2
+            var col = 0
+            while x < size.width {
+                // Faint matrix everywhere, brighter below the charge line.
+                // Wider gap between filled and empty than looks right in isolation: over a
+                // busy desktop the two regions have to be told apart at a glance.
+                var alpha: CGFloat = y >= fillLine ? 0.5 : 0.06
+                var grow: CGFloat = 0
 
-        for row in 0...rows {
-            for col in 0...cols {
-                let base = CGPoint(x: CGFloat(col) * spacing, y: CGFloat(row) * spacing)
-                let d = hypot(base.x - from.x, base.y - from.y) / maxDistance
-                let travelled = t * 2.6 - d * 1.5
-
-                // Brightest pulse wins, so overlapping fronts don't cancel each other out.
-                var amp = 0.0
-                for offset in pulseOffsets {
-                    let phase = travelled - offset
-                    guard phase > 0, phase < bandWidth else { continue }
-                    amp = max(amp, sin(phase / bandWidth * .pi))
+                let distance = abs(y - sweepY)
+                if distance < falloff {
+                    let amp = cos(distance / falloff * .pi / 2)   // 1 at the line, 0 at the edge
+                    alpha += 0.5 * amp
+                    grow = amp * 1.5
                 }
-                guard amp > 0.04 else { continue }
+                guard alpha > 0.05 else { x += spacing; col += 1; continue }
 
-                // Deterministic per-dot jitter — the "vibrating" part. Hashing the grid
-                // position keeps each dot's shake stable frame to frame instead of turning
-                // the whole grid into noise.
-                let seed = sin(Double(col) * 12.9898 + Double(row) * 78.233) * 43758.5453
-                let jitter = (seed - seed.rounded(.down)) * 2 - 1
-                let shake = CGFloat(jitter * amp * 1.6)
-                let r = 0.7 + CGFloat(amp) * 1.5
-                let rect = CGRect(x: base.x + shake - r, y: base.y + shake * 0.6 - r,
-                                  width: r * 2, height: r * 2)
-                let bucket = min(buckets - 1, Int(amp * Double(buckets)))
-                paths[bucket].addEllipse(in: rect)
+                // A touch of jitter, only for dots the highlight is passing through: the
+                // "vibrating" quality, without shaking the static matrix.
+                var offset: CGFloat = 0
+                if grow > 0.05 {
+                    let seed = sin(Double(col) * 12.9898 + Double(rows) * 78.233) * 43758.5453
+                    offset = CGFloat((seed - seed.rounded(.down)) * 2 - 1) * grow * 1.1
+                }
+                let r = radius + grow
+                paths[min(buckets - 1, Int(min(1, alpha) * CGFloat(buckets)))]
+                    .addEllipse(in: CGRect(x: x + offset - r, y: y - r, width: r * 2, height: r * 2))
+                x += spacing
+                col += 1
             }
+            y += spacing
+            rows += 1
         }
 
         for (index, path) in paths.enumerated() where !path.isEmpty {
-            let level = (Double(index) + 0.5) / Double(buckets)
-            gc.fill(path, with: .color(tint.opacity(0.1 + level * 0.75)))
+            let alpha = (CGFloat(index) + 0.5) / CGFloat(buckets)
+            gc.fill(path, with: .color(tint.opacity(Double(alpha))))
         }
+
+        // The level, in the same monochrome register as the matrix, once the rise is done.
+        guard plugging else { return }
+        let appear = max(0, min(1, (t - 0.34) / 0.24))
+        var text = gc
+        text.opacity = Double(appear)
+        text.translateBy(x: size.width / 2, y: size.height / 2)
+        text.draw(Text("\(percentage)%")
+                    .font(.system(size: 74, weight: .medium, design: .monospaced))
+                    .foregroundStyle(tint),
+                  at: .zero)
     }
 
     private func drawRings(_ gc: GraphicsContext, size: CGSize, t: Double) {
