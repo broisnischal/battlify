@@ -53,6 +53,7 @@ final class HotkeyStore: ObservableObject {
         if let data = defaults.data(forKey: Keys.bindings),
            let saved = try? JSONDecoder().decode(HotkeyBindings.self, from: data) {
             bindings = saved
+            repairDuplicates()
             seedNewActions()
         } else {
             // First launch: ship the defaults rather than nothing, so the feature is
@@ -116,6 +117,29 @@ final class HotkeyStore: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(bindings) else { return }
         defaults.set(data, forKey: Keys.bindings)
+    }
+
+    /// Drop shortcuts that two actions somehow share.
+    ///
+    /// Assigning through the recorder moves a taken combination rather than duplicating it,
+    /// but bindings saved by older builds can hold the same chord twice — and Carbon
+    /// registers exactly one of them, so the other silently never fires. There's no way to
+    /// tell which one the user meant, so the first in the canonical action order keeps it and
+    /// the rest are cleared: an obviously unbound action can be fixed in Settings, whereas a
+    /// bound-looking one that does nothing can't even be diagnosed.
+    private func repairDuplicates() {
+        var seen: [Hotkey: HotkeyAction] = [:]
+        var repaired = false
+        for action in HotkeyAction.allCases {
+            guard let hotkey = bindings.hotkey(for: action) else { continue }
+            if let owner = seen[hotkey], owner != action {
+                bindings.clear(action)
+                repaired = true
+            } else {
+                seen[hotkey] = action
+            }
+        }
+        if repaired { persist() }
     }
 
     /// Give actions added by an update their default shortcut.
