@@ -47,6 +47,17 @@ public struct Hotkey: Codable, Hashable, Sendable {
     /// rejected at the recorder rather than registered and mysteriously eaten.
     public var isValid: Bool { !modifiers.isDisjoint(with: .qualifying) }
 
+    /// True for chords built only from ⌘ and ⇧, like ⌘D or ⇧⌘D.
+    ///
+    /// Those are valid to register and useless in practice: a global grab happens before the
+    /// frontmost app sees the keystroke, so binding ⌘D swallows Duplicate everywhere, and
+    /// ⇧⌘D swallows Send in Mail. ⌃ or ⌥ in the chord is what keeps it out of the range
+    /// ordinary app shortcuts live in. Reported rather than rejected: it's the user's
+    /// keyboard, but it should be a deliberate choice.
+    public var collidesWithAppShortcuts: Bool {
+        modifiers.isDisjoint(with: [.control, .option])
+    }
+
     /// "⌃⌥⌘C" — what the settings row and menu hints show.
     public var displayString: String { modifiers.symbols + Hotkey.keyName(keyCode) }
 

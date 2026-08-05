@@ -1021,6 +1021,13 @@ struct SettingsView: View {
                     Text(action.subtitle).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // A global grab beats the frontmost app to the keystroke, so a chord built
+                // only from ⌘ and ⇧ takes it away from every app that uses it.
+                if let key = hotkeys.bindings.hotkey(for: action), key.collidesWithAppShortcuts {
+                    Text("\(key.displayString) has no ⌃ or ⌥, so Battlify takes it from every app that uses it — ⌘D stops being Duplicate, ⇧⌘D stops being Send.")
+                        .font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
             HotkeyRecorderField(

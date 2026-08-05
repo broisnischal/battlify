@@ -19,9 +19,15 @@ after you'd come back to it. While resting, the check runs every two seconds ins
 four-second grace window at the start so the keystroke that began resting doesn't
 immediately end it.
 
-**Two actions sharing one shortcut are now repaired on load.** Assigning through the
-recorder moves a taken combination rather than duplicating it, but bindings saved by older
-builds could hold the same chord twice — and Carbon registers exactly one of them, so the
-other silently never fired. The first action in the canonical order keeps the chord and the
-rest are cleared: an obviously unbound action can be fixed in Settings, whereas a
-bound-looking one that does nothing can't even be diagnosed.
+**Defensive: two actions sharing one shortcut are repaired on load.** Assigning through the
+recorder moves a taken combination rather than duplicating it, so this shouldn't happen — but
+if a saved file ever holds the same chord twice, Carbon registers exactly one of them and the
+other silently never fires, with nothing in the UI to hint at it. The first action in the
+canonical order keeps the chord and the rest are cleared, because an action that plainly has
+no shortcut can be fixed in Settings while one that looks bound and does nothing cannot even
+be diagnosed.
+
+**Shortcuts without ⌃ or ⌥ are now flagged.** A global ⌘D or ⇧⌘D is grabbed before every
+other app sees it, so binding one quietly breaks Duplicate, Send and whatever else that chord
+means in the app you're using. Settings › Shortcuts says so next to the binding rather than
+refusing it — it's a legitimate choice, just one worth making on purpose.
