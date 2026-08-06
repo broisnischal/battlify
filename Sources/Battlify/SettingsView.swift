@@ -7,6 +7,9 @@ struct SettingsView: View {
     @EnvironmentObject private var battery: BatteryStore
     @EnvironmentObject private var chargeLimit: ChargeLimitStore
     @EnvironmentObject private var automation: AutomationStore
+    @EnvironmentObject private var caffeine: CaffeineManager
+    @EnvironmentObject private var overlay: ChargeOverlayController
+    @EnvironmentObject private var idleSaver: IdleSaverStore
     @EnvironmentObject private var license: LicenseManager
     @EnvironmentObject private var startup: StartupManager
     @EnvironmentObject private var updater: UpdaterManager
@@ -27,6 +30,9 @@ struct SettingsView: View {
     /// Schedule being edited/added in the sheet (nil = sheet closed).
     @State private var editingSchedule: ChargeSchedule?
     @State private var editingIsNew = false
+    /// Always Active window being edited/added in the sheet (nil = sheet closed).
+    @State private var editingAwakeSchedule: AwakeSchedule?
+    @State private var editingAwakeIsNew = false
     /// Automation rule being edited/added in the sheet (nil = sheet closed).
     @State private var editingRule: TriggerRule?
     @State private var editingRuleIsNew = false
@@ -89,6 +95,13 @@ struct SettingsView: View {
                 isNew: editingIsNew,
                 onSave: { chargeLimit.updateOrAddSchedule($0) },
                 onDelete: editingIsNew ? nil : { chargeLimit.removeSchedule(schedule) })
+        }
+        .sheet(item: $editingAwakeSchedule) { schedule in
+            AwakeScheduleEditorView(
+                schedule: schedule,
+                isNew: editingAwakeIsNew,
+                onSave: { chargeLimit.updateOrAddAwakeSchedule($0) },
+                onDelete: editingAwakeIsNew ? nil : { chargeLimit.removeAwakeSchedule(schedule) })
         }
         .sheet(item: $editingRule) { rule in
             TriggerRuleEditorView(
@@ -261,9 +274,24 @@ struct SettingsView: View {
         tab {
             if chargeLimit.daemonAvailable {
                 proGate {
+                    card("Hold") {
+                        toggleRow("Don't charge while plugged in",
+                                  chargeLimit.magSafeSupported
+                                  ? "Run the Mac off the adapter and leave the battery exactly where it is — no charging, whatever the level or the limit. The MagSafe light stays amber while it's held, so you can see it's deliberate. Only a pause overrides it."
+                                  : "Run the Mac off the adapter and leave the battery exactly where it is — no charging, whatever the level or the limit. Only a pause overrides it.",
+                                  isOn: bind(\.holdCharge))
+                        if chargeLimit.holdCharge {
+                            divider
+                            infoRow("Charging is held. The battery will neither rise nor drain while you stay plugged in — turn this off when you want it to charge again.",
+                                    systemImage: "pause")
+                        }
+                    }
+
                     card("Enforcement") {
                         toggleRow("Stop charging before sleep",
-                                  "Cuts charging as the Mac sleeps so it can't top up past the limit.",
+                                  chargeLimit.limitEnabled
+                                  ? "Already on: nothing can enforce a limit while the Mac is asleep, so charging is always cut on the way into sleep and resumes on wake. Turn this on as well to cut charging at sleep when no limit is set."
+                                  : "Cuts charging as the Mac goes to sleep. With a charge limit set this happens anyway — the limit can't be enforced while asleep.",
                                   isOn: bind(\.disableChargingBeforeSleep))
                         divider
                         toggleRow("Prevent idle sleep while plugged in",
@@ -274,6 +302,12 @@ struct SettingsView: View {
                                   "Terminal jobs and background tasks keep running with the lid shut. The display and keyboard backlight switch off while the lid is closed to save power. On AC power by default — it releases when you unplug unless you turn on “Also keep awake on battery” below. Heavy work with the lid closed runs hot, so keep it ventilated.",
                                   isOn: bind(\.keepAwake))
                         if chargeLimit.keepAwake {
+                            divider
+                            keepAwakeTimerRow
+                            if chargeLimit.hasAwakeSchedules {
+                                divider
+                                keepAwakeWindowsRow
+                            }
                             divider
                             toggleRow("Also keep awake on battery",
                                       "Keep running with the lid closed even when unplugged. The battery drains quickly and a closed Mac can run hot — set a temperature guardrail below. Off by default.",
@@ -375,6 +409,135 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Always Active timing
+
+    /// Auto-off timer. The deadline lives in the daemon's config, so it still fires with
+    /// the Mac asleep or Battlify quit — and it shows the wall-clock time it ends rather
+    /// than a countdown, which would need a ticking timer to stay honest.
+    private var keepAwakeTimerRow: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Turn off automatically").font(.callout)
+                Text(chargeLimit.keepAwakeUntil == nil
+                     ? "Always Active stays on until you switch it off."
+                     : "Always Active switches itself off then, even if the Mac is asleep or Battlify isn't running.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Menu(keepAwakeTimerLabel) {
+                Button("Don't turn off") { chargeLimit.startKeepAwake(minutes: nil) }
+                Divider()
+                ForEach([30, 60, 120, 300, 480], id: \.self) { minutes in
+                    Button(Self.durationLabel(minutes)) { chargeLimit.startKeepAwake(minutes: minutes) }
+                }
+            }
+            .controlSize(.small)
+            .fixedSize()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    /// Caffeine's live state in one line, including how far the hold reaches — the
+    /// difference between "screen on" and "tasks only" is the difference between
+    /// percents per hour and almost nothing.
+    private var caffeineStateHint: String {
+        guard caffeine.active else {
+            return "Caffeine is off — the Mac sleeps and dims normally. Turn it on from the menu bar."
+        }
+        let reach = (caffeine.hold ?? .displayOn).title.lowercased()
+        guard let until = caffeine.expiresAt else { return "Caffeine is holding — \(reach)." }
+        return "Caffeine is holding until \(Self.clockFormatter.string(from: until)) — \(reach)."
+    }
+
+    private var keepAwakeTimerLabel: String {
+        guard let until = chargeLimit.keepAwakeUntil else { return "Don't turn off" }
+        return "Until \(Self.clockFormatter.string(from: until))"
+    }
+
+    private static func durationLabel(_ minutes: Int) -> String {
+        if minutes < 60 { return "After \(minutes) minutes" }
+        let h = Double(minutes) / 60
+        let text = h == h.rounded() ? "\(Int(h))" : String(format: "%.1f", h)
+        return "After \(text) hour\(minutes == 60 ? "" : "s")"
+    }
+
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
+
+    /// Shown once windows exist, so the switch's meaning is never a mystery: on means
+    /// "hold during these hours", not "hold right now".
+    private var keepAwakeWindowsRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("Scheduled hours").font(.callout)
+                    if chargeLimit.keepAwakeArmed { activeBadge("HOLDING") } else { waitingBadge }
+                }
+                ForEach(chargeLimit.keepAwakeSchedules.filter(\.enabled)) { window in
+                    Text(window.scheduleSummary)
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+                Text("Outside these hours the Mac sleeps normally.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("Edit…") { selection = .schedule }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    private func activeBadge(_ text: String = "ACTIVE") -> some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Color.green.opacity(0.25), in: Capsule())
+            .foregroundStyle(.green)
+    }
+
+    private var waitingBadge: some View {
+        Text("WAITING")
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Color.secondary.opacity(0.2), in: Capsule())
+            .foregroundStyle(.secondary)
+    }
+
+    private func awakeScheduleRow(_ s: AwakeSchedule) -> some View {
+        Button {
+            editingAwakeIsNew = false
+            editingAwakeSchedule = s
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "cup.and.saucer.fill")
+                    .frame(width: 22)
+                    .foregroundStyle(s.enabled ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(s.label.isEmpty ? "Awake window" : s.label).font(.callout)
+                        if s.enabled, chargeLimit.activeAwakeSchedule?.id == s.id { activeBadge() }
+                    }
+                    Text(s.scheduleSummary)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { s.enabled },
+                    set: { var c = s; c.enabled = $0; chargeLimit.updateAwakeSchedule(c) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Schedule
 
     private var scheduleTab: some View {
@@ -396,6 +559,32 @@ struct SettingsView: View {
                                 editingIsNew = true
                                 editingSchedule = ChargeSchedule()
                             } label: { Label("Add Schedule", systemImage: "plus") }
+                                .controlSize(.small)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                    }
+
+                    card("Always Active hours") {
+                        if chargeLimit.keepAwakeSchedules.isEmpty {
+                            infoRow("No hours set — Always Active simply holds whenever its switch is on. Add a window to have it switch itself on and off, for example weekdays from 9 AM for 9 hours.",
+                                    systemImage: "clock")
+                        } else {
+                            ForEach(chargeLimit.keepAwakeSchedules) { window in
+                                awakeScheduleRow(window)
+                                divider
+                            }
+                            if !chargeLimit.keepAwake {
+                                infoRow("Always Active is switched off, so these hours won't do anything until you turn it on under Charging.",
+                                        systemImage: "info")
+                                divider
+                            }
+                        }
+                        HStack {
+                            Button {
+                                editingAwakeIsNew = true
+                                editingAwakeSchedule = AwakeSchedule()
+                            } label: { Label("Add Hours", systemImage: "plus") }
                                 .controlSize(.small)
                             Spacer()
                         }
@@ -461,13 +650,7 @@ struct SettingsView: View {
                     HStack(spacing: 6) {
                         Text(s.label.isEmpty ? s.action.title : s.label)
                             .font(.callout)
-                        if chargeLimit.activeSchedule?.id == s.id {
-                            Text("ACTIVE")
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Color.green.opacity(0.25), in: Capsule())
-                                .foregroundStyle(.green)
-                        }
+                        if chargeLimit.activeSchedule?.id == s.id { activeBadge() }
                     }
                     Text("\(s.windowLabel()) · \(s.days.summary)")
                         .font(.caption).foregroundStyle(.secondary)
@@ -608,6 +791,141 @@ struct SettingsView: View {
                     } else {
                         infoRow("Measuring drain… run on battery with the mode on and off for a few minutes to compare.\(nowSuffix)",
                                 systemImage: "gauge")
+                    }
+                }
+
+                if chargeLimit.fansSupported {
+                    card("Fans") {
+                        // The layout every Mac fan utility uses, because it's the right one:
+                        // which fan, the range it lives in with the current value inside that
+                        // range, and its control — readable as a table rather than a list of
+                        // sentences.
+                        HStack(spacing: 10) {
+                            Text("Fan").frame(width: 96, alignment: .leading)
+                            Text("Min / Current / Max").frame(maxWidth: .infinity, alignment: .leading)
+                            Text("Control").frame(width: 150, alignment: .leading)
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
+
+                        ForEach(chargeLimit.fans) { fan in
+                            fanRow(fan)
+                            divider
+                        }
+
+                        if chargeLimit.fanControlSupported {
+                            pickerRow(chargeLimit.fanMode.isManual
+                                      ? "Held where you put them until you set Auto back."
+                                      : "macOS decides, which is right almost always.") {
+                                Picker("", selection: Binding(
+                                    get: { chargeLimit.fanMode.isManual },
+                                    set: { chargeLimit.setFanMode($0 ? .manual(percent: 40) : .auto) })) {
+                                    Text("Auto").tag(false)
+                                    Text("Custom").tag(true)
+                                }
+                                .pickerStyle(.segmented).labelsHidden()
+                            }
+                            if let percent = chargeLimit.fanMode.percent {
+                                divider
+                                stepperRow("Speed", value: "\(percent)% of range",
+                                           binding: Binding(
+                                            get: { Double(percent) },
+                                            set: { chargeLimit.setFanMode(.manual(percent: Int($0))) }),
+                                           range: 0...100)
+                                divider
+                                infoRow("0% is each fan's own minimum, not off. If the machine gets hot, control returns to macOS automatically.",
+                                        systemImage: "thermometer")
+                            }
+                        } else {
+                            infoRow("This Mac reads its fans but refuses to let software drive them — every write is rejected by the SMC, so Battlify leaves them to macOS and shows what they're doing. Fans reading 0 rpm while the machine is cool is normal on Apple silicon: they stop entirely until there's heat to move.",
+                                    systemImage: "info")
+                        }
+                    }
+
+                    if !chargeLimit.sensors.isEmpty {
+                        card("Temperatures") {
+                            ForEach(chargeLimit.sensors.prefix(12)) { sensor in
+                                HStack(spacing: 10) {
+                                    Text(sensor.name).font(.callout)
+                                    Spacer()
+                                    Text(sensor.key).font(.caption).foregroundStyle(.tertiary)
+                                    Text(String(format: "%.1f °C", sensor.celsius))
+                                        .font(.callout.weight(.medium)).monospacedDigit()
+                                        .frame(width: 72, alignment: .trailing)
+                                        .foregroundStyle(sensor.celsius >= 90 ? Color.orange : .primary)
+                                }
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                            }
+                            divider
+                            infoRow("The warmest twelve of \(chargeLimit.sensors.count) sensors this Mac publishes, read straight from the SMC.",
+                                    systemImage: "info")
+                        }
+                    }
+                }
+
+                card("Rest without closing the lid") {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Rest now").font(.callout)
+                            Text(idleSaver.resting
+                                 ? "Resting — the screen is off and settings are held. Touch anything to come back."
+                                 : "Screen and keyboard backlight off, and the settings below applied, without shutting the lid.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Button(idleSaver.resting ? "Wake" : "Rest Now") {
+                            idleSaver.resting ? idleSaver.wake() : idleSaver.restNow()
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    divider
+                    toggleRow("Rest automatically when I'm away",
+                              "Waits for no keyboard, mouse or trackpad activity at all, and never rests while an external display is connected — that usually means someone is looking at something.",
+                              isOn: $idleSaver.autoEnabled)
+                    if idleSaver.autoEnabled {
+                        divider
+                        stepperRow("After",
+                                   value: "\(idleSaver.afterMinutes) min",
+                                   binding: Binding(
+                                    get: { Double(idleSaver.afterMinutes) },
+                                    set: { idleSaver.afterMinutes = max(5, Int($0)) }),
+                                   range: 5...120)
+                        divider
+                        stepperRow("Then sleep after",
+                                   value: idleSaver.sleepAfterMinutes > 0
+                                        ? "\(idleSaver.sleepAfterMinutes) min more" : "Never",
+                                   binding: Binding(
+                                    get: { Double(idleSaver.sleepAfterMinutes) },
+                                    set: { idleSaver.sleepAfterMinutes = max(0, Int($0)) }),
+                                   range: 0...180)
+                    }
+                    divider
+                    toggleRow("Low Power Mode while resting",
+                              "Restored to whatever it was when you come back.",
+                              isOn: $idleSaver.lowPowerWhileResting)
+                    divider
+                    toggleRow("Wi-Fi and Bluetooth off while resting",
+                              "Off by default: losing the network mid-download or mid-call costs more than the power it saves. Only the radios Battlify switched off are switched back on.",
+                              isOn: $idleSaver.radiosOffWhileResting)
+                    divider
+                    infoRow("Fans aren't controllable on Apple silicon — the SMC refuses the write. They wind down on their own once the Mac is actually idle, which is what resting it achieves.",
+                            systemImage: "info")
+                }
+
+                card("Caffeine (keep awake now)") {
+                    infoRow(caffeineStateHint, systemImage: "coffee")
+                    divider
+                    toggleRow("End it when I unplug",
+                              "Caffeine stops the moment you switch to battery, so nothing holds the Mac awake while it's left alone.",
+                              isOn: $settings.caffeineEndOnBattery)
+                    if !settings.caffeineEndOnBattery {
+                        divider
+                        toggleRow("Keep the screen on when on battery",
+                                  "Leave this off unless you need the screen lit: on battery Caffeine then keeps your work running but lets the screen sleep. A lit idle screen draws several watts — percents of charge per hour — and is the most expensive thing this app can do to a battery.",
+                                  isOn: $settings.caffeineKeepDisplayOnBattery)
                     }
                 }
 
@@ -762,6 +1080,42 @@ struct SettingsView: View {
         .onChange(of: selection) { _, _ in recordingAction = nil }
     }
 
+    /// One fan: name, its range with the current value inside it, and what's driving it.
+    private func fanRow(_ fan: FanReading) -> some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                HugeIcon("refresh", size: 15)
+                    .foregroundStyle(fan.current > 0 ? Color.accentColor : .secondary)
+                Text(FanReading.name(index: fan.index, of: chargeLimit.fans.count))
+                    .font(.callout)
+            }
+            .frame(width: 96, alignment: .leading)
+
+            HStack(spacing: 6) {
+                Text("\(Int(fan.minimum.rounded()))").foregroundStyle(.secondary)
+                Text("—").foregroundStyle(.tertiary)
+                // The live number is the one worth reading, so it's the only one emphasised.
+                Text("\(Int(fan.current.rounded()))")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(fan.current > 0 ? Color.orange : .secondary)
+                Text("—").foregroundStyle(.tertiary)
+                Text("\(Int(fan.maximum.rounded()))").foregroundStyle(.secondary)
+                Text("rpm").font(.caption).foregroundStyle(.tertiary)
+            }
+            .font(.callout).monospacedDigit()
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(chargeLimit.fanControlSupported
+                 ? (chargeLimit.fanMode.isManual ? "Custom" : "Auto")
+                 : "macOS")
+                .font(.caption)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.quaternary.opacity(0.6), in: Capsule())
+                .frame(width: 150, alignment: .leading)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
     private func shortcutRow(_ action: HotkeyAction) -> some View {
         HStack(alignment: .center, spacing: 10) {
             HugeIcon(action.icon, size: 16, weight: 2)
@@ -771,6 +1125,13 @@ struct SettingsView: View {
                 Text(action.title).font(.callout)
                 if !action.subtitle.isEmpty {
                     Text(action.subtitle).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // A global grab beats the frontmost app to the keystroke, so a chord built
+                // only from ⌘ and ⇧ takes it away from every app that uses it.
+                if let key = hotkeys.bindings.hotkey(for: action), key.collidesWithAppShortcuts {
+                    Text("\(key.displayString) has no ⌃ or ⌥, so Battlify takes it from every app that uses it — ⌘D stops being Duplicate, ⇧⌘D stops being Send.")
+                        .font(.caption).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -808,9 +1169,20 @@ struct SettingsView: View {
                                        percentage: battery.snapshot.percentage)
                 }
                 divider
-                toggleRow("Show battery percentage",
-                          "Turn off to show just the icon.",
-                          isOn: $settings.showMenuBarPercentage)
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show").font(.callout)
+                        Text("Time remaining is time to full while charging, time to empty on battery.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Picker("", selection: $settings.menuBarDisplay) {
+                        ForEach(MenuBarDisplay.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().frame(width: 160)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
                 divider
                 toggleRow("Color icon by charge state",
                           "Green while charging, red when low or warm. Off keeps it monochrome.",
@@ -830,6 +1202,12 @@ struct SettingsView: View {
                                 settings.notificationsEnabled = on
                                 if on { notifier.enableRequested() }
                             }))
+                divider
+                toggleRow("Suggest an occasional restart",
+                          "Once your Mac has been running for over a week, remind you that a restart clears memory and helps it run cooler.",
+                          isOn: Binding(
+                            get: { settings.restReminderEnabled },
+                            set: { settings.restReminderEnabled = $0 }))
                 if settings.notificationsEnabled {
                     divider
                     HStack {
@@ -841,6 +1219,75 @@ struct SettingsView: View {
                     .padding(.horizontal, 12).padding(.vertical, 10)
                 }
             }
+
+                card("Plug-in feedback (experimental)") {
+                    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                        toggleRow("Animate anyway",
+                                  "macOS Reduce Motion is on, so Battlify's animations — the charging icon, this overlay, the charge-complete flash — are all switched off. Turn this on to play them anyway; nothing else on your Mac is affected.",
+                                  isOn: $settings.animateWithReduceMotion)
+                        divider
+                    }
+                    toggleRow("Tap the trackpad when you plug in",
+                              "Two taps on connect, one on unplug, three when the charge limit is reached. Needs a Force Touch trackpad — a desktop Mac, or a laptop you're driving from an external keyboard, has nothing to tap with, and the trackpad is asleep while the lid is shut.",
+                              isOn: $settings.hapticsEnabled)
+                    divider
+                    toggleRow("Show an animation when you plug in",
+                              "Flashes over whatever you're doing for about a second, then gets out of the way. Click-through, so it can't swallow a click, and it skips the motion entirely if Reduce Motion is on.",
+                              isOn: $settings.chargeOverlayEnabled)
+                    if settings.chargeOverlayEnabled {
+                        divider
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Animation").font(.callout)
+                                Spacer()
+                                Picker("", selection: $settings.chargeOverlayStyle) {
+                                    ForEach(ChargeOverlayStyle.allCases) {
+                                        Text($0.displayName).tag($0)
+                                    }
+                                }
+                                .labelsHidden().frame(width: 160)
+                                Button("Preview") {
+                                    overlay.show(style: settings.chargeOverlayStyle,
+                                                 duration: settings.chargeOverlayDuration,
+                                                 percentage: battery.snapshot.percentage,
+                                                 allowMotion: settings.motionAllowed)
+                                }
+                                .controlSize(.small)
+                            }
+                            Text(settings.chargeOverlayStyle.summary)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if settings.chargeOverlayStyle == .custom {
+                                let count = ChargeFrameSequence.frameURLs().count
+                                HStack(spacing: 8) {
+                                    Button("Reveal Frames Folder…") {
+                                        ChargeFrameSequence.revealInFinder()
+                                    }
+                                    .controlSize(.small)
+                                    Text(count == 0
+                                         ? "No frames yet — the dot grid plays until you add some."
+                                         : "\(count) frame\(count == 1 ? "" : "s") found, played in filename order.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Text("Export a numbered image sequence (frame_001.png, frame_002.png, …) from Rive, Lottie or After Effects — up to \(ChargeFrameSequence.maxFrames) frames, scaled to fit and centred. No plug-in or runtime needed.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        divider
+                        stepperRow("How long",
+                                   value: String(format: "%.1f s", settings.chargeOverlayDuration),
+                                   binding: Binding(
+                                    get: { settings.chargeOverlayDuration * 10 },
+                                    set: { settings.chargeOverlayDuration = ($0.rounded() / 10) }),
+                                   range: 5...20)
+                        divider
+                        toggleRow("Play it when you unplug too",
+                                  "The same animation in a cooler colour, without the charge level.",
+                                  isOn: $settings.chargeOverlayOnUnplug)
+                    }
+                }
 
             card("Startup") {
                 toggleRow("Launch at login", isOn: Binding(
@@ -1190,8 +1637,12 @@ struct BatteryStylePicker: View {
 
     @State private var hovering: BatteryIconStyle?
 
+    /// A grid, not a row: nine styles in one line would squeeze each tile below the
+    /// width its glyph needs to be recognisable.
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
+
     var body: some View {
-        HStack(spacing: 8) {
+        LazyVGrid(columns: columns, spacing: 8) {
             ForEach(BatteryIconStyle.allCases) { style in
                 let isSelected = style == selection
                 let isHovering = hovering == style

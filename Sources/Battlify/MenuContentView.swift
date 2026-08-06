@@ -12,6 +12,8 @@ struct MenuContentView: View {
     @EnvironmentObject private var caffeine: CaffeineManager
     @EnvironmentObject private var triggers: TriggerStore
     @EnvironmentObject private var hotkeys: HotkeyStore
+    @EnvironmentObject private var restReminder: RestReminder
+    @EnvironmentObject private var idleSaver: IdleSaverStore
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     // Start near full height so the popover doesn't visibly grow on first open.
@@ -21,6 +23,9 @@ struct MenuContentView: View {
 
     var body: some View {
         let snap = battery.snapshot
+        // Read unconditionally so SwiftUI reliably re-renders the popover when it flips
+        // (a read only inside the `if` below doesn't, under MenuBarExtra).
+        let restDue = restReminder.isDue
 
         // As tall as the content, but never taller than the screen.
         ScrollView {
@@ -29,6 +34,7 @@ struct MenuContentView: View {
                 Divider()
                 if let update = updater.available { updateBanner(update); Divider() }
                 if !license.isLicensed { licenseBanner; Divider() }
+                if restDue { restBanner; Divider() }
                 Group {
                     modeSection
                     Divider()
@@ -99,6 +105,38 @@ struct MenuContentView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    // MARK: - Rest reminder banner
+
+    @ViewBuilder
+    private var restBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "powersleep").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Give your Mac a rest").font(.callout.weight(.medium))
+                Text(restReminder.message)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button("Restart…") { confirmRestart() }.controlSize(.small)
+                    Button("Later") { restReminder.snooze() }.controlSize(.small)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func confirmRestart() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Restart your Mac now?"
+        alert.informativeText = "Save any open work first — your apps will be asked to close."
+        alert.addButton(withTitle: "Restart")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { restReminder.restart() }
     }
 
     // MARK: - License banner
@@ -255,6 +293,29 @@ struct MenuContentView: View {
         }
     }
 
+    /// "Don't charge" as a switch rather than a timed pause: the level stays put for as
+    /// long as it's on, and the MagSafe light goes amber so it's visible from outside
+    /// the app.
+    @ViewBuilder
+    private var holdChargeControl: some View {
+        HStack(spacing: 8) {
+            HugeIcon("plug", size: 17)
+                .foregroundStyle(chargeLimit.holdCharge ? Color.orange : .secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Don't charge").font(.callout)
+                Text(chargeLimit.holdCharge
+                     ? "Holding — plugged in, battery left alone"
+                     : "Run off the adapter, leave the battery as-is")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Toggle("", isOn: Binding(
+                get: { chargeLimit.holdCharge },
+                set: { chargeLimit.holdCharge = $0; chargeLimit.apply() }))
+                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+        }
+    }
+
     @ViewBuilder
     private var calibrationControl: some View {
         if chargeLimit.calibrating {
@@ -296,6 +357,7 @@ struct MenuContentView: View {
             sectionHeader("Charge Limit", "battery")
 
             if chargeLimit.daemonAvailable {
+                holdChargeControl
                 pauseChargingControl
 
                 if chargeLimit.daemonOutdated {
@@ -423,6 +485,16 @@ struct MenuContentView: View {
                              help: "Turn the display off now (the Mac stays awake)"
                                    + shortcutHint(.displayOff)) {
                     actions.turnDisplayOff()
+                }
+                // Resting is more than the display: it also holds Low Power Mode and,
+                // if asked, the radios — so it gets its own button rather than hiding
+                // behind "Off".
+                actionButton(idleSaver.resting ? "Wake" : "Rest",
+                             systemImage: idleSaver.resting ? "sun" : "sleep",
+                             help: idleSaver.resting
+                                 ? "Stop resting and put back what was changed"
+                                 : "Screen off and settings held, without closing the lid") {
+                    idleSaver.resting ? idleSaver.wake() : idleSaver.restNow()
                 }
                 actionButton("Sleep", systemImage: "sleep",
                              help: "Put the Mac to sleep now" + shortcutHint(.sleepNow)) {

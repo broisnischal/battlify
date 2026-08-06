@@ -179,3 +179,20 @@ import Foundation
     let gated = HotkeyAction.allCases.filter(\.requiresPro)
     #expect(Set(gated) == [.openDetails, .openHistory])
 }
+
+@Suite struct HotkeyCollisionTests {
+    private let d: UInt32 = 2   // kVK_ANSI_D
+
+    @Test func chordsOfOnlyCommandAndShiftAreFlagged() {
+        // Grabbed globally, these land before the frontmost app sees them: ⌘D stops being
+        // Duplicate everywhere, ⇧⌘D stops being Send.
+        #expect(Hotkey(keyCode: d, modifiers: [.command]).collidesWithAppShortcuts)
+        #expect(Hotkey(keyCode: d, modifiers: [.command, .shift]).collidesWithAppShortcuts)
+    }
+
+    @Test func controlOrOptionKeepsItOutOfTheWay() {
+        #expect(!Hotkey(keyCode: d, modifiers: [.control, .option, .command]).collidesWithAppShortcuts)
+        #expect(!Hotkey(keyCode: d, modifiers: [.option, .command]).collidesWithAppShortcuts)
+        #expect(!Hotkey(keyCode: d, modifiers: [.control, .command]).collidesWithAppShortcuts)
+    }
+}

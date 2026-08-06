@@ -81,6 +81,8 @@ public enum ControlRequest: Codable, Sendable {
     case prepareForSleep
     /// Start (true) or cancel (false) a one-shot charge-to-100% calibration.
     case calibrateToFull(Bool)
+    /// Set the fan mode (auto, or held at a percentage of each fan's range).
+    case setFanMode(FanMode)
     /// Delete the daemon-written history file. The GUI can't (root-owned dir), so it
     /// asks the daemon.
     case clearSamples
@@ -100,6 +102,13 @@ public struct ControlResponse: Codable, Sendable {
     public var magSafeSupported: Bool
     public var dischargeSupported: Bool
     public var discharging: Bool
+    /// Live fan state, empty on a fanless Mac or an older daemon.
+    public var fans: [FanReading]
+    /// Whether this Mac accepts fan writes at all — discovered by trying, since the keys read
+    /// fine on machines that refuse every write.
+    public var fanControlSupported: Bool
+    /// Temperature sensors, warmest first.
+    public var sensors: [SensorReading]
     public var message: String?
     /// Protocol version of the responding daemon. Older daemons omit it → decode to 0 → outdated.
     public var daemonProtocolVersion: Int
@@ -113,6 +122,9 @@ public struct ControlResponse: Codable, Sendable {
                 powerToggles: [String: Bool] = [:],
                 pauseReason: String? = nil, magSafeSupported: Bool = false,
                 dischargeSupported: Bool = false, discharging: Bool = false,
+                fans: [FanReading] = [],
+                fanControlSupported: Bool = false,
+                sensors: [SensorReading] = [],
                 message: String? = nil,
                 daemonProtocolVersion: Int = ControlProtocol.version,
                 daemonBuildVersion: Int = HelperBuild.version) {
@@ -127,6 +139,9 @@ public struct ControlResponse: Codable, Sendable {
         self.magSafeSupported = magSafeSupported
         self.dischargeSupported = dischargeSupported
         self.discharging = discharging
+        self.fans = fans
+        self.fanControlSupported = fanControlSupported
+        self.sensors = sensors
         self.message = message
         self.daemonProtocolVersion = daemonProtocolVersion
         self.daemonBuildVersion = daemonBuildVersion
@@ -146,6 +161,9 @@ public struct ControlResponse: Codable, Sendable {
         magSafeSupported = try c.decodeIfPresent(Bool.self, forKey: .magSafeSupported) ?? false
         dischargeSupported = try c.decodeIfPresent(Bool.self, forKey: .dischargeSupported) ?? false
         discharging = try c.decodeIfPresent(Bool.self, forKey: .discharging) ?? false
+        fans = try c.decodeIfPresent([FanReading].self, forKey: .fans) ?? []
+        fanControlSupported = try c.decodeIfPresent(Bool.self, forKey: .fanControlSupported) ?? false
+        sensors = try c.decodeIfPresent([SensorReading].self, forKey: .sensors) ?? []
         message = try c.decodeIfPresent(String.self, forKey: .message)
         daemonProtocolVersion = try c.decodeIfPresent(Int.self, forKey: .daemonProtocolVersion) ?? 0
         daemonBuildVersion = try c.decodeIfPresent(Int.self, forKey: .daemonBuildVersion) ?? 0
@@ -182,7 +200,26 @@ public enum HelperBuild {
     ///       installed helper still running the fan policy must be replaced.
     ///   v6: idle back-off — the enforcement loop drops to a slow tick once the lid is
     ///       shut on battery, so it stops doing work inside maintenance dark wakes.
-    public static let version = 6
+    ///   v7: the daemon registers for sleep itself and cuts charging on the way down
+    ///       whenever a limit is enforced. An installed v6 helper only cuts when the GUI
+    ///       asks and the option is ticked, so it lets the battery charge past the limit
+    ///       to full while the Mac sleeps — it has to be replaced, not just re-run.
+    ///       Also adds the "don't charge while plugged in" hold and its amber LED.
+    ///   v8: fan control, and — the reason this must reach every install — a v8 helper hands
+    ///       fans back to macOS whenever the config says auto but the SMC says forced. Forced
+    ///       mode persists across reboots, so a Mac left pinned by the removed fan-boost
+    ///       feature stays pinned until a helper that knows to undo it runs.
+    ///   v9: the v8 fan code read `F<i>Md != 0` as "forced" — an M3 Pro reports 3 with macOS
+    ///       in charge — so it wrote the key every tick, failed, and logged an error every
+    ///       few seconds while fighting a controller that wasn't there. v9 writes nothing
+    ///       unless a manual speed is set, latches a refusal instead of retrying, and reports
+    ///       fan-write support and temperature sensors to the app.
+    ///   v10: a daemon that can't serve its control socket now exits instead of running deaf.
+    ///        One install left a helper alive and listening on an inode whose path a
+    ///        short-lived second instance had replaced: launchd reported the job healthy while
+    ///        every app request got "connection refused", so the app hung. Bind failures are
+    ///        fatal, and the tick loop exits if the path stops pointing at our own socket.
+    public static let version = 10
 }
 
 public enum ControlError: Error, CustomStringConvertible {

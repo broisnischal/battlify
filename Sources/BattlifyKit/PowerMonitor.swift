@@ -1,9 +1,47 @@
 import Foundation
 import IOKit
 
-/// A snapshot of live power flow, in watts. `batteryWatts` is signed: positive =
-/// into the battery (charging), negative = out (discharging). `systemWatts` is the
-/// estimated draw of everything else.
+/// Identity and capability of the connected power adapter, read from the
+/// `AdapterDetails` dictionary the battery firmware publishes. Everything is
+/// optional — third-party and older adapters report wildly different subsets.
+public struct AdapterInfo: Equatable, Sendable {
+    /// Marketing name, e.g. "96W USB-C Power Adapter" (Apple adapters only).
+    public var name: String?
+    public var manufacturer: String?
+    public var model: String?
+    public var serial: String?
+    /// Wattage the Mac negotiated with the adapter.
+    public var watts: Int?
+    /// Negotiated supply voltage / current limit.
+    public var voltageMv: Int?
+    public var currentMa: Int?
+    public var isWireless: Bool = false
+    /// Best wattage the adapter advertises across its USB-PD profiles. When this
+    /// is higher than `watts`, something between the two — usually the cable or
+    /// the port — is capping the negotiated power.
+    public var maxAvailableWatts: Int?
+
+    /// Whether the adapter reported anything worth showing.
+    public var hasDetail: Bool {
+        watts != nil || name != nil || manufacturer != nil || model != nil
+    }
+
+    /// The adapter can supply meaningfully more than was negotiated (>5 W of
+    /// headroom, to ignore rounding and profile granularity).
+    public var isUnderNegotiated: Bool {
+        guard let w = watts, let m = maxAvailableWatts else { return false }
+        return m > w + 5
+    }
+}
+
+/// A snapshot of live power flow, in watts.
+///
+///   adapter ──▶ [ system ]
+///           └─▶ [ battery ]   (or battery ──▶ system when unplugged)
+///
+/// `batteryWatts` is signed: positive = power flowing *into* the battery
+/// (charging), negative = flowing *out* (discharging). `systemWatts` is the
+/// estimated draw of everything else (SoC, display, peripherals).
 public struct PowerFlow: Equatable, Sendable {
     /// Power drawn from the wall adapter (nil when unplugged / unknown).
     public var adapterWatts: Double?
@@ -13,11 +51,14 @@ public struct PowerFlow: Equatable, Sendable {
     public var systemWatts: Double?
     /// Human label for the adapter, e.g. "96W" (nil when unplugged/unknown).
     public var adapterDescription: String?
+    /// Identity/capability of the connected adapter (nil when unplugged or when
+    /// the firmware reports nothing useful).
+    public var adapter: AdapterInfo?
     public var isPluggedIn: Bool
 
     public static let unknown = PowerFlow(
         adapterWatts: nil, batteryWatts: 0, systemWatts: nil,
-        adapterDescription: nil, isPluggedIn: false)
+        adapterDescription: nil, adapter: nil, isPluggedIn: false)
 
     /// Battery power going *into* the pack (0 when discharging).
     public var chargeWatts: Double { max(0, batteryWatts) }
@@ -67,6 +108,8 @@ public enum PowerMonitor {
                let name = adapter["Name"] as? String, !name.isEmpty {
                 flow.adapterDescription = name
             }
+            let info = adapterInfo(from: adapter, negotiatedWatts: flow.adapterWatts)
+            flow.adapter = info.hasDetail ? info : nil
         }
 
         // System draw = adapter − batteryWatts (what the adapter delivers minus what
@@ -78,6 +121,51 @@ public enum PowerMonitor {
         }
 
         return flow
+    }
+
+    /// Pull the adapter's identity out of `AdapterDetails`. Keys vary by adapter
+    /// and firmware, so every field is best-effort.
+    private static func adapterInfo(from d: [String: Any],
+                                    negotiatedWatts: Double?) -> AdapterInfo {
+        var info = AdapterInfo(isWireless: (d["IsWireless"] as? Bool) ?? false)
+
+        info.name = nonEmpty(d["Name"] as? String)
+        info.manufacturer = nonEmpty(d["Manufacturer"] as? String)
+        info.serial = nonEmpty(d["SerialString"] as? String)
+        // Model can arrive as a string or as a numeric ID; render the number as
+        // hex, which is how Apple's own tooling shows it.
+        if let m = nonEmpty(d["Model"] as? String) {
+            info.model = m
+        } else if let m = d["Model"] as? Int, m != 0 {
+            info.model = String(format: "0x%04X", m)
+        }
+
+        if let w = d["Watts"] as? Int, w > 0 {
+            info.watts = w
+        } else if let w = negotiatedWatts, w > 0 {
+            info.watts = Int(w.rounded())
+        }
+        if let mv = d["AdapterVoltage"] as? Int, mv > 0 { info.voltageMv = mv }
+        if let ma = d["Current"] as? Int, ma > 0 { info.currentMa = ma }
+
+        // USB-PD adapters advertise their supported profiles; the best one is the
+        // ceiling this adapter could deliver over an unrestricted cable.
+        if let menu = d["UsbHvcMenu"] as? [[String: Any]] {
+            let best = menu.compactMap { profile -> Int? in
+                guard let mv = profile["MaxVoltage"] as? Int,
+                      let ma = profile["MaxCurrent"] as? Int, mv > 0, ma > 0
+                else { return nil }
+                return Int((Double(mv) * Double(ma) / 1_000_000).rounded())
+            }.max()
+            if let best, best > 0 { info.maxAvailableWatts = best }
+        }
+
+        return info
+    }
+
+    private static func nonEmpty(_ s: String?) -> String? {
+        guard let s, !s.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        return s
     }
 
     /// Interpret raw amperage as signed milliamps: IOKit sometimes returns a negative

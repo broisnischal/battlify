@@ -18,14 +18,19 @@ public struct HotkeyModifiers: OptionSet, Codable, Hashable, Sendable {
     public static let qualifying: HotkeyModifiers = [.command, .option, .control]
 
     /// macOS renders modifiers in a fixed order regardless of press order: ⌃⌥⇧⌘.
-    public var symbols: String {
-        var s = ""
-        if contains(.control) { s += "⌃" }
-        if contains(.option)  { s += "⌥" }
-        if contains(.shift)   { s += "⇧" }
-        if contains(.command) { s += "⌘" }
-        return s
+    /// One glyph per element so a view can space them out — set solid they read as
+    /// a single dense blob at small sizes.
+    public var glyphs: [String] {
+        var g: [String] = []
+        if contains(.control) { g.append("⌃") }
+        if contains(.option)  { g.append("⌥") }
+        if contains(.shift)   { g.append("⇧") }
+        if contains(.command) { g.append("⌘") }
+        return g
     }
+
+    /// The glyphs run together, for plain-text contexts (menus, help, warnings).
+    public var symbols: String { glyphs.joined() }
 }
 
 /// A global keyboard shortcut: a virtual key code plus modifier flags.
@@ -41,6 +46,17 @@ public struct Hotkey: Codable, Hashable, Sendable {
     /// A shortcut with no ⌃/⌥/⌘ would intercept ordinary typing system-wide, so it's
     /// rejected at the recorder rather than registered and mysteriously eaten.
     public var isValid: Bool { !modifiers.isDisjoint(with: .qualifying) }
+
+    /// True for chords built only from ⌘ and ⇧, like ⌘D or ⇧⌘D.
+    ///
+    /// Those are valid to register and useless in practice: a global grab happens before the
+    /// frontmost app sees the keystroke, so binding ⌘D swallows Duplicate everywhere, and
+    /// ⇧⌘D swallows Send in Mail. ⌃ or ⌥ in the chord is what keeps it out of the range
+    /// ordinary app shortcuts live in. Reported rather than rejected: it's the user's
+    /// keyboard, but it should be a deliberate choice.
+    public var collidesWithAppShortcuts: Bool {
+        modifiers.isDisjoint(with: [.control, .option])
+    }
 
     /// "⌃⌥⌘C" — what the settings row and menu hints show.
     public var displayString: String { modifiers.symbols + Hotkey.keyName(keyCode) }
@@ -87,13 +103,23 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
     case cycleSaveMode
     case toggleLowPowerMode
     case toggleDischarge
+    case toggleHoldCharge
 
     // Sleep & display
     case toggleCaffeine
     case toggleKeepAwake
     case toggleDimDisplay
+    case brightnessUp
+    case brightnessDown
     case displayOff
     case sleepNow
+
+    // Power & radios
+    case toggleRest
+    case cycleIconStyle
+    case toggleEndurance
+    case toggleWiFi
+    case toggleBluetooth
 
     // Windows
     case openSettings
@@ -111,9 +137,17 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .cycleSaveMode:       return "Cycle save mode"
         case .toggleLowPowerMode:  return "Toggle Low Power Mode"
         case .toggleDischarge:     return "Toggle force discharge"
+        case .toggleHoldCharge:    return "Toggle don't-charge"
         case .toggleCaffeine:      return "Toggle Caffeine"
         case .toggleKeepAwake:     return "Toggle Always Active"
         case .toggleDimDisplay:    return "Dim / restore display"
+        case .brightnessUp:        return "Brightness up"
+        case .brightnessDown:      return "Brightness down"
+        case .toggleRest:          return "Rest / wake the Mac"
+        case .cycleIconStyle:      return "Next menu-bar icon style"
+        case .toggleEndurance:     return "Toggle battery saver"
+        case .toggleWiFi:          return "Toggle Wi-Fi"
+        case .toggleBluetooth:     return "Toggle Bluetooth"
         case .displayOff:          return "Turn display off"
         case .sleepNow:            return "Sleep now"
         case .openSettings:        return "Open Settings"
@@ -131,9 +165,17 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .cycleSaveMode:       return "Off → Normal → Super Saver → Off."
         case .toggleLowPowerMode:  return "The system Low Power Mode setting."
         case .toggleDischarge:     return "Run off the battery while plugged in. Needs adapter control."
+        case .toggleHoldCharge:    return "Stay plugged in without charging — the battery holds where it is."
         case .toggleCaffeine:      return "Keep the Mac awake — display and system won't sleep."
         case .toggleKeepAwake:     return "Keep working with the lid closed (AC only)."
         case .toggleDimDisplay:    return "Drop to 20% brightness, or back to where it was."
+        case .brightnessUp:        return "Raise the built-in display by 10%."
+        case .brightnessDown:      return "Lower the built-in display by 10% — the cheapest watts you can save."
+        case .toggleRest:          return "Screen off and settings held, without closing the lid — any key wakes it."
+        case .cycleIconStyle:      return "Cycle through the battery glyphs in the menu bar."
+        case .toggleEndurance:     return "Turn Endurance on or off: dimmer screen, Low Power Mode, trimmed background wake."
+        case .toggleWiFi:          return "Turn Wi-Fi on or off."
+        case .toggleBluetooth:     return "Turn Bluetooth on or off."
         case .displayOff:          return "Sleep the display now; the Mac stays awake."
         case .sleepNow:            return "Put the Mac to sleep."
         case .openSettings:        return ""
@@ -152,9 +194,17 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .cycleSaveMode:       return "gauge"
         case .toggleLowPowerMode:  return "batteryLow"
         case .toggleDischarge:     return "bolt"
+        case .toggleHoldCharge:    return "plug"
         case .toggleCaffeine:      return "coffee"
         case .toggleKeepAwake:     return "eye"
         case .toggleDimDisplay:    return "sunLow"
+        case .brightnessUp:        return "sun"
+        case .brightnessDown:      return "sunLow"
+        case .toggleRest:          return "sleep"
+        case .cycleIconStyle:      return "battery"
+        case .toggleEndurance:     return "heart"
+        case .toggleWiFi:          return "wifi"
+        case .toggleBluetooth:     return "bluetooth"
         case .displayOff:          return "moon"
         case .sleepNow:            return "sleep"
         case .openSettings:        return "settings"
@@ -164,12 +214,13 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
     }
 
     public enum Category: String, CaseIterable, Identifiable, Sendable {
-        case charging, sleep, windows
+        case charging, sleep, radios, windows
         public var id: String { rawValue }
         public var title: String {
             switch self {
             case .charging: return "Charging"
             case .sleep:    return "Sleep & Display"
+            case .radios:   return "Wi-Fi & Bluetooth"
             case .windows:  return "Windows"
             }
         }
@@ -178,10 +229,16 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
     public var category: Category {
         switch self {
         case .toggleChargeLimit, .chargeLimitUp, .chargeLimitDown, .togglePauseCharging,
-             .cycleSaveMode, .toggleLowPowerMode, .toggleDischarge:
+             .cycleSaveMode, .toggleLowPowerMode, .toggleDischarge, .toggleHoldCharge,
+             .toggleEndurance:
             return .charging
-        case .toggleCaffeine, .toggleKeepAwake, .toggleDimDisplay, .displayOff, .sleepNow:
+        case .toggleCaffeine, .toggleKeepAwake, .toggleDimDisplay, .displayOff, .sleepNow,
+             .brightnessUp, .brightnessDown, .toggleRest:
             return .sleep
+        case .toggleWiFi, .toggleBluetooth:
+            return .radios
+        case .cycleIconStyle:
+            return .windows
         case .openSettings, .openDetails, .openHistory:
             return .windows
         }
@@ -212,6 +269,16 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .toggleKeepAwake:     return Hotkey(keyCode: 40, modifiers: base)  // K
         case .toggleDimDisplay:    return Hotkey(keyCode: 2, modifiers: base)   // D
         case .openSettings:        return Hotkey(keyCode: 1, modifiers: base)   // S
+        case .toggleHoldCharge:    return Hotkey(keyCode: 4, modifiers: base)   // H
+        case .brightnessUp:        return Hotkey(keyCode: 30, modifiers: base)  // ]
+        case .brightnessDown:      return Hotkey(keyCode: 33, modifiers: base)  // [
+        case .toggleEndurance:     return Hotkey(keyCode: 14, modifiers: base)  // E
+        case .toggleRest:          return Hotkey(keyCode: 15, modifiers: base)  // R
+        case .cycleIconStyle:      return Hotkey(keyCode: 34, modifiers: base)  // I
+        // Unbound on purpose: cutting Wi-Fi or Bluetooth by a mistyped chord is the kind
+        // of surprise a shortcut should never spring on you.
+        case .toggleWiFi, .toggleBluetooth:
+            return nil
         case .displayOff, .sleepNow, .toggleDischarge, .openDetails, .openHistory:
             return nil
         }

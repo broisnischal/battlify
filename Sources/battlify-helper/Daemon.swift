@@ -12,6 +12,7 @@ import BattlifyKit
 final class Daemon: @unchecked Sendable {
     private let smc = SMC()
     private let charge: ChargeController
+    private let fans: FanController
     private let lock = NSLock()
 
     // History sampling. Timed rather than counted in ticks, because the tick rate
@@ -39,6 +40,10 @@ final class Daemon: @unchecked Sendable {
     // Post-wake settle: a tick gap ≫ interval implies we slept; hold charging + LED off briefly.
     private var lastTickAt: Date?
     private var settleUntil: Date?
+    /// Our own sleep/wake hook, so the pre-sleep charge cut doesn't depend on the GUI.
+    private let sleepWatcher = SleepWatcher()
+    /// Held so the tick loop can notice the control socket being taken from under us.
+    private var controlServer: ControlServer?
     /// What the run loop waits after the current tick; `nextInterval` sets it from
     /// `TickPolicy`, which is where the reasoning about cadence lives.
     private var tickInterval = TickPolicy.active
@@ -54,6 +59,10 @@ final class Daemon: @unchecked Sendable {
     // "Always Active" state; nil disablesleep = not yet written, so we pmset only on change.
     private var keepAwakeAssertion: IOPMAssertionID = 0
     private var lastDisableSleep: Bool?
+    // Last scheduled-window verdict, so a window opening or closing is logged once.
+    private var lastKeepAwakeArmed = false
+    /// Last hold state the LED reacted to, so the engage blink fires once per change.
+    private var lastHoldForLed = false
     // Force display off once per lid-closed spell while keep-awake holds; resets when the lid opens.
     private var displayForcedOffWhileClosed = false
 
@@ -80,6 +89,7 @@ final class Daemon: @unchecked Sendable {
 
     init() {
         charge = ChargeController(smc: smc)
+        fans = FanController(smc: smc)
     }
 
     static func run() {
@@ -102,6 +112,14 @@ final class Daemon: @unchecked Sendable {
             self?.handle(req) ?? Self.failureResponse()
         }
         server.start()
+        controlServer = server
+
+        // Our own sleep hook. Enforcement stops dead while the Mac is asleep, so the
+        // last thing we tell the SMC has to be safe — and we can't rely on the GUI to
+        // ask for that, since it may not be running.
+        sleepWatcher.onWillSleep = { [weak self] in self?.cutChargingForSleep() }
+        sleepWatcher.onDidWake = { [weak self] in self?.reevaluateAfterWake() }
+        sleepWatcher.start()
 
         log("daemon started (scheme: \(charge.schemeDescription))")
 
@@ -110,6 +128,13 @@ final class Daemon: @unchecked Sendable {
             tick()
             let wait = tickInterval
             lock.unlock()
+            // A daemon nobody can reach is worse than no daemon: the app blocks on a socket
+            // that will never answer, and launchd sees a healthy job. Exiting lets launchd
+            // start one that binds the path properly.
+            if let controlServer, !controlServer.ownsSocketPath {
+                err("another instance took the control socket; exiting so launchd restarts us")
+                exit(6)
+            }
             Thread.sleep(forTimeInterval: wait)
         }
     }
@@ -168,15 +193,20 @@ final class Daemon: @unchecked Sendable {
             catch { return status(ok: false, message: "save failed: \(error)") }
 
         case .prepareForSleep:
-            // Cut charging before sleep so macOS can't top up while the daemon is
-            // frozen; the SMC inhibit persists through sleep, re-evaluated on wake.
-            let cfg = ConfigStore.load()
-            if cfg.disableChargingBeforeSleep && cfg.chargeLimitEnabled {
-                try? charge.disableCharging()
-                lastPauseReason = "sleep"
-                return status(ok: true, message: "charging cut for sleep")
+            // The GUI asking for what the daemon now also does for itself. Kept so an
+            // older app build still gets the cut, and because the app sees lid-close
+            // sleeps the daemon's hook and this can race — both paths are idempotent.
+            return status(ok: cutChargingForSleepLocked(), message: "sleep handled")
+
+        case .setFanMode(let mode):
+            var cfg = ConfigStore.load()
+            cfg.fanMode = mode
+            let applied = applyFanMode(mode)
+            do { try ConfigStore.save(cfg) } catch {
+                return status(ok: false, message: "fans set but save failed: \(error)")
             }
-            return status(ok: true, message: "no-op")
+            return status(ok: applied,
+                          message: applied ? "fans set" : "the SMC refused the fan write")
 
         case .calibrateToFull(let on):
             var cfg = ConfigStore.load()
@@ -245,6 +275,9 @@ final class Daemon: @unchecked Sendable {
             magSafeSupported: charge.isMagSafeSupported,
             dischargeSupported: charge.isAdapterControlSupported,
             discharging: charge.isAdapterControlSupported && !((try? charge.isAdapterEnabled()) ?? true),
+            fans: fans.readAll(),
+            fanControlSupported: fans.controlSupported,
+            sensors: SensorReader.readAll(),
             message: message
         )
     }
@@ -287,6 +320,17 @@ final class Daemon: @unchecked Sendable {
         }
         let paused = cfg.pauseUntil != nil
 
+        // A keep-awake timer that has run out clears the toggle too, so the GUI shows
+        // "off" rather than an on switch that no longer holds anything. Written back
+        // here (not just evaluated) because the deadline may have passed while the Mac
+        // was asleep, or with no GUI running at all.
+        if let until = cfg.keepAwakeUntil, now >= until {
+            cfg.keepAwakeUntil = nil
+            cfg.keepAwake = false
+            try? ConfigStore.save(cfg)
+            log("keep-awake timer elapsed; Always Active turned off")
+        }
+
         // One-shot calibration ends the moment the battery reaches full.
         if cfg.calibrateToFull && (snap.isFullyCharged || level >= 100) {
             cfg.calibrateToFull = false
@@ -309,6 +353,11 @@ final class Daemon: @unchecked Sendable {
         if paused {
             // pause overrides everything
             desired = false; reason = "paused"
+        } else if cfg.holdCharge && snap.onExternalPower {
+            // "Don't charge while plugged in": hold the level wherever it is. Sits above
+            // the limit, schedules and top-ups on purpose — it's the switch you reach for
+            // when you want the battery left alone, and it shouldn't be second-guessed.
+            desired = false; reason = "hold"
         } else if settling {
             desired = false; reason = "settling"
         } else if let s = activeSchedule, s.action == .hold || s.action == .discharge {
@@ -360,6 +409,7 @@ final class Daemon: @unchecked Sendable {
         lastPauseReason = desired ? (enable ? nil : "slow") : reason
         ensure(enabled: enable, current: charging)
         manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
+        updateFans(cfg, snap)
         updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
@@ -426,14 +476,121 @@ final class Daemon: @unchecked Sendable {
         return Double(minutesUntil) <= minutesNeeded
     }
 
+    // MARK: - Fans
+
+    /// Keep the fans in the state the config asks for.
+    ///
+    /// Nothing is written unless the user has asked for a manual speed, and a refusal is
+    /// final.
+    ///
+    /// The first version of this re-asserted every tick and logged on every failure, which on
+    /// a Mac that refuses fan writes — an M3 Pro on macOS 26 refuses all of them — meant a
+    /// line of log spam every few seconds and a pointless SMC write behind it. It also read
+    /// `F<i>Md != 0` as "forced", which is wrong: that machine reports 3 with macOS plainly
+    /// in charge, so the daemon believed the fans were stuck and fought a controller that was
+    /// never there. Both are why the fans appeared to stutter on and off.
+    ///
+    /// So: auto writes nothing at all. Manual tries, and if the SMC says no, `FanController`
+    /// latches that and every later attempt is skipped.
+    private func updateFans(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+        guard fans.controlSupported else { return }
+        guard case .manual(let percent) = cfg.fanMode else { return }
+
+        // Heat wins over the setting: a manual speed below what the machine needs is the one
+        // way this feature can do damage.
+        if cfg.fanAutoAboveTempC > 0, let temperature = snap.temperature,
+           temperature >= cfg.fanAutoAboveTempC {
+            if fans.restoreAuto() {
+                log("fans handed back to macOS: \(String(format: "%.1f", temperature))°C ≥ guard \(cfg.fanAutoAboveTempC)°C")
+            }
+            return
+        }
+
+        // Re-assert only when the hardware has drifted from what was asked for; writing every
+        // tick would be SMC traffic for nothing.
+        let drifted = fans.readAll().contains { reading in
+            let span = reading.maximum - reading.minimum
+            let wanted = reading.minimum + span * Double(min(100, max(0, percent))) / 100
+            return abs(reading.target - wanted) > 50
+        }
+        guard drifted else { return }
+        if fans.setManual(percent: percent) {
+            log("fans held at \(percent)%")
+        } else {
+            err("this Mac refuses fan writes; leaving the fans to macOS")
+        }
+    }
+
+    /// Apply a mode immediately, for the control request.
+    @discardableResult
+    private func applyFanMode(_ mode: FanMode) -> Bool {
+        guard fans.isSupported else { return false }
+        switch mode {
+        case .auto: return fans.restoreAuto()
+        case .manual(let percent): return fans.setManual(percent: percent)
+        }
+    }
+
+    // MARK: - Sleep / wake
+
+    /// Cut charging on the way into sleep, so the battery can't cross the limit while
+    /// nothing is watching. Called from the watcher's thread — takes the same lock the
+    /// tick loop uses, because both talk to the SMC.
+    private func cutChargingForSleep() {
+        lock.lock()
+        defer { lock.unlock() }
+        _ = cutChargingForSleepLocked()
+    }
+
+    /// The cut itself. Applies whenever a limit is being enforced, not only when the
+    /// "stop charging before sleep" option is on: the limit exists precisely to keep the
+    /// battery off full, and the daemon is frozen through sleep, so leaving charging
+    /// enabled hands macOS an unsupervised run to 100%. Charge still creeps up towards
+    /// the limit during the maintenance wakes macOS takes anyway, since the tick runs
+    /// then and re-enables while below the resume threshold.
+    ///
+    /// Caller must hold `lock`. Returns whether anything was cut.
+    private func cutChargingForSleepLocked() -> Bool {
+        let cfg = ConfigStore.load()
+        guard cfg.chargeLimitEnabled || cfg.disableChargingBeforeSleep else { return false }
+        // Charging past the limit is only possible when it's allowed right now.
+        guard ((try? charge.isChargingEnabled()) ?? true) else { return true }
+        do {
+            try charge.disableCharging()
+            lastPauseReason = "sleep"
+            log("charging cut for sleep (limit \(cfg.chargeLimit)%)")
+            return true
+        } catch {
+            err("failed to cut charging for sleep: \(error)")
+            return false
+        }
+    }
+
+    /// Re-enforce as soon as the Mac is back, rather than waiting out the tick interval
+    /// — the wake itself may be the moment the adapter starts pushing charge again.
+    private func reevaluateAfterWake() {
+        lock.lock()
+        defer { lock.unlock() }
+        settleUntil = Date().addingTimeInterval(wakeSettleDuration)
+        tick()
+    }
+
     /// "Always Active": keep the Mac awake with the lid closed. `pmset disablesleep`
     /// is the only thing that prevents clamshell sleep, paired with a PreventSystemSleep
     /// assertion for idle sleep. It doesn't survive a reboot, so the first tick re-applies
     /// it (`lastDisableSleep` starts nil).
     private func updateKeepAwake(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+        // `keepAwakeArmed` folds in the timetable and any auto-off timer, so a window
+        // closing releases the hold on the next tick without the user touching anything.
+        let armed = cfg.keepAwakeArmed()
+        if armed != lastKeepAwakeArmed, !cfg.keepAwakeSchedules.filter(\.enabled).isEmpty {
+            log("keep-awake schedule window \(armed ? "opened" : "closed")")
+        }
+        lastKeepAwakeArmed = armed
+
         // AC by default (onExternalPower survives force-discharge but releases on a real
         // unplug); keepAwakeOnBattery opts out, guarded by the thermal limit below.
-        var want = cfg.keepAwake && (cfg.keepAwakeOnBattery || snap.onExternalPower)
+        var want = armed && (cfg.keepAwakeOnBattery || snap.onExternalPower)
 
         // Task-gated: only hold while a matching task runs, so the Mac sleeps when work finishes.
         let taskGated = want && cfg.keepAwakeRequiresTask
@@ -569,8 +726,30 @@ final class Daemon: @unchecked Sendable {
         case .status:
             if settling { target = .off }               // waiting after wake
             else if !snap.onExternalPower { target = .system }  // truly unplugged
+            // Hold gets green, not amber: amber is what charging looks like, so using it
+            // for "deliberately not charging" made the two states identical — the light
+            // said nothing. The SMC offers only off, green and amber, so green (already
+            // the app's "holding" colour) is the one that distinguishes it. The moment
+            // hold engages there's a short blink below, so the change is noticeable
+            // rather than something you'd have to be watching for.
+            else if cfg.holdCharge { target = .green }
             else if desired { target = .orange }        // charging
             else { target = .green }                    // holding / discharging to limit
+        }
+
+        // Announce the moment hold engages: three quick amber/off blinks, then settle on
+        // the steady colour. One-off and only on the transition — a light that blinks
+        // forever is a fault indicator, not a status.
+        if cfg.magSafeLedMode == .status, cfg.holdCharge != lastHoldForLed {
+            lastHoldForLed = cfg.holdCharge
+            if cfg.holdCharge, snap.onExternalPower {
+                for _ in 0..<3 {
+                    try? charge.setMagSafeLED(.off)
+                    usleep(120_000)
+                    try? charge.setMagSafeLED(.orange)
+                    usleep(120_000)
+                }
+            }
         }
 
         // Re-assert on drift (macOS re-manages the LED); a cache would miss it and leave the light wrong.
@@ -628,6 +807,9 @@ final class Daemon: @unchecked Sendable {
     /// (Uninstall re-enables explicitly, after unloading this daemon.)
     private func performCleanupAndExit() -> Never {
         lock.lock()   // hold through exit; serialize SMC access with tick()
+        // Forced fans outlive this process, so leaving them forced on the way out is exactly
+        // how a Mac ends up pinned at full speed by software that no longer exists.
+        if fans.controlSupported { fans.restoreAuto() }
         PowerSettings.setDisableSleep(false)
         if ConfigStore.load().chargeLimitEnabled {
             try? charge.disableCharging()

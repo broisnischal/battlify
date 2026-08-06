@@ -2,23 +2,42 @@ import Foundation
 import Combine
 import IOKit.pwr_mgt
 
+/// How far a keep-awake hold reaches.
+public enum KeepAwakeHold: String, Sendable, Equatable {
+    /// The screen stays lit too (what `caffeinate -d` holds).
+    case displayOn
+    /// Work keeps running but the screen may sleep (`caffeinate -i`). On battery this
+    /// is the difference between several watts and a few tenths of one.
+    case systemOnly
+
+    public var title: String {
+        switch self {
+        case .displayOn:  return "Screen stays on"
+        case .systemOnly: return "Tasks keep running, screen may sleep"
+        }
+    }
+}
+
 /// The OS "keep awake" primitive, abstracted so `CaffeineManager` can be unit-tested
 /// without touching IOKit.
 public protocol KeepAwakeAsserting: Sendable {
     /// Acquire a hold that stops idle-sleep. Returns a non-zero token, or 0 on failure.
-    func acquire(reason: String) -> UInt32
+    func acquire(kind: KeepAwakeHold, reason: String) -> UInt32
     func release(_ token: UInt32)
 }
 
-/// Real backend: a `PreventUserIdleDisplaySleep` assertion (what `caffeinate -d`
-/// holds). Needs no root; auto-released on process exit, so it can't strand the Mac awake.
+/// Real backend: an IOPM idle-sleep assertion, display-wide or system-only. Needs no
+/// root; auto-released on process exit, so it can't strand the Mac awake.
 public struct IOKitKeepAwake: KeepAwakeAsserting {
     public init() {}
 
-    public func acquire(reason: String) -> UInt32 {
+    public func acquire(kind: KeepAwakeHold, reason: String) -> UInt32 {
         var id: IOPMAssertionID = 0
+        let type = kind == .displayOn
+            ? kIOPMAssertPreventUserIdleDisplaySleep
+            : kIOPMAssertPreventUserIdleSystemSleep
         let result = IOPMAssertionCreateWithName(
-            kIOPMAssertPreventUserIdleDisplaySleep as CFString,
+            type as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
             reason as CFString,
             &id)
@@ -38,6 +57,19 @@ public final class CaffeineManager: ObservableObject {
     @Published public private(set) var active = false
     /// When a timed session auto-releases (nil = indefinite or inactive).
     @Published public private(set) var expiresAt: Date?
+    /// What the live hold currently covers (nil = nothing held).
+    @Published public private(set) var hold: KeepAwakeHold?
+
+    /// Keep the screen lit on battery too. Off by default: an idle Mac with its display
+    /// on is the most expensive thing this app can do to a battery (several watts, so
+    /// percents per hour), while holding only the system awake still finishes the work
+    /// for almost nothing.
+    public private(set) var keepDisplayOnBattery = false
+    /// End the session outright when unplugged — for a Mac that should never lose charge
+    /// while left alone.
+    public private(set) var endOnBattery = false
+    /// Assume AC until the app says otherwise, so a hold is never silently weakened.
+    public private(set) var onExternalPower = true
 
     private let backend: KeepAwakeAsserting
     private let reason: String
@@ -92,8 +124,9 @@ public final class CaffeineManager: ObservableObject {
         expiryTask?.cancel(); expiryTask = nil
 
         if token == 0 {
-            token = backend.acquire(reason: reason)
-            guard token != 0 else { active = false; expiresAt = nil; return }
+            token = backend.acquire(kind: desiredHold, reason: reason)
+            guard token != 0 else { active = false; expiresAt = nil; hold = nil; return }
+            hold = desiredHold
         }
         active = true
 
@@ -113,6 +146,40 @@ public final class CaffeineManager: ObservableObject {
         if token != 0 { backend.release(token); token = 0 }
         active = false
         expiresAt = nil
+        hold = nil
+    }
+
+    /// Push the policy and the current power source in one idempotent call, so the app
+    /// can hand it over on every render instead of wiring up another observer.
+    public func applyPolicy(keepDisplayOnBattery: Bool,
+                            endOnBattery: Bool,
+                            onExternalPower: Bool) {
+        guard keepDisplayOnBattery != self.keepDisplayOnBattery
+                || endOnBattery != self.endOnBattery
+                || onExternalPower != self.onExternalPower else { return }
+        self.keepDisplayOnBattery = keepDisplayOnBattery
+        self.endOnBattery = endOnBattery
+        self.onExternalPower = onExternalPower
+        reconcileHold()
+    }
+
+    private var desiredHold: KeepAwakeHold {
+        (onExternalPower || keepDisplayOnBattery) ? .displayOn : .systemOnly
+    }
+
+    /// Bring the live hold in line with the policy: end the session on battery if asked,
+    /// otherwise swap the assertion for the right kind. The replacement is acquired
+    /// before the old one is released, so there's never a gap the display can sleep in,
+    /// and the expiry timer keeps running — the session continues, only its reach changes.
+    private func reconcileHold() {
+        guard active, token != 0 else { return }
+        if endOnBattery, !onExternalPower { deactivate(); return }
+        guard hold != desiredHold else { return }
+        let replacement = backend.acquire(kind: desiredHold, reason: reason)
+        guard replacement != 0 else { return }   // keep what we have if the swap fails
+        backend.release(token)
+        token = replacement
+        hold = desiredHold
     }
 
     deinit {

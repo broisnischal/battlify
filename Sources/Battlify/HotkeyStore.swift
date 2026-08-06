@@ -32,6 +32,8 @@ final class HotkeyStore: ObservableObject {
     private enum Keys {
         static let enabled = "hotkeys.enabled"
         static let bindings = "hotkeys.bindings"
+        /// Action ids this install has already been offered defaults for.
+        static let seeded = "hotkeys.seededActions"
     }
 
     // Weak: the app owns these for its whole lifetime, and a strong ref here would
@@ -39,6 +41,9 @@ final class HotkeyStore: ObservableObject {
     private weak var chargeLimit: ChargeLimitStore?
     private weak var caffeine: CaffeineManager?
     private weak var systemActions: SystemActions?
+    private weak var endurance: EnduranceStore?
+    private weak var idleSaver: IdleSaverStore?
+    private weak var settings: AppSettings?
     private weak var license: LicenseManager?
     /// SwiftUI's `openWindow` only exists inside a View, so it's injected.
     private var openWindow: ((String) -> Void)?
@@ -48,10 +53,13 @@ final class HotkeyStore: ObservableObject {
         if let data = defaults.data(forKey: Keys.bindings),
            let saved = try? JSONDecoder().decode(HotkeyBindings.self, from: data) {
             bindings = saved
+            repairDuplicates()
+            seedNewActions()
         } else {
             // First launch: ship the defaults rather than nothing, so the feature is
             // discoverable without a trip to Settings.
             bindings = .default
+            markAllSeeded()
         }
         monitor.onFire = { [weak self] action in self?.perform(action) }
     }
@@ -62,12 +70,18 @@ final class HotkeyStore: ObservableObject {
     func attach(chargeLimit: ChargeLimitStore,
                 caffeine: CaffeineManager,
                 systemActions: SystemActions,
+                endurance: EnduranceStore,
+                idleSaver: IdleSaverStore,
+                settings: AppSettings,
                 license: LicenseManager,
                 openWindow: @escaping (String) -> Void) {
         guard self.chargeLimit == nil else { return }
         self.chargeLimit = chargeLimit
         self.caffeine = caffeine
         self.systemActions = systemActions
+        self.endurance = endurance
+        self.idleSaver = idleSaver
+        self.settings = settings
         self.license = license
         self.openWindow = openWindow
         reregister()
@@ -105,6 +119,56 @@ final class HotkeyStore: ObservableObject {
         defaults.set(data, forKey: Keys.bindings)
     }
 
+    /// Drop shortcuts that two actions somehow share.
+    ///
+    /// Assigning through the recorder moves a taken combination rather than duplicating it,
+    /// but bindings saved by older builds can hold the same chord twice — and Carbon
+    /// registers exactly one of them, so the other silently never fires. There's no way to
+    /// tell which one the user meant, so the first in the canonical action order keeps it and
+    /// the rest are cleared: an obviously unbound action can be fixed in Settings, whereas a
+    /// bound-looking one that does nothing can't even be diagnosed.
+    private func repairDuplicates() {
+        var seen: [Hotkey: HotkeyAction] = [:]
+        var repaired = false
+        for action in HotkeyAction.allCases {
+            guard let hotkey = bindings.hotkey(for: action) else { continue }
+            if let owner = seen[hotkey], owner != action {
+                bindings.clear(action)
+                repaired = true
+            } else {
+                seen[hotkey] = action
+            }
+        }
+        if repaired { persist() }
+    }
+
+    /// Give actions added by an update their default shortcut.
+    ///
+    /// Saved bindings were previously used exactly as stored, so every action added after a
+    /// user's first launch arrived unbound — the shortcut existed in Settings with "Not set"
+    /// beside it and nothing shipped it. Defaults are only applied to actions this install
+    /// has never seen, tracked by id: a shortcut the user deliberately cleared must stay
+    /// cleared, and re-seeding it on every launch would be worse than never seeding it.
+    private func seedNewActions() {
+        let seen = Set(defaults.stringArray(forKey: Keys.seeded) ?? [])
+        var seeded = false
+        for action in HotkeyAction.allCases where !seen.contains(action.id) {
+            guard let candidate = action.defaultHotkey,
+                  bindings.hotkey(for: action) == nil,
+                  // Never take a combination the user has already given to something else.
+                  bindings.action(for: candidate) == nil
+            else { continue }
+            _ = bindings.set(candidate, for: action)
+            seeded = true
+        }
+        markAllSeeded()
+        if seeded { persist() }
+    }
+
+    private func markAllSeeded() {
+        defaults.set(HotkeyAction.allCases.map(\.id), forKey: Keys.seeded)
+    }
+
     private func reregister() {
         monitor.apply(bindings, enabled: enabled)
         // Only publish a real change: `attach()` runs from a view body, and an
@@ -116,8 +180,14 @@ final class HotkeyStore: ObservableObject {
     // MARK: - Dispatch
 
     private func perform(_ action: HotkeyAction) {
+        // Every banner this action posts carries the action's own glyph — the same one
+        // its row shows in Settings › Shortcuts — so the icon says what fired before
+        // the text is read. Set once here rather than threaded through each handler.
+        hudIcon = action.icon
+
         if action.requiresPro, license?.isPro != true {
-            HotkeyHUD.shared.show("Battlify Pro", detail: "\(action.title) needs a licence.")
+            HotkeyHUD.shared.show("Battlify Pro", detail: "\(action.title) needs a licence.",
+                                  icon: "lock")
             return
         }
 
@@ -129,6 +199,25 @@ final class HotkeyStore: ObservableObject {
         case .cycleSaveMode:       cycleSaveMode()
         case .toggleLowPowerMode:  toggleLowPowerMode()
         case .toggleDischarge:     toggleDischarge()
+        case .toggleHoldCharge:    toggleHoldCharge()
+        case .toggleEndurance:     toggleEndurance()
+        case .toggleRest:          toggleRest()
+        case .cycleIconStyle:      cycleIconStyle()
+        case .brightnessUp:        nudgeBrightness(by: 0.1)
+        case .brightnessDown:      nudgeBrightness(by: -0.1)
+
+        case .toggleWiFi:
+            let next = !RadioControl.isWiFiOn
+            guard RadioControl.setWiFi(next) else {
+                hud("Wi-Fi Unchanged", detail: "macOS refused the change.", icon: "alert")
+                return
+            }
+            hud(next ? "Wi-Fi On" : "Wi-Fi Off")
+
+        case .toggleBluetooth:
+            let next = !RadioControl.isBluetoothOn
+            RadioControl.setBluetooth(next)
+            hud(next ? "Bluetooth On" : "Bluetooth Off")
 
         case .toggleCaffeine:
             guard let caffeine else { return }
@@ -166,7 +255,8 @@ final class HotkeyStore: ObservableObject {
         guard let chargeLimit else { return nil }
         guard chargeLimit.daemonAvailable else {
             HotkeyHUD.shared.show("Helper Not Running",
-                                  detail: "Install it in Settings › General.")
+                                  detail: "Install it in Settings › General.",
+                                  icon: "alert")
             return nil
         }
         return chargeLimit
@@ -226,7 +316,7 @@ final class HotkeyStore: ObservableObject {
     private func toggleDischarge() {
         guard let charge = requireDaemon() else { return }
         guard charge.dischargeSupported else {
-            hud("Not Supported", detail: "This Mac has no adapter control.")
+            hud("Not Supported", detail: "This Mac has no adapter control.", icon: "alert")
             return
         }
         charge.dischargeEnabled.toggle()
@@ -235,12 +325,69 @@ final class HotkeyStore: ObservableObject {
             detail: charge.dischargeEnabled ? "Running off the battery while plugged in" : nil)
     }
 
+    private func toggleHoldCharge() {
+        guard let charge = requireDaemon() else { return }
+        charge.holdCharge.toggle()
+        charge.apply()
+        hud(charge.holdCharge ? "Don't Charge On" : "Don't Charge Off",
+            detail: charge.holdCharge ? "Plugged in, battery held where it is" : nil)
+    }
+
+    /// Brightness in 10% steps, reported as a percentage so the HUD says what happened
+    /// even when the change is at the top or bottom of the range.
+    private func nudgeBrightness(by delta: Float) {
+        guard BrightnessControl.isSupported, let current = BrightnessControl.current() else {
+            hud("Not Supported", detail: "This Mac's display brightness isn't controllable.",
+                icon: "alert")
+            return
+        }
+        let next = min(1, max(0, current + delta))
+        guard BrightnessControl.set(next) else {
+            hud("Brightness Unchanged", detail: "macOS refused the change.", icon: "alert")
+            return
+        }
+        hud("Brightness \(Int((next * 100).rounded()))%")
+    }
+
+    private func toggleRest() {
+        guard let idleSaver else { hud("Resting Unavailable", icon: "alert"); return }
+        if idleSaver.resting {
+            idleSaver.wake()
+            hud("Awake")
+        } else {
+            // The HUD has to be up before the screen goes dark, or it's a banner nobody sees.
+            hud("Resting", detail: "Screen off, settings held — press any key to come back")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { idleSaver.restNow() }
+        }
+    }
+
+    private func cycleIconStyle() {
+        guard let settings else { hud("Style Unavailable", icon: "alert"); return }
+        let all = BatteryIconStyle.allCases
+        let next = all[((all.firstIndex(of: settings.batteryIconStyle) ?? 0) + 1) % all.count]
+        settings.batteryIconStyle = next
+        hud("Icon: \(next.displayName)")
+    }
+
+    private func toggleEndurance() {
+        guard let endurance else {
+            hud("Battery Saver Unavailable", icon: "alert")
+            return
+        }
+        endurance.toggle()
+        hud(endurance.active ? "Battery Saver On" : "Battery Saver Off",
+            detail: endurance.active ? "Dimmed, Low Power Mode, less background wake" : nil)
+    }
+
     private func open(_ id: String) {
         NSApplication.shared.activate(ignoringOtherApps: true)
         openWindow?(id)
     }
 
-    private func hud(_ title: String, detail: String? = nil) {
-        HotkeyHUD.shared.show(title, detail: detail)
+    /// The glyph for the action being performed, so handlers don't each have to pass one.
+    private var hudIcon: String?
+
+    private func hud(_ title: String, detail: String? = nil, icon: String? = nil) {
+        HotkeyHUD.shared.show(title, detail: detail, icon: icon ?? hudIcon)
     }
 }

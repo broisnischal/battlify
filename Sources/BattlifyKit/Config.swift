@@ -68,8 +68,22 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// Legacy LED flag, kept for older daemon/GUI compat; `magSafeLedMode` is authoritative.
     public var magSafeLedEnabled: Bool
     public var magSafeLedMode: MagSafeLEDMode
+    /// What the fans should do: macOS's own curve, or held at a percentage of their range.
+    /// Forced mode survives quit, logout and reboot, so this is also the record the daemon
+    /// uses to notice fans left forced by a build that no longer exists and hand them back.
+    public var fanMode: FanMode
+    /// Hand the fans back to macOS at or above this °C, whatever `fanMode` says. A manual
+    /// speed below what the machine needs is the one way this feature can do harm.
+    /// 0 disables the guard.
+    public var fanAutoAboveTempC: Double
+
     /// Force-discharge (run off battery while plugged) to bring the level down to the limit.
     public var dischargeEnabled: Bool
+    /// "Don't charge while plugged in": run the Mac off the adapter and leave the battery
+    /// exactly where it is, whatever the level or the limit. Overrides everything except
+    /// an explicit pause — a level of hold no other setting expresses, since the limit
+    /// still charges *up to* its ceiling and a schedule only holds inside its window.
+    public var holdCharge: Bool
     /// Cut charging before sleep so macOS can't top up past the limit while the daemon is frozen.
     public var disableChargingBeforeSleep: Bool
     /// Hold a power assertion (while plugged) so idle-sleep can't interrupt limit enforcement.
@@ -94,6 +108,14 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// matching task finishes (instead of only releasing the hold and waiting for
     /// idle sleep). Lets an overnight build/download finish and then sleep right away.
     public var sleepWhenTaskDone: Bool
+    /// Recurring windows that switch keep-awake on and off on a weekly timetable.
+    /// While at least one is enabled, keep-awake holds only inside a window; with none
+    /// enabled the `keepAwake` toggle alone decides.
+    public var keepAwakeSchedules: [AwakeSchedule]
+    /// Auto-off deadline for keep-awake ("keep awake for 2 hours"). Once it passes the
+    /// daemon clears this *and* `keepAwake`, so the Mac can't be stranded awake by a
+    /// timer nobody is watching. nil = no timer.
+    public var keepAwakeUntil: Date?
 
     /// Recurring charging windows (charge/hold/discharge on a weekly timetable).
     public var schedules: [ChargeSchedule]
@@ -122,6 +144,9 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 magSafeLedEnabled: Bool = false,
                 magSafeLedMode: MagSafeLEDMode? = nil,
                 dischargeEnabled: Bool = false,
+                holdCharge: Bool = false,
+                fanMode: FanMode = .auto,
+                fanAutoAboveTempC: Double = 85,
                 disableChargingBeforeSleep: Bool = false,
                 preventIdleSleep: Bool = false,
                 keepAwake: Bool = false,
@@ -131,6 +156,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 keepAwakeMinCpu: Double = 0,
                 keepAwakeMaxTempC: Double = 0,
                 sleepWhenTaskDone: Bool = false,
+                keepAwakeSchedules: [AwakeSchedule] = [],
+                keepAwakeUntil: Date? = nil,
                 schedules: [ChargeSchedule] = [],
                 readyBy: ReadyByTarget = ReadyByTarget(),
                 slowCharge: Bool = false,
@@ -149,6 +176,9 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         // in `init(from:)`.
         self.magSafeLedMode = magSafeLedMode ?? .status
         self.dischargeEnabled = dischargeEnabled
+        self.holdCharge = holdCharge
+        self.fanMode = fanMode
+        self.fanAutoAboveTempC = fanAutoAboveTempC
         self.disableChargingBeforeSleep = disableChargingBeforeSleep
         self.preventIdleSleep = preventIdleSleep
         self.keepAwake = keepAwake
@@ -158,6 +188,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.keepAwakeMinCpu = keepAwakeMinCpu
         self.keepAwakeMaxTempC = keepAwakeMaxTempC
         self.sleepWhenTaskDone = sleepWhenTaskDone
+        self.keepAwakeSchedules = keepAwakeSchedules
+        self.keepAwakeUntil = keepAwakeUntil
         self.schedules = schedules
         self.readyBy = readyBy
         self.slowCharge = slowCharge
@@ -183,6 +215,9 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         magSafeLedMode = try c.decodeIfPresent(MagSafeLEDMode.self, forKey: .magSafeLedMode)
             ?? (magSafeLedEnabled ? .status : .system)
         dischargeEnabled = try c.decodeIfPresent(Bool.self, forKey: .dischargeEnabled) ?? false
+        holdCharge = try c.decodeIfPresent(Bool.self, forKey: .holdCharge) ?? false
+        fanMode = try c.decodeIfPresent(FanMode.self, forKey: .fanMode) ?? .auto
+        fanAutoAboveTempC = try c.decodeIfPresent(Double.self, forKey: .fanAutoAboveTempC) ?? 85
         disableChargingBeforeSleep = try c.decodeIfPresent(Bool.self, forKey: .disableChargingBeforeSleep) ?? false
         preventIdleSleep = try c.decodeIfPresent(Bool.self, forKey: .preventIdleSleep) ?? false
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false
@@ -192,6 +227,8 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         keepAwakeMinCpu = try c.decodeIfPresent(Double.self, forKey: .keepAwakeMinCpu) ?? 0
         keepAwakeMaxTempC = try c.decodeIfPresent(Double.self, forKey: .keepAwakeMaxTempC) ?? 0
         sleepWhenTaskDone = try c.decodeIfPresent(Bool.self, forKey: .sleepWhenTaskDone) ?? false
+        keepAwakeSchedules = try c.decodeIfPresent([AwakeSchedule].self, forKey: .keepAwakeSchedules) ?? []
+        keepAwakeUntil = try c.decodeIfPresent(Date.self, forKey: .keepAwakeUntil)
         schedules = try c.decodeIfPresent([ChargeSchedule].self, forKey: .schedules) ?? []
         readyBy = try c.decodeIfPresent(ReadyByTarget.self, forKey: .readyBy) ?? ReadyByTarget()
         slowCharge = try c.decodeIfPresent(Bool.self, forKey: .slowCharge) ?? false
@@ -205,6 +242,47 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         // Older configs may still carry fanBoost* keys from the removed fan-boost
         // feature; unknown keys are ignored, so they load fine.
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off
+    }
+
+    // MARK: - Keep-awake gating
+
+    /// The keep-awake timetable: true when a window is open now, or when there are no
+    /// enabled windows at all (then the toggle alone decides — having added no schedule
+    /// must not silently disable the feature).
+    ///
+    /// Static so the GUI can ask the same question of its own published values without
+    /// assembling a whole config, keeping one definition of "is a window open".
+    public static func keepAwakeWindowOpen(_ schedules: [AwakeSchedule],
+                                          at date: Date = Date(),
+                                          calendar: Calendar = .current) -> Bool {
+        let armed = schedules.filter(\.enabled)
+        return armed.isEmpty || armed.contains { $0.isActive(at: date, calendar: calendar) }
+    }
+
+    /// Whether "Always Active" should be holding right now, ignoring the power, task
+    /// and heat gates the daemon layers on top: the toggle is on, any auto-off timer
+    /// hasn't run out, and the timetable allows it.
+    public static func keepAwakeArmed(enabled: Bool,
+                                      until: Date?,
+                                      schedules: [AwakeSchedule],
+                                      at date: Date = Date(),
+                                      calendar: Calendar = .current) -> Bool {
+        guard enabled else { return false }
+        if let until, date >= until { return false }
+        return keepAwakeWindowOpen(schedules, at: date, calendar: calendar)
+    }
+
+    public func keepAwakeWindowOpen(at date: Date = Date(),
+                                    calendar: Calendar = .current) -> Bool {
+        Self.keepAwakeWindowOpen(keepAwakeSchedules, at: date, calendar: calendar)
+    }
+
+    /// Used by the daemon each tick, and by the GUI so the menu bar and the clamshell
+    /// display saver agree with what is actually being enforced.
+    public func keepAwakeArmed(at date: Date = Date(),
+                               calendar: Calendar = .current) -> Bool {
+        Self.keepAwakeArmed(enabled: keepAwake, until: keepAwakeUntil,
+                            schedules: keepAwakeSchedules, at: date, calendar: calendar)
     }
 }
 

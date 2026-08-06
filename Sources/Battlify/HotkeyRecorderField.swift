@@ -50,16 +50,14 @@ struct HotkeyRecorderField: View {
             needsModifier = false
             isRecording ? onCancel() : onBegin()
         } label: {
-            Text(label)
-                .font(.system(size: 12, weight: hotkey == nil ? .regular : .medium,
-                              design: .monospaced))
+            labelContent
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
                 .foregroundStyle(foreground)
                 // Room on the right for the clear button so a long shortcut never
                 // runs underneath it.
                 .padding(.leading, 8)
-                .padding(.trailing, hotkey != nil ? 22 : 8)
+                .padding(.trailing, hotkey != nil ? 20 : 8)
                 .frame(width: pillWidth, height: pillHeight)
                 .background(background, in: shape)
                 .overlay(shape.strokeBorder(border, lineWidth: 1))
@@ -77,7 +75,7 @@ struct HotkeyRecorderField: View {
                 } label: {
                     HugeIcon("cancel", size: 11)
                         .foregroundStyle(hovering ? Color.primary.opacity(0.7) : .secondary)
-                        .frame(width: 20, height: 20)      // hit area, not visual size
+                        .frame(width: 22, height: pillHeight)  // hit area, not visual size
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -117,6 +115,28 @@ struct HotkeyRecorderField: View {
     private var shape: RoundedRectangle {
         // Concentric with the 12pt card it sits in, minus the row's inset.
         RoundedRectangle(cornerRadius: 8, style: .continuous)
+    }
+
+    /// A set shortcut is drawn glyph by glyph with real gaps between the modifiers:
+    /// "⌃⌥⌘P" set solid at 12pt collapses into one dense mark where no single
+    /// modifier is legible. The key name sits a touch further out again, so the combo
+    /// parses as "modifiers, then key" at a glance. The system font (not monospaced)
+    /// draws these glyphs at the widths macOS uses everywhere else — the pill is a
+    /// fixed width anyway, so monospacing bought nothing but crowding.
+    @ViewBuilder
+    private var labelContent: some View {
+        if let hotkey, !isRecording, !needsModifier {
+            HStack(spacing: 2.5) {
+                ForEach(Array(hotkey.modifiers.glyphs.enumerated()), id: \.offset) { _, glyph in
+                    Text(glyph)
+                }
+                Text(Hotkey.keyName(hotkey.keyCode))
+                    .padding(.leading, 1.5)
+            }
+            .font(.system(size: 12, weight: .medium))
+        } else {
+            Text(label).font(.system(size: 12))
+        }
     }
 
     /// Every state reads out here, so the row never has to grow to explain itself.
