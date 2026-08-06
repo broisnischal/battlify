@@ -209,7 +209,12 @@ public enum HelperBuild {
     ///       fans back to macOS whenever the config says auto but the SMC says forced. Forced
     ///       mode persists across reboots, so a Mac left pinned by the removed fan-boost
     ///       feature stays pinned until a helper that knows to undo it runs.
-    public static let version = 8
+    ///   v9: the v8 fan code read `F<i>Md != 0` as "forced" — an M3 Pro reports 3 with macOS
+    ///       in charge — so it wrote the key every tick, failed, and logged an error every
+    ///       few seconds while fighting a controller that wasn't there. v9 writes nothing
+    ///       unless a manual speed is set, latches a refusal instead of retrying, and reports
+    ///       fan-write support and temperature sensors to the app.
+    public static let version = 9
 }
 
 public enum ControlError: Error, CustomStringConvertible {
