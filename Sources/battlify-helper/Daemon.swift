@@ -42,6 +42,8 @@ final class Daemon: @unchecked Sendable {
     private var settleUntil: Date?
     /// Our own sleep/wake hook, so the pre-sleep charge cut doesn't depend on the GUI.
     private let sleepWatcher = SleepWatcher()
+    /// Held so the tick loop can notice the control socket being taken from under us.
+    private var controlServer: ControlServer?
     /// What the run loop waits after the current tick; `nextInterval` sets it from
     /// `TickPolicy`, which is where the reasoning about cadence lives.
     private var tickInterval = TickPolicy.active
@@ -110,6 +112,7 @@ final class Daemon: @unchecked Sendable {
             self?.handle(req) ?? Self.failureResponse()
         }
         server.start()
+        controlServer = server
 
         // Our own sleep hook. Enforcement stops dead while the Mac is asleep, so the
         // last thing we tell the SMC has to be safe — and we can't rely on the GUI to
@@ -125,6 +128,13 @@ final class Daemon: @unchecked Sendable {
             tick()
             let wait = tickInterval
             lock.unlock()
+            // A daemon nobody can reach is worse than no daemon: the app blocks on a socket
+            // that will never answer, and launchd sees a healthy job. Exiting lets launchd
+            // start one that binds the path properly.
+            if let controlServer, !controlServer.ownsSocketPath {
+                err("another instance took the control socket; exiting so launchd restarts us")
+                exit(6)
+            }
             Thread.sleep(forTimeInterval: wait)
         }
     }

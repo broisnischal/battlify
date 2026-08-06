@@ -6,6 +6,9 @@ final class ControlServer {
     private let path: String
     private let handler: @Sendable (ControlRequest) -> ControlResponse
     private var listenFD: Int32 = -1
+    /// The inode our listener is bound to. If the path later points somewhere else, another
+    /// instance has taken it and nothing can reach us — see `ownsSocketPath`.
+    private var boundInode: (dev: Int32, ino: UInt64)?
 
     init(path: String = ControlSocket.path,
          handler: @escaping @Sendable (ControlRequest) -> ControlResponse) {
@@ -13,11 +16,14 @@ final class ControlServer {
         self.handler = handler
     }
 
+    /// Bring the listener up. Fatal on failure, deliberately: a daemon with no control
+    /// socket looks alive to launchd while the app hangs waiting for an answer that can never
+    /// come. Exiting hands the problem to launchd, which restarts us and usually clears it.
     func start() {
         unlink(path) // remove stale socket from a previous run
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { perror("socket"); return }
+        guard fd >= 0 else { fail("socket") }
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -35,18 +41,45 @@ final class ControlServer {
                 bind(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard bound == 0 else { perror("bind"); close(fd); return }
+        guard bound == 0 else { close(fd); fail("bind") }
 
         // any local user may toggle the charge limit (the only capability exposed)
         chmod(path, 0o666)
 
-        guard listen(fd, 8) == 0 else { perror("listen"); close(fd); return }
+        guard listen(fd, 8) == 0 else { close(fd); fail("listen") }
         listenFD = fd
+        // Remember which inode we own, so a stolen path is detectable later.
+        var info = stat()
+        if stat(path, &info) == 0 {
+            boundInode = (info.st_dev, info.st_ino)
+        }
+        FileHandle.standardError.write(Data("battlify-helper: control socket listening at \(path)\n".utf8))
 
         let handler = self.handler
         Thread.detachNewThread {
             ControlServer.acceptLoop(fd, handler: handler)
         }
+    }
+
+    /// False once the socket path no longer refers to the inode we bound.
+    ///
+    /// This is what a lost control channel actually looks like in practice. Two daemons
+    /// briefly overlap during an install; the second unlinks the first's socket and binds its
+    /// own; the second then goes away. The survivor is still listening — on an inode nothing
+    /// can reach by name — so the app gets "connection refused" from a daemon that reports
+    /// itself perfectly healthy. Checked from the tick loop, which exits when it goes false.
+    var ownsSocketPath: Bool {
+        guard let boundInode else { return true }   // never bound cleanly; nothing to compare
+        var info = stat()
+        guard stat(path, &info) == 0 else { return false }
+        return info.st_dev == boundInode.dev && info.st_ino == boundInode.ino
+    }
+
+    private func fail(_ what: String) -> Never {
+        perror(what)
+        FileHandle.standardError.write(
+            Data("battlify-helper: error: cannot serve the control socket at \(path); exiting so launchd retries\n".utf8))
+        exit(5)
     }
 
     private static func acceptLoop(_ fd: Int32,

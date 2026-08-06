@@ -214,7 +214,12 @@ public enum HelperBuild {
     ///       few seconds while fighting a controller that wasn't there. v9 writes nothing
     ///       unless a manual speed is set, latches a refusal instead of retrying, and reports
     ///       fan-write support and temperature sensors to the app.
-    public static let version = 9
+    ///   v10: a daemon that can't serve its control socket now exits instead of running deaf.
+    ///        One install left a helper alive and listening on an inode whose path a
+    ///        short-lived second instance had replaced: launchd reported the job healthy while
+    ///        every app request got "connection refused", so the app hung. Bind failures are
+    ///        fatal, and the tick loop exits if the path stops pointing at our own socket.
+    public static let version = 10
 }
 
 public enum ControlError: Error, CustomStringConvertible {
