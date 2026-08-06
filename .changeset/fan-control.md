@@ -2,33 +2,21 @@
 "battlify": minor
 ---
 
-**Fan control — and a fix for Macs this app left with their fans pinned at full speed.**
+**Fans: monitoring, temperatures, and control where the hardware allows it.**
 
-A machine running this app was found with both fans forced to 6,800 rpm on a cool chassis.
-The cause: the fan-boost feature removed in 0.16 wrote `F0Md = 1` (forced) with a maximum
-target, and forced mode **persists in the SMC** — it outlives the process that set it, and a
-restart doesn't clear it, the same property the charge inhibit relies on. Deleting the code
-that set it left nothing running that knew to undo it, so the fans stayed pinned
-indefinitely, burning a couple of watts and adding heat and noise for nothing.
+Settings › Sleep & Power now lists every fan the way a fan utility should — name (Left side /
+Right side, as the hardware's own tools name them), its minimum, current and maximum rpm with
+the live figure emphasised, and what is driving it — followed by a Temperatures card. Sensors
+are discovered by walking the SMC's own key table rather than a hardcoded list, because the
+keys differ per model and a fixed list is wrong on every Mac it wasn't written for.
 
-That also disproves the claim in the 0.16 notes that Apple silicon refuses SMC fan writes.
-It doesn't: the write took, which is precisely why the machine stayed stuck.
+Fan *control* is offered only where the SMC accepts it. Some Macs read every fan key and
+refuse every write — an M3 Pro on macOS 26 refuses all of them — which is not knowable in
+advance, so Battlify tries once, remembers the answer, and says plainly that the machine
+won't allow it rather than pretending. Where writes are accepted, Custom holds each fan at a
+percentage of its own min…max range (a percentage rather than an rpm figure, because two fans
+in one machine needn't share a range), 0% is each fan's minimum rather than off, control
+returns to macOS above a temperature guard, and the daemon restores auto when it stops.
 
-So fans are supported properly now:
-
-- **Monitoring.** Settings › Sleep & Power lists every fan with its live rpm and the range
-  the hardware accepts, and marks any fan currently held.
-- **Auto or Custom.** Auto hands the fans to macOS. Custom holds them at a percentage of
-  each fan's own min…max range — a percentage rather than an rpm figure because the two fans
-  in a machine needn't share a range, and "60%" means the same thing on both while
-  "3,000 rpm" might be a crawl for one and near-max for the other.
-- **It can't strand your fans.** The daemon hands them back when it stops, and on every tick
-  it hands them back whenever the config says auto but the hardware says forced — which is
-  what recovers a Mac left pinned by the removed feature, without the user needing to know
-  any of this happened.
-- **Heat always wins.** A manual speed below what the machine needs is the one way this can
-  do harm, so above a temperature guard (85 °C by default) control returns to macOS whatever
-  the setting says. 0% is each fan's own minimum, never off; the SMC won't accept less.
-
-`HelperBuild` → 8, because the recovery lives in the daemon: a pinned Mac stays pinned until
-a helper that knows to undo it is actually running.
+Fans reading 0 rpm on a cool Apple silicon Mac is normal, and the UI says so: they stop
+entirely until there is heat to move.

@@ -104,6 +104,11 @@ public struct ControlResponse: Codable, Sendable {
     public var discharging: Bool
     /// Live fan state, empty on a fanless Mac or an older daemon.
     public var fans: [FanReading]
+    /// Whether this Mac accepts fan writes at all — discovered by trying, since the keys read
+    /// fine on machines that refuse every write.
+    public var fanControlSupported: Bool
+    /// Temperature sensors, warmest first.
+    public var sensors: [SensorReading]
     public var message: String?
     /// Protocol version of the responding daemon. Older daemons omit it → decode to 0 → outdated.
     public var daemonProtocolVersion: Int
@@ -118,6 +123,8 @@ public struct ControlResponse: Codable, Sendable {
                 pauseReason: String? = nil, magSafeSupported: Bool = false,
                 dischargeSupported: Bool = false, discharging: Bool = false,
                 fans: [FanReading] = [],
+                fanControlSupported: Bool = false,
+                sensors: [SensorReading] = [],
                 message: String? = nil,
                 daemonProtocolVersion: Int = ControlProtocol.version,
                 daemonBuildVersion: Int = HelperBuild.version) {
@@ -133,6 +140,8 @@ public struct ControlResponse: Codable, Sendable {
         self.dischargeSupported = dischargeSupported
         self.discharging = discharging
         self.fans = fans
+        self.fanControlSupported = fanControlSupported
+        self.sensors = sensors
         self.message = message
         self.daemonProtocolVersion = daemonProtocolVersion
         self.daemonBuildVersion = daemonBuildVersion
@@ -153,6 +162,8 @@ public struct ControlResponse: Codable, Sendable {
         dischargeSupported = try c.decodeIfPresent(Bool.self, forKey: .dischargeSupported) ?? false
         discharging = try c.decodeIfPresent(Bool.self, forKey: .discharging) ?? false
         fans = try c.decodeIfPresent([FanReading].self, forKey: .fans) ?? []
+        fanControlSupported = try c.decodeIfPresent(Bool.self, forKey: .fanControlSupported) ?? false
+        sensors = try c.decodeIfPresent([SensorReading].self, forKey: .sensors) ?? []
         message = try c.decodeIfPresent(String.self, forKey: .message)
         daemonProtocolVersion = try c.decodeIfPresent(Int.self, forKey: .daemonProtocolVersion) ?? 0
         daemonBuildVersion = try c.decodeIfPresent(Int.self, forKey: .daemonBuildVersion) ?? 0

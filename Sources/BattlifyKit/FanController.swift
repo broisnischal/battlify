@@ -8,12 +8,22 @@ public struct FanReading: Codable, Sendable, Equatable, Identifiable {
     /// The speed range the hardware will accept.
     public let minimum: Double
     public let maximum: Double
-    /// True when the fan is under forced (manual) control rather than macOS's.
-    public let forced: Bool
+    /// The raw `F<i>Md` byte. Its meaning is not portable: 1 is "forced" in the Intel-era
+    /// convention, but an M3 Pro reports 3 while macOS is plainly in charge. So it's carried
+    /// for display and diagnosis and never used to decide whether a fan is under our control
+    /// — that's tracked by whether our own write was accepted.
+    public let modeRaw: Int
     /// The target the SMC is aiming for, RPM.
     public let target: Double
 
     public var id: Int { index }
+
+    /// Two-fan Macs are laid out left and right, and that's what the hardware's own
+    /// utilities call them; anything else falls back to numbering.
+    public static func name(index: Int, of total: Int) -> String {
+        guard total == 2 else { return "Fan \(index + 1)" }
+        return index == 0 ? "Left side" : "Right side"
+    }
 
     /// Where `current` sits between min and max, 0…1 — what a UI shows as a level.
     public var fraction: Double {
@@ -76,11 +86,19 @@ public final class FanController {
         let mode = (try? smc.read("F\(index)Md"))?.bytes.first ?? 0
         return FanReading(index: index, current: Double(current),
                           minimum: Double(minimum), maximum: Double(maximum),
-                          forced: mode != 0, target: Double(float("F\(index)Tg") ?? current))
+                          modeRaw: Int(mode), target: Double(float("F\(index)Tg") ?? current))
     }
 
-    /// Any fan currently under forced control.
-    public var anyForced: Bool { readAll().contains { $0.forced } }
+    /// Whether this Mac accepts fan writes at all.
+    ///
+    /// Not knowable in advance: the keys exist and read fine on machines that refuse every
+    /// write, which is exactly what an M3 Pro on macOS 26 does. So it's discovered by trying
+    /// once and remembered — retrying a refused write on a timer achieves nothing except log
+    /// noise and, if the SMC reacts at all, a fan that stutters between the controller and us.
+    public private(set) var writesRefused = false
+
+    /// True when this Mac will actually let the fans be driven.
+    public var controlSupported: Bool { isSupported && !writesRefused }
 
     // MARK: - Control (root only)
 
@@ -92,6 +110,7 @@ public final class FanController {
     /// in forced mode aiming at a stale target.
     @discardableResult
     public func setManual(percent: Int) -> Bool {
+        guard !writesRefused else { return false }
         let clamped = Double(min(100, max(0, percent))) / 100
         var allOK = true
         for fan in readAll() {
@@ -100,16 +119,19 @@ public final class FanController {
             allOK = write(float: Float(rpm), to: "F\(fan.index)Tg") && allOK
             allOK = write(byte: 1, to: "F\(fan.index)Md") && allOK
         }
+        if !allOK { writesRefused = true }
         return allOK
     }
 
     /// Hand every fan back to macOS. Safe to call when nothing is forced.
     @discardableResult
     public func restoreAuto() -> Bool {
+        guard !writesRefused else { return false }
         var allOK = true
         for index in 0..<count {
             allOK = write(byte: 0, to: "F\(index)Md") && allOK
         }
+        if !allOK { writesRefused = true }
         return allOK
     }
 

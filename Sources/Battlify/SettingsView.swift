@@ -796,47 +796,70 @@ struct SettingsView: View {
 
                 if chargeLimit.fansSupported {
                     card("Fans") {
+                        // The layout every Mac fan utility uses, because it's the right one:
+                        // which fan, the range it lives in with the current value inside that
+                        // range, and its control — readable as a table rather than a list of
+                        // sentences.
+                        HStack(spacing: 10) {
+                            Text("Fan").frame(width: 96, alignment: .leading)
+                            Text("Min / Current / Max").frame(maxWidth: .infinity, alignment: .leading)
+                            Text("Control").frame(width: 150, alignment: .leading)
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
+
                         ForEach(chargeLimit.fans) { fan in
-                            HStack(spacing: 10) {
-                                HugeIcon("refresh", size: 16).foregroundStyle(.secondary)
-                                    .frame(width: 20)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Fan \(fan.index + 1)").font(.callout)
-                                    Text("\(Int(fan.minimum.rounded()))–\(Int(fan.maximum.rounded())) rpm\(fan.forced ? " · held" : "")")
-                                        .font(.caption).foregroundStyle(.secondary)
+                            fanRow(fan)
+                            divider
+                        }
+
+                        if chargeLimit.fanControlSupported {
+                            pickerRow(chargeLimit.fanMode.isManual
+                                      ? "Held where you put them until you set Auto back."
+                                      : "macOS decides, which is right almost always.") {
+                                Picker("", selection: Binding(
+                                    get: { chargeLimit.fanMode.isManual },
+                                    set: { chargeLimit.setFanMode($0 ? .manual(percent: 40) : .auto) })) {
+                                    Text("Auto").tag(false)
+                                    Text("Custom").tag(true)
                                 }
-                                Spacer()
-                                Text("\(Int(fan.current.rounded())) rpm")
-                                    .font(.callout.weight(.semibold)).monospacedDigit()
-                                    .foregroundStyle(fan.forced ? Color.orange : .primary)
+                                .pickerStyle(.segmented).labelsHidden()
                             }
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            divider
-                        }
-                        pickerRow(chargeLimit.fanMode.isManual
-                                  ? "Held where you put them. The fans stay there until you set Auto back — this survives quitting Battlify and rebooting, because forced mode lives in the SMC, not in the app."
-                                  : "macOS decides, which is right almost always. Custom holds a speed of your choosing.") {
-                            Picker("", selection: Binding(
-                                get: { chargeLimit.fanMode.isManual },
-                                set: { manual in
-                                    chargeLimit.setFanMode(manual ? .manual(percent: 40) : .auto)
-                                })) {
-                                Text("Auto").tag(false)
-                                Text("Custom").tag(true)
+                            if let percent = chargeLimit.fanMode.percent {
+                                divider
+                                stepperRow("Speed", value: "\(percent)% of range",
+                                           binding: Binding(
+                                            get: { Double(percent) },
+                                            set: { chargeLimit.setFanMode(.manual(percent: Int($0))) }),
+                                           range: 0...100)
+                                divider
+                                infoRow("0% is each fan's own minimum, not off. If the machine gets hot, control returns to macOS automatically.",
+                                        systemImage: "thermometer")
                             }
-                            .pickerStyle(.segmented).labelsHidden()
+                        } else {
+                            infoRow("This Mac reads its fans but refuses to let software drive them — every write is rejected by the SMC, so Battlify leaves them to macOS and shows what they're doing. Fans reading 0 rpm while the machine is cool is normal on Apple silicon: they stop entirely until there's heat to move.",
+                                    systemImage: "info")
                         }
-                        if let percent = chargeLimit.fanMode.percent {
+                    }
+
+                    if !chargeLimit.sensors.isEmpty {
+                        card("Temperatures") {
+                            ForEach(chargeLimit.sensors.prefix(12)) { sensor in
+                                HStack(spacing: 10) {
+                                    Text(sensor.name).font(.callout)
+                                    Spacer()
+                                    Text(sensor.key).font(.caption).foregroundStyle(.tertiary)
+                                    Text(String(format: "%.1f °C", sensor.celsius))
+                                        .font(.callout.weight(.medium)).monospacedDigit()
+                                        .frame(width: 72, alignment: .trailing)
+                                        .foregroundStyle(sensor.celsius >= 90 ? Color.orange : .primary)
+                                }
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                            }
                             divider
-                            stepperRow("Speed",
-                                       value: "\(percent)% of range",
-                                       binding: Binding(
-                                        get: { Double(percent) },
-                                        set: { chargeLimit.setFanMode(.manual(percent: Int($0))) }),
-                                       range: 0...100)
-                            divider
-                            infoRow("0% is each fan's own minimum, not off — the SMC won't accept a speed below what the hardware allows. If the machine gets hot, control goes back to macOS automatically.",
-                                    systemImage: "thermometer")
+                            infoRow("The warmest twelve of \(chargeLimit.sensors.count) sensors this Mac publishes, read straight from the SMC.",
+                                    systemImage: "info")
                         }
                     }
                 }
@@ -1055,6 +1078,42 @@ struct SettingsView: View {
         }
         // Recording grabs the keyboard, so it must not survive leaving the tab.
         .onChange(of: selection) { _, _ in recordingAction = nil }
+    }
+
+    /// One fan: name, its range with the current value inside it, and what's driving it.
+    private func fanRow(_ fan: FanReading) -> some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                HugeIcon("refresh", size: 15)
+                    .foregroundStyle(fan.current > 0 ? Color.accentColor : .secondary)
+                Text(FanReading.name(index: fan.index, of: chargeLimit.fans.count))
+                    .font(.callout)
+            }
+            .frame(width: 96, alignment: .leading)
+
+            HStack(spacing: 6) {
+                Text("\(Int(fan.minimum.rounded()))").foregroundStyle(.secondary)
+                Text("—").foregroundStyle(.tertiary)
+                // The live number is the one worth reading, so it's the only one emphasised.
+                Text("\(Int(fan.current.rounded()))")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(fan.current > 0 ? Color.orange : .secondary)
+                Text("—").foregroundStyle(.tertiary)
+                Text("\(Int(fan.maximum.rounded()))").foregroundStyle(.secondary)
+                Text("rpm").font(.caption).foregroundStyle(.tertiary)
+            }
+            .font(.callout).monospacedDigit()
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(chargeLimit.fanControlSupported
+                 ? (chargeLimit.fanMode.isManual ? "Custom" : "Auto")
+                 : "macOS")
+                .font(.caption)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.quaternary.opacity(0.6), in: Capsule())
+                .frame(width: 150, alignment: .leading)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
     private func shortcutRow(_ action: HotkeyAction) -> some View {

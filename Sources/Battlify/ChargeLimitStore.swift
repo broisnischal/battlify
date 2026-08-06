@@ -61,6 +61,10 @@ final class ChargeLimitStore: ObservableObject {
     /// Live fan state from the daemon (empty on a fanless Mac or an older helper).
     @Published private(set) var fans: [FanReading] = []
     @Published private(set) var fanMode: FanMode = .auto
+    /// Whether this Mac accepts fan writes — some read fine and refuse every write.
+    @Published private(set) var fanControlSupported = false
+    /// Temperature sensors, warmest first.
+    @Published private(set) var sensors: [SensorReading] = []
     var fansSupported: Bool { !fans.isEmpty }
     @Published private(set) var dischargeSupported = false
     @Published private(set) var discharging = false
@@ -360,6 +364,8 @@ final class ChargeLimitStore: ObservableObject {
         set(\.holdCharge, r.config.holdCharge)
         set(\.fans, r.fans)
         set(\.fanMode, r.config.fanMode)
+        set(\.fanControlSupported, r.fanControlSupported)
+        set(\.sensors, r.sensors)
         set(\.dischargeSupported, r.dischargeSupported)
         set(\.discharging, r.discharging)
         set(\.disableChargingBeforeSleep, r.config.disableChargingBeforeSleep)

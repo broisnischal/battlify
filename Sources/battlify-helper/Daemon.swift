@@ -266,6 +266,8 @@ final class Daemon: @unchecked Sendable {
             dischargeSupported: charge.isAdapterControlSupported,
             discharging: charge.isAdapterControlSupported && !((try? charge.isAdapterEnabled()) ?? true),
             fans: fans.readAll(),
+            fanControlSupported: fans.controlSupported,
+            sensors: SensorReader.readAll(),
             message: message
         )
     }
@@ -468,51 +470,44 @@ final class Daemon: @unchecked Sendable {
 
     /// Keep the fans in the state the config asks for.
     ///
-    /// Two jobs, and the second matters more. Applying a manual speed is straightforward.
-    /// But forced mode *persists in the SMC* across quit, logout and reboot — the same
-    /// property the charge inhibit relies on — so a build that forced the fans and was later
-    /// removed leaves them stuck at whatever it last wrote, with nothing running that knows
-    /// to undo it. A machine was found with both fans pinned at 6,800 RPM and a cool chassis
-    /// for exactly that reason. So: if the config says auto and the hardware says forced,
-    /// hand them back, every tick, indefinitely.
+    /// Nothing is written unless the user has asked for a manual speed, and a refusal is
+    /// final.
+    ///
+    /// The first version of this re-asserted every tick and logged on every failure, which on
+    /// a Mac that refuses fan writes — an M3 Pro on macOS 26 refuses all of them — meant a
+    /// line of log spam every few seconds and a pointless SMC write behind it. It also read
+    /// `F<i>Md != 0` as "forced", which is wrong: that machine reports 3 with macOS plainly
+    /// in charge, so the daemon believed the fans were stuck and fought a controller that was
+    /// never there. Both are why the fans appeared to stutter on and off.
+    ///
+    /// So: auto writes nothing at all. Manual tries, and if the SMC says no, `FanController`
+    /// latches that and every later attempt is skipped.
     private func updateFans(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
-        guard fans.isSupported else { return }
+        guard fans.controlSupported else { return }
+        guard case .manual(let percent) = cfg.fanMode else { return }
 
-        // Heat wins over the setting: a manual speed lower than the machine needs is the one
+        // Heat wins over the setting: a manual speed below what the machine needs is the one
         // way this feature can do damage.
-        if case .manual = cfg.fanMode, cfg.fanAutoAboveTempC > 0,
-           let temperature = snap.temperature, temperature >= cfg.fanAutoAboveTempC {
-            if fans.anyForced {
-                fans.restoreAuto()
+        if cfg.fanAutoAboveTempC > 0, let temperature = snap.temperature,
+           temperature >= cfg.fanAutoAboveTempC {
+            if fans.restoreAuto() {
                 log("fans handed back to macOS: \(String(format: "%.1f", temperature))°C ≥ guard \(cfg.fanAutoAboveTempC)°C")
             }
             return
         }
 
-        switch cfg.fanMode {
-        case .auto:
-            guard fans.anyForced else { return }
-            if fans.restoreAuto() {
-                log("fans were left in forced mode; handed back to macOS")
-            } else {
-                err("fans are forced and the SMC refused to hand them back")
-            }
-        case .manual(let percent):
-            // Re-assert only when the hardware has drifted from what was asked for; writing
-            // every tick would be SMC traffic for nothing.
-            let readings = fans.readAll()
-            let needsWrite = readings.contains { reading in
-                guard reading.forced else { return true }
-                let span = reading.maximum - reading.minimum
-                let wanted = reading.minimum + span * Double(min(100, max(0, percent))) / 100
-                return abs(reading.target - wanted) > 50
-            }
-            guard needsWrite else { return }
-            if fans.setManual(percent: percent) {
-                log("fans held at \(percent)%")
-            } else {
-                err("the SMC refused the fan write")
-            }
+        // Re-assert only when the hardware has drifted from what was asked for; writing every
+        // tick would be SMC traffic for nothing.
+        let drifted = fans.readAll().contains { reading in
+            let span = reading.maximum - reading.minimum
+            let wanted = reading.minimum + span * Double(min(100, max(0, percent))) / 100
+            return abs(reading.target - wanted) > 50
+        }
+        guard drifted else { return }
+        if fans.setManual(percent: percent) {
+            log("fans held at \(percent)%")
+        } else {
+            err("this Mac refuses fan writes; leaving the fans to macOS")
         }
     }
 
@@ -804,7 +799,7 @@ final class Daemon: @unchecked Sendable {
         lock.lock()   // hold through exit; serialize SMC access with tick()
         // Forced fans outlive this process, so leaving them forced on the way out is exactly
         // how a Mac ends up pinned at full speed by software that no longer exists.
-        if fans.isSupported { fans.restoreAuto() }
+        if fans.controlSupported { fans.restoreAuto() }
         PowerSettings.setDisableSleep(false)
         if ConfigStore.load().chargeLimitEnabled {
             try? charge.disableCharging()
