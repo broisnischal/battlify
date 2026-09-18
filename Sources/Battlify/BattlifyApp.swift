@@ -24,7 +24,6 @@ struct BattlifyApp: App {
     @StateObject private var settings = AppSettings()
     @StateObject private var notifier = NotificationManager()
     @StateObject private var network = NetworkProfileStore()
-    @StateObject private var endurance = EnduranceStore()
     @StateObject private var triggers = TriggerStore()
     @StateObject private var hotkeys = HotkeyStore()
     @StateObject private var restReminder = RestReminder()
@@ -46,7 +45,6 @@ struct BattlifyApp: App {
                 .environmentObject(settings)
                 .environmentObject(notifier)
                 .environmentObject(network)
-                .environmentObject(endurance)
                 .environmentObject(triggers)
                 .environmentObject(hotkeys)
                 .environmentObject(restReminder)
@@ -55,7 +53,6 @@ struct BattlifyApp: App {
                 .onAppear {
                     network.chargeLimit = chargeLimit
                     automation.chargeLimit = chargeLimit
-                    endurance.start(chargeLimit: chargeLimit)
                 }
         } label: {
             // Its own observing view so it re-renders reliably — a label closure that
@@ -66,7 +63,7 @@ struct BattlifyApp: App {
                          settings: settings, notifier: notifier, triggers: triggers,
                          hotkeys: hotkeys, caffeine: caffeine, actions: actions,
                          license: license, restReminder: restReminder, overlay: overlay,
-                         endurance: endurance, idleSaver: idleSaver)
+                         idleSaver: idleSaver)
         }
         .menuBarExtraStyle(.window)
 
@@ -83,7 +80,6 @@ struct BattlifyApp: App {
                 .environmentObject(settings)
                 .environmentObject(notifier)
                 .environmentObject(network)
-                .environmentObject(endurance)
                 .environmentObject(triggers)
                 .environmentObject(hotkeys)
                 .environmentObject(overlay)
@@ -103,7 +99,7 @@ struct BattlifyApp: App {
         Window("Battery History", id: "history") {
             HistoryView()
         }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
 
         Window("Activate Battlify", id: "license") {
             LicenseView()
@@ -132,7 +128,6 @@ struct MenuBarLabel: View {
     let license: LicenseManager
     let restReminder: RestReminder
     let overlay: ChargeOverlayController
-    let endurance: EnduranceStore
     let idleSaver: IdleSaverStore
     @Environment(\.openWindow) private var openWindow
 
@@ -157,9 +152,12 @@ struct MenuBarLabel: View {
         // the menu bar looks exactly like sitting at the limit, and the whole point of the
         // switch is that you chose it.
         let holdingNow = chargeLimit.holdCharge && snap.isPluggedIn
-        // Success flash is green only when coloring is on; mono blinks by alpha instead.
+        // The success flash uses the ramp's own full-charge colour — which is what the
+        // flash means — rather than a stock green that matches nothing else here. Mono
+        // blinks by alpha instead.
         let tint: MenuBarTint =
-            celebratingNow && settings.colorMenuBarIcon ? .colored(.systemGreen)
+            celebratingNow && settings.colorMenuBarIcon
+            ? .colored(NSColor(ChargePalette.legible(1)))
             : settings.colorMenuBarIcon ? tint(for: snap) : .neutral
         // Each tick re-renders the status item, and that relayout measured ~10% of a
         // core sustained — the entire time the Mac was plugged in. So the charging
@@ -176,7 +174,7 @@ struct MenuBarLabel: View {
         // left every one of them dead until the menu had been opened. `attach` is
         // idempotent, so calling it on each body evaluation costs nothing.
         hotkeys.attach(chargeLimit: chargeLimit, caffeine: caffeine,
-                       systemActions: actions, endurance: endurance,
+                       systemActions: actions,
                        idleSaver: idleSaver, settings: settings, license: license,
                        openWindow: { id in
                            NSApplication.shared.activate(ignoringOtherApps: true)
@@ -189,7 +187,7 @@ struct MenuBarLabel: View {
                              endOnBattery: settings.caffeineEndOnBattery,
                              onExternalPower: snap.onExternalPower)
         restReminder.startIfNeeded(settings: settings, battery: battery)
-        idleSaver.startIfNeeded()
+        idleSaver.startIfNeeded(caffeine: caffeine)
         return HStack(spacing: 2) {
             // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
             // labels, and the renderer draws the charging bolt inside the glyph.
@@ -200,6 +198,7 @@ struct MenuBarLabel: View {
                 tint: tint,
                 frame: animFrame,
                 celebrating: celebratingNow,
+                pluggedIn: snap.isPluggedIn,
                 holding: holdingNow,
                 transition: transition,
                 transitionStep: transitionStep))
@@ -250,6 +249,10 @@ struct MenuBarLabel: View {
                 || (chargeStoppedAt.map { Date().timeIntervalSince($0) < 120 } ?? false)
             guard done, justCharged else { return }
             if settings.hapticsEnabled { HapticFeedback.limitReached() }
+            if settings.soundAllowed {
+                ChargeSound.play(.complete, volume: settings.soundVolume,
+                                 theme: settings.soundTheme)
+            }
             guard settings.motionAllowed else { return }
             celebrating = true
             celebrateTicks = 0
@@ -268,14 +271,11 @@ struct MenuBarLabel: View {
             if settings.hapticsEnabled {
                 isNow ? HapticFeedback.chargeConnected() : HapticFeedback.chargeDisconnected()
             }
-            // The glyph itself reacts: the bolt grows out of a flat spark on connect and
-            // collapses back into one on unplug, so the menu bar tells you what changed
-            // even with no overlay and no sound.
-            if settings.motionAllowed {
-                transitionStep = 0
-                transition = isNow ? .connected : .disconnected
+            if settings.soundAllowed {
+                ChargeSound.play(isNow ? .connect : .disconnect, volume: settings.soundVolume,
+                                 theme: settings.soundTheme)
             }
-            guard settings.chargeOverlayEnabled,
+            guard ChargeOverlayFeature.shipped, settings.chargeOverlayEnabled,
                   isNow || settings.chargeOverlayOnUnplug else { return }
             overlay.show(style: settings.chargeOverlayStyle,
                          duration: settings.chargeOverlayDuration,
@@ -295,12 +295,19 @@ struct MenuBarLabel: View {
                 && chargeLimit.pauseReason == "limit")
     }
 
-    /// Red when warm or critically low, green charging, otherwise neutral.
+    /// Red when warm or critically low, the red-yellow-green ramp on power, neutral on
+    /// battery.
+    ///
+    /// Colour is reserved for the states it can say something about. On the adapter the
+    /// ramp is a reading — how far up it has got, and whether that's good news. On battery
+    /// the same green would be claiming everything is fine about a number that is only
+    /// going down, which is why an unplugged Mac at 80% draws in the menu bar's own
+    /// colour and says nothing until it drops far enough to be worth a red.
     private func tint(for snap: BatterySnapshot) -> MenuBarTint {
         if isWarm(snap) { return .colored(.systemRed) }
         if snap.percentage <= 20 && !snap.isPluggedIn { return .colored(.systemRed) }
-        if snap.isCharging { return .colored(.systemGreen) }
-        return .neutral
+        guard snap.isPluggedIn else { return .neutral }
+        return .colored(NSColor(ChargePalette.legible(Double(snap.percentage) / 100)))
     }
 
     /// Held for heat, or genuinely hot (≥40 °C) even with heat-pause off.
@@ -382,10 +389,11 @@ extension BatterySnapshot {
         }
     }
 
-    /// Green charging, red when critically low, otherwise neutral.
+    /// The ramp on power, red when critically low, neutral on battery. Mirrors
+    /// `tint(for:)` — the two must agree or the preview lies about the menu bar.
     var menuBarTint: MenuBarTint {
-        if isCharging { return .colored(.systemGreen) }
         if percentage <= 20 && !isPluggedIn { return .colored(.systemRed) }
-        return .neutral
+        guard isPluggedIn else { return .neutral }
+        return .colored(NSColor(ChargePalette.legible(Double(percentage) / 100)))
     }
 }
