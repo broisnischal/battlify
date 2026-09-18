@@ -3,6 +3,22 @@ import AppKit
 import BattlifyKit
 
 /// Which animation the screen flashes when you plug in.
+/// Whether the plug-in animation ships in this build.
+///
+/// Off for now, and deliberately a flag rather than deleted code. The matrix was just moved
+/// off per-frame path rasterisation onto baked textures (`ChargeMatrixLayer`) and it wants a
+/// fragment shader to finish the job — which needs a Metal toolchain this build machine
+/// doesn't have. Shipping a full-screen animation that is *nearly* right is worse than
+/// shipping none: it plays over whatever the user is doing, so it is the one feature in the
+/// app that can't be quietly mediocre.
+///
+/// Everything behind the flag stays wired up, and every stored preference (style, duration,
+/// unplug variant, custom frames) is left alone, so turning it back on returns the user to
+/// the choices they had made.
+enum ChargeOverlayFeature {
+    static let shipped = false
+}
+
 enum ChargeOverlayStyle: String, CaseIterable, Identifiable, Codable {
     /// A grid of dots that ripples out from the charge port, each dot jittering as the
     /// wave passes through it.
@@ -29,7 +45,7 @@ enum ChargeOverlayStyle: String, CaseIterable, Identifiable, Codable {
 
     var summary: String {
         switch self {
-        case .dotGrid: return "A dot matrix fills to your charge level, with one rise up to the line."
+        case .dotGrid: return "A dot matrix fills to your charge level in one rise, warm amber at the bottom cooling to white at the top."
         case .ring:    return "Rings push out from the port with the charge level in the middle."
         case .aurora:  return "A soft glow rises off the bottom edge and fades."
         case .custom:  return "Plays your own frames — export a numbered image sequence from Rive, Lottie or After Effects and drop it in the folder."
@@ -75,17 +91,25 @@ final class ChargeOverlayController: ObservableObject {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle,
                                     .fullScreenAuxiliary]
+        // No start date handed in. Standing up the panel and its hosting view costs
+        // anywhere from a few milliseconds to a third of a second on the first show of a
+        // session (Canvas and the text renderer both warm up here), and a clock started
+        // back when `show()` was called has already burned that time by the moment the
+        // first frame reaches the screen — so the animation appeared to begin part-way
+        // through. The view starts its own clock when it is actually visible.
         panel.contentView = NSHostingView(
             rootView: ChargeOverlayView(style: style, duration: duration,
                                         percentage: percentage, plugging: plugging,
-                                        allowMotion: allowMotion, start: Date()))
+                                        allowMotion: allowMotion))
         panel.setFrame(frame, display: false)
         panel.orderFrontRegardless()
         window = panel
 
-        // A little past the animation's own end, so the fade-out finishes on screen.
+        // Past the animation's own end by enough to cover a late start: the view's clock
+        // begins on its first appearance, so the window has to outlive `duration` by the
+        // worst-case setup cost or the tail gets cut off again from the other end.
         dismissal = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64((duration + 0.15) * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64((duration + 0.45) * 1_000_000_000))
             guard !Task.isCancelled else { return }
             self?.teardown()
         }
@@ -105,21 +129,43 @@ private struct ChargeOverlayView: View {
     let percentage: Int
     let plugging: Bool
     let allowMotion: Bool
-    let start: Date
+
+    /// Set on first appearance. See the note in `show()`: the animation has to be timed
+    /// from the frame the user can see, not from the call that asked for it.
+    @State private var start: Date?
 
     var body: some View {
         TimelineView(.animation) { context in
-            let elapsed = context.date.timeIntervalSince(start)
+            let elapsed = context.date.timeIntervalSince(start ?? context.date)
             let t = max(0, min(1, elapsed / duration))
-            Canvas { gc, size in
+            // Rasterised off the main thread. The matrix is a few thousand shapes a frame
+            // and the main thread is also running whatever the user is doing.
+            Canvas(rendersAsynchronously: true) { gc, size in
+                // Everything Battlify draws here is light-on-dark, and it lands on
+                // whatever wallpaper you happen to have — on a white one the matrix would
+                // be invisible. A gradient scrim, heaviest at the bottom where the meter
+                // fills and gone by the top, buys the contrast without blacking out the
+                // screen you're still working on. Skipped for custom frames: those are
+                // somebody else's artwork and it isn't ours to tint.
+                if style != .custom { drawScrim(gc, size: size) }
                 if !allowMotion {
                     drawStill(gc, size: size, t: t)
                 } else {
                     switch style {
-                    case .dotGrid: drawDotGrid(gc, size: size, t: t)
+                    // Drawn as textures and masks instead, in `ChargeMatrixLayer` — see the
+                    // note there on why a matrix has no business being rebuilt per frame.
+                    case .dotGrid: break
                     case .ring:    drawRings(gc, size: size, t: t)
                     case .aurora:  drawAurora(gc, size: size, t: t)
                     case .custom:  drawCustom(gc, size: size, t: t)
+                    }
+                }
+            }
+            .overlay {
+                if allowMotion, style == .dotGrid || matrixFallsBackForCustom {
+                    ZStack {
+                        ChargeMatrixLayer(t: t, level: level, plugging: plugging)
+                        chargeReading(t)
                     }
                 }
             }
@@ -127,6 +173,7 @@ private struct ChargeOverlayView: View {
             .allowsHitTesting(false)
         }
         .ignoresSafeArea()
+        .onAppear { if start == nil { start = Date() } }
     }
 
     /// In fast, out slower: arriving deserves the attention, leaving shouldn't ask for any.
@@ -136,9 +183,15 @@ private struct ChargeOverlayView: View {
         return 1
     }
 
-    private var tint: Color {
-        plugging ? Color(red: 0.30, green: 0.85, blue: 0.44) : Color(white: 0.75)
+    private var level: Double { Double(max(0, min(100, percentage))) / 100 }
+
+    /// The colour standing for the current charge — computed, not picked. See
+    /// `ChargePalette`: the ramp runs red at empty through yellow to green at full.
+    private var accent: OKLab {
+        plugging ? ChargePalette.charging(level) : ChargePalette.unplugged
     }
+
+    private var tint: Color { Color(accent) }
 
     /// Where the energy comes from: the port side of a MacBook, low and to the left,
     /// so the wave looks like it enters the machine rather than appearing in mid-air.
@@ -148,115 +201,120 @@ private struct ChargeOverlayView: View {
 
     // MARK: - Styles
 
-    /// Dot-matrix charge meter, in the spirit of Nothing's charging visual.
-    ///
-    /// The previous version launched three fronts diagonally out of the port, one after
-    /// another, which read as something swinging out and back — a boomerang, not charging.
-    /// Three things fix that:
-    ///
-    ///   - The whole matrix is faintly lit the entire time. Before, only the moving band
-    ///     was drawn, so there was no grid to move *through* — just a stripe crossing the
-    ///     screen, which is what made the motion the subject instead of the charge.
-    ///   - Dots below your actual charge level are lit. The animation now says how full
-    ///     the battery is, which is the one thing a charging animation should say.
-    ///   - One rise, bottom to the fill line, and done. Charging goes up. Anything that
-    ///     repeats or reverses reads as a loading spinner.
-    private func drawDotGrid(_ gc: GraphicsContext, size: CGSize, t: Double) {
-        let spacing: CGFloat = 16
-        let radius: CGFloat = 1.1
-        let level = CGFloat(max(0, min(100, percentage))) / 100
-        // Canvas y grows downward, so the fill line sits `level` up from the bottom.
-        let fillLine = size.height * (1 - level)
-
-        // The highlight rises from the bottom edge to the fill line over the first part of
-        // the animation, eased so it leaves fast and settles — then holds while the
-        // envelope fades everything out.
-        let rise = CGFloat(Easing.outStrong(min(1, t / 0.62)))
-        let sweepY = size.height - rise * (size.height - fillLine)
-        let falloff: CGFloat = 46          // how far the highlight reaches, in points
-
-        let buckets = 6
-        var paths = [Path](repeating: Path(), count: buckets)
-        var rows = 0
-        var y: CGFloat = spacing / 2
-        while y < size.height {
-            var x: CGFloat = spacing / 2
-            var col = 0
-            while x < size.width {
-                // Faint matrix everywhere, brighter below the charge line.
-                // Wider gap between filled and empty than looks right in isolation: over a
-                // busy desktop the two regions have to be told apart at a glance.
-                var alpha: CGFloat = y >= fillLine ? 0.5 : 0.06
-                var grow: CGFloat = 0
-
-                let distance = abs(y - sweepY)
-                if distance < falloff {
-                    let amp = cos(distance / falloff * .pi / 2)   // 1 at the line, 0 at the edge
-                    alpha += 0.5 * amp
-                    grow = amp * 1.5
-                }
-                guard alpha > 0.05 else { x += spacing; col += 1; continue }
-
-                // A touch of jitter, only for dots the highlight is passing through: the
-                // "vibrating" quality, without shaking the static matrix.
-                var offset: CGFloat = 0
-                if grow > 0.05 {
-                    let seed = sin(Double(col) * 12.9898 + Double(rows) * 78.233) * 43758.5453
-                    offset = CGFloat((seed - seed.rounded(.down)) * 2 - 1) * grow * 1.1
-                }
-                let r = radius + grow
-                paths[min(buckets - 1, Int(min(1, alpha) * CGFloat(buckets)))]
-                    .addEllipse(in: CGRect(x: x + offset - r, y: y - r, width: r * 2, height: r * 2))
-                x += spacing
-                col += 1
-            }
-            y += spacing
-            rows += 1
-        }
-
-        for (index, path) in paths.enumerated() where !path.isEmpty {
-            let alpha = (CGFloat(index) + 0.5) / CGFloat(buckets)
-            gc.fill(path, with: .color(tint.opacity(Double(alpha))))
-        }
-
-        // The level, in the same monochrome register as the matrix, once the rise is done.
-        guard plugging else { return }
-        let appear = max(0, min(1, (t - 0.34) / 0.24))
-        var text = gc
-        text.opacity = Double(appear)
-        text.translateBy(x: size.width / 2, y: size.height / 2)
-        text.draw(Text("\(percentage)%")
-                    .font(.system(size: 74, weight: .medium, design: .monospaced))
-                    .foregroundStyle(tint),
-                  at: .zero)
+    private func drawScrim(_ gc: GraphicsContext, size: CGSize) {
+        gc.fill(Path(CGRect(origin: .zero, size: size)),
+                with: .linearGradient(
+                    Gradient(stops: [
+                        .init(color: .black.opacity(0.00), location: 0.0),
+                        .init(color: .black.opacity(0.10), location: 0.45),
+                        .init(color: .black.opacity(0.30), location: 1.0)
+                    ]),
+                    startPoint: .zero,
+                    endPoint: CGPoint(x: 0, y: size.height)))
     }
 
+
+    /// A pulse leaving the port, and the level it delivered.
+    ///
+    /// Three things were wrong with the first version, and all three are the same mistake
+    /// in different clothes — time was being used where physics was wanted.
+    ///
+    ///   - **The radius was linear in time.** A pressure wave spends its energy against
+    ///     the medium: it covers most of its distance immediately and crawls at the edge.
+    ///     Expanding at a constant rate is the tell of something that was timed rather than
+    ///     modelled, and it reads as a circle being resized rather than as a wave.
+    ///   - **The rings ran out before the animation did.** With three rings on a 1.5×
+    ///     clock the last one died at 67% of the duration, so the final third was an empty
+    ///     screen with a number fading on it. Rings are now staggered across the whole
+    ///     shot, so there is always one in flight until the scrim takes over.
+    ///   - **Opacity faded linearly.** Light doesn't. Fading on a curve keeps the ring
+    ///     readable through the middle of its travel and lets it disappear rather than
+    ///     switch off.
+    ///
+    /// The line also thins as the ring grows: the same energy is being spread around a
+    /// longer circumference, so a constant-weight stroke reads as a drawn circle instead of
+    /// a dissipating front.
     private func drawRings(_ gc: GraphicsContext, size: CGSize, t: Double) {
         let from = origin(size)
-        let maxR = hypot(size.width, size.height) * 0.75
-        for k in 0..<3 {
-            let offset = Double(k) * 0.17
-            let p = t * 1.5 - offset
+        let maxR = hypot(size.width, size.height) * 0.92
+
+        // Staggered by a tenth of the shot — the interval that reads as a sequence rather
+        // than as one thick ring or as five unrelated events.
+        let stagger = 0.10
+        let life = 0.62
+
+        for k in 0..<ringCount {
+            let p = (t - Double(k) * stagger) / life
             guard p > 0, p < 1 else { continue }
-            let r = CGFloat(p) * maxR
+            let eased = Easing.outQuint(p)
+            let r = CGFloat(eased) * maxR
+            guard r > 1 else { continue }
+
             let rect = CGRect(x: from.x - r, y: from.y - r, width: r * 2, height: r * 2)
+            // Squared falloff: bright while it's doing something, gone by the edge.
+            let alpha = pow(1 - p, 1.9) * 0.62
+            // 4pt at birth down to a hairline, so the front dissipates instead of
+            // arriving at the screen edge as a drawn circle.
+            let weight = 0.7 + 3.5 * (1 - eased)
             gc.stroke(Path(ellipseIn: rect),
-                      with: .color(tint.opacity((1 - p) * 0.55)),
-                      lineWidth: 2.5 + CGFloat(1 - p) * 3)
+                      with: .color(tint.opacity(alpha)),
+                      lineWidth: CGFloat(weight))
         }
+
+        drawPortBloom(gc, at: from, t: t)
         guard plugging else { return }
-        // Level, once the first ring has had time to travel.
-        let textAppear = max(0, min(1, (t - 0.12) / 0.25))
-        let scale = 0.86 + 0.14 * textAppear
-        var text = gc
-        text.translateBy(x: size.width / 2, y: size.height / 2)
-        text.scaleBy(x: scale, y: scale)
-        text.opacity = textAppear * (t > 0.7 ? max(0, 1 - (t - 0.7) / 0.3) : 1)
-        text.draw(Text("\(percentage)%")
-                    .font(.system(size: 96, weight: .semibold, design: .rounded))
+        drawLevelReadout(gc, size: size, t: t)
+    }
+
+    /// The flare at the port itself: one pulse, at the moment contact is made.
+    ///
+    /// Without it the rings appear from nothing — there is no *source*, just circles that
+    /// happen to share a centre. A bloom that peaks in the first 90ms and is gone by a third
+    /// of the way through gives the wave somewhere to have come from.
+    private func drawPortBloom(_ gc: GraphicsContext, at from: CGPoint, t: Double) {
+        let p = min(1, t / 0.34)
+        guard p < 1 else { return }
+        let intensity = pow(1 - p, 2.2)
+        let r = CGFloat(30 + 120 * Easing.outQuint(min(1, t / 0.22)))
+        let rect = CGRect(x: from.x - r, y: from.y - r, width: r * 2, height: r * 2)
+        gc.fill(Path(ellipseIn: rect),
+                with: .radialGradient(
+                    Gradient(colors: [tint.opacity(0.55 * intensity), tint.opacity(0)]),
+                    center: from, startRadius: 0, endRadius: r))
+    }
+
+    /// The number the whole thing exists to deliver.
+    ///
+    /// Enters on the `better-ui` recipe — opacity with a small scale and a blur resolving
+    /// to zero — rather than the bare linear fade it had. A large numeral that simply
+    /// appears reads as a label being switched on; one that resolves out of a blur reads as
+    /// something arriving. It leaves on a small downward drift, because exits are softer
+    /// than entrances and a symmetric one draws attention to itself on the way out.
+    private func drawLevelReadout(_ gc: GraphicsContext, size: CGSize, t: Double) {
+        let appear = Easing.outStrong(max(0, min(1, (t - 0.10) / 0.30)))
+        let leave = t > 0.70 ? Easing.outStrong(min(1, (t - 0.70) / 0.30)) : 0
+        let alpha = appear * (1 - leave)
+        guard alpha > 0.01 else { return }
+
+        var layer = gc
+        layer.opacity = alpha
+        layer.translateBy(x: size.width / 2,
+                          y: size.height / 2 + CGFloat(10 * leave))
+        let scale = 0.94 + 0.06 * appear
+        layer.scaleBy(x: scale, y: scale)
+        // 4pt → 0, the same figure the icon transitions use, so everything in the app
+        // resolves at the same rate.
+        layer.addFilter(.blur(radius: CGFloat(4 * (1 - appear))))
+        layer.draw(Text("\(percentage)%")
+                    .font(.system(size: 84, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
                     .foregroundStyle(tint),
                   at: .zero)
     }
+
+    /// Five is the count at which the wave reads as continuous without the screen becoming
+    /// a target. Four leaves a visible gap between fronts; six starts to moiré.
+    private var ringCount: Int { 5 }
 
     private func drawAurora(_ gc: GraphicsContext, size: CGSize, t: Double) {
         let height = size.height * (0.18 + 0.22 * sin(t * .pi))
@@ -269,13 +327,10 @@ private struct ChargeOverlayView: View {
     }
 
     /// A frame from the user's own sequence, scaled to fit and centred so a square export
-    /// isn't stretched across a 16:10 display. With no frames to play it falls back to the
-    /// dot grid rather than flashing an empty screen at you.
+    /// isn't stretched across a 16:10 display. With no frames to play it draws nothing and
+    /// the matrix layer underneath shows through — see `matrixFallsBackFor`.
     private func drawCustom(_ gc: GraphicsContext, size: CGSize, t: Double) {
-        guard let frame = ChargeFrameSequence.frame(at: t) else {
-            drawDotGrid(gc, size: size, t: t)
-            return
-        }
+        guard let frame = ChargeFrameSequence.frame(at: t) else { return }
         let source = frame.size
         guard source.width > 0, source.height > 0 else { return }
         let scale = min(size.width / source.width, size.height / source.height)
@@ -287,11 +342,35 @@ private struct ChargeOverlayView: View {
     }
 
     /// Reduce Motion: the same information, no travel — just the level fading in place.
+    /// "Custom" with nothing in the frames folder. The matrix stands in, rather than the
+    /// overlay being a second of dimmed screen and no explanation.
+    private var matrixFallsBackForCustom: Bool {
+        style == .custom && ChargeFrameSequence.frame(at: 0) == nil
+    }
+
+    /// The level, in the same register as the matrix, once the rise has landed. Monospaced
+    /// so the digits don't shuffle sideways, and it arrives late: the number is the
+    /// conclusion, so it shouldn't be on screen while the meter is still making the case.
+    @ViewBuilder
+    private func chargeReading(_ t: Double) -> some View {
+        if plugging {
+            Text("\(percentage)%")
+                .font(.system(size: 74, weight: .medium, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(tint)
+                .opacity(max(0, min(1, (t - 0.34) / 0.24)))
+                // A hair of scale with it. Type that fades in without moving reads as a
+                // layer being switched on; a few percent of growth reads as it arriving.
+                .scaleEffect(0.97 + 0.03 * max(0, min(1, (t - 0.34) / 0.24)))
+        }
+    }
+
     private func drawStill(_ gc: GraphicsContext, size: CGSize, t: Double) {
         var text = gc
         text.translateBy(x: size.width / 2, y: size.height / 2)
         text.draw(Text(plugging ? "\(percentage)%" : "Unplugged")
                     .font(.system(size: 72, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
                     .foregroundStyle(tint),
                   at: .zero)
     }
