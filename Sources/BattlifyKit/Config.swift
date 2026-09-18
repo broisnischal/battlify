@@ -19,40 +19,6 @@ public enum MagSafeLEDMode: String, Codable, Sendable, CaseIterable, Identifiabl
     }
 }
 
-/// How deeply the Mac sleeps when it's closed and idle.
-///
-/// `hibernatemode` is the whole lever on Apple silicon — the `standbydelay` knobs
-/// Intel Macs had don't appear in `pmset -g cap` there, so there is nothing else
-/// to tune. Writing it needs root, so the daemon applies it.
-public enum SleepDepth: String, Codable, Sendable, CaseIterable, Identifiable {
-    /// macOS default: memory stays powered, with an image written to disk as a
-    /// safety net. Wakes instantly.
-    case normal
-    /// Memory is powered down and restored from disk on wake. Saves the trickle
-    /// that keeping memory alive costs, at the price of a slower resume.
-    case deep
-
-    public var id: String { rawValue }
-
-    public var hibernateMode: Int { self == .deep ? 25 : 3 }
-
-    public var title: String {
-        switch self {
-        case .normal: return "Normal"
-        case .deep:   return "Deep"
-        }
-    }
-
-    public var summary: String {
-        switch self {
-        case .normal:
-            return "Memory stays powered while asleep, so the Mac wakes the moment you open the lid. The right choice unless you leave it closed for days at a time."
-        case .deep:
-            return "Powers memory down and restores it from disk. Saves the small trickle that keeping memory alive costs over a long sleep — but waking takes several seconds instead of being instant."
-        }
-    }
-}
-
 /// Persistent settings shared between the GUI (writer) and root daemon (reader).
 /// Stored as JSON at a system-wide path so the daemon can read it for any logged-in user.
 public struct BattlifyConfig: Codable, Equatable, Sendable {
@@ -68,14 +34,6 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     /// Legacy LED flag, kept for older daemon/GUI compat; `magSafeLedMode` is authoritative.
     public var magSafeLedEnabled: Bool
     public var magSafeLedMode: MagSafeLEDMode
-    /// What the fans should do: macOS's own curve, or held at a percentage of their range.
-    /// Forced mode survives quit, logout and reboot, so this is also the record the daemon
-    /// uses to notice fans left forced by a build that no longer exists and hand them back.
-    public var fanMode: FanMode
-    /// Hand the fans back to macOS at or above this °C, whatever `fanMode` says. A manual
-    /// speed below what the machine needs is the one way this feature can do harm.
-    /// 0 disables the guard.
-    public var fanAutoAboveTempC: Double
 
     /// Force-discharge (run off battery while plugged) to bring the level down to the limit.
     public var dischargeEnabled: Bool
@@ -132,9 +90,21 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
     public var calibrateToFull: Bool
     /// Charging paused until this time (nil = not paused; distantFuture = until resumed).
     public var pauseUntil: Date?
-    /// How deeply the Mac sleeps when closed and idle (see `SleepDepth`).
-    public var sleepDepth: SleepDepth
+    /// Sealed Sleep: power memory down when the lid shuts, and switch off everything that
+    /// would wake the Mac while it is. See `SealedSleep` for what that buys and what it costs.
+    public var sealedSleep: Bool
+    /// Keep instant wake: seal everything *except* memory. See `SealedSleep.fastWakeIsDefault`.
+    public var sealedSleepFastWake: Bool
+    /// The pmset settings Sealed Sleep displaced, held for its exit. Non-nil only while it
+    /// is on; see `SealedSleepRestore`.
+    /// Minutes of closed-lid sleep before instant wake hands over to hibernation.
+    /// 0 never hands over. Only consulted while Sealed Sleep and fast wake are both on.
+    public var sealedSleepHibernateAfter: Int
+    public var sealedSleepRestore: SealedSleepRestore?
     public var mode: SaveMode
+    /// Settings Extreme Performance took over, held for its exit. Non-nil only while a
+    /// performance mode is active; see `PerformanceRestore`.
+    public var performanceRestore: PerformanceRestore?
 
     public init(chargeLimitEnabled: Bool = false,
                 chargeLimit: Int = 80,
@@ -145,8 +115,6 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 magSafeLedMode: MagSafeLEDMode? = nil,
                 dischargeEnabled: Bool = false,
                 holdCharge: Bool = false,
-                fanMode: FanMode = .auto,
-                fanAutoAboveTempC: Double = 85,
                 disableChargingBeforeSleep: Bool = false,
                 preventIdleSleep: Bool = false,
                 keepAwake: Bool = false,
@@ -164,8 +132,12 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
                 chargePower: Int = 100,
                 calibrateToFull: Bool = false,
                 pauseUntil: Date? = nil,
-                sleepDepth: SleepDepth = .normal,
-                mode: SaveMode = .off) {
+                sealedSleep: Bool = false,
+                sealedSleepFastWake: Bool = SealedSleep.fastWakeIsDefault,
+                sealedSleepHibernateAfter: Int = 20,
+                sealedSleepRestore: SealedSleepRestore? = nil,
+                mode: SaveMode = .off,
+                performanceRestore: PerformanceRestore? = nil) {
         self.chargeLimitEnabled = chargeLimitEnabled
         self.chargeLimit = chargeLimit
         self.resumeMargin = resumeMargin
@@ -177,8 +149,6 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.magSafeLedMode = magSafeLedMode ?? .status
         self.dischargeEnabled = dischargeEnabled
         self.holdCharge = holdCharge
-        self.fanMode = fanMode
-        self.fanAutoAboveTempC = fanAutoAboveTempC
         self.disableChargingBeforeSleep = disableChargingBeforeSleep
         self.preventIdleSleep = preventIdleSleep
         self.keepAwake = keepAwake
@@ -196,11 +166,21 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
         self.chargePower = min(100, max(0, chargePower))
         self.calibrateToFull = calibrateToFull
         self.pauseUntil = pauseUntil
-        self.sleepDepth = sleepDepth
+        self.sealedSleep = sealedSleep
+        self.sealedSleepFastWake = sealedSleepFastWake
+        self.sealedSleepHibernateAfter = sealedSleepHibernateAfter
+        self.sealedSleepRestore = sealedSleepRestore
         self.mode = mode
+        self.performanceRestore = performanceRestore
     }
 
     public static let `default` = BattlifyConfig()
+
+    /// Keys that no longer have a property, read only to migrate what they meant.
+    private enum LegacyKeys: String, CodingKey {
+        /// The "Normal"/"Deep" sleep-depth picker Sealed Sleep replaced.
+        case sleepDepth
+    }
 
     // Version-tolerant decoding: missing keys fall back to defaults.
     public init(from decoder: Decoder) throws {
@@ -216,8 +196,6 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
             ?? (magSafeLedEnabled ? .status : .system)
         dischargeEnabled = try c.decodeIfPresent(Bool.self, forKey: .dischargeEnabled) ?? false
         holdCharge = try c.decodeIfPresent(Bool.self, forKey: .holdCharge) ?? false
-        fanMode = try c.decodeIfPresent(FanMode.self, forKey: .fanMode) ?? .auto
-        fanAutoAboveTempC = try c.decodeIfPresent(Double.self, forKey: .fanAutoAboveTempC) ?? 85
         disableChargingBeforeSleep = try c.decodeIfPresent(Bool.self, forKey: .disableChargingBeforeSleep) ?? false
         preventIdleSleep = try c.decodeIfPresent(Bool.self, forKey: .preventIdleSleep) ?? false
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false
@@ -238,10 +216,26 @@ public struct BattlifyConfig: Codable, Equatable, Sendable {
             ?? (slowCharge ? 50 : 100)))
         calibrateToFull = try c.decodeIfPresent(Bool.self, forKey: .calibrateToFull) ?? false
         pauseUntil = try c.decodeIfPresent(Date.self, forKey: .pauseUntil)
-        sleepDepth = try c.decodeIfPresent(SleepDepth.self, forKey: .sleepDepth) ?? .normal
-        // Older configs may still carry fanBoost* keys from the removed fan-boost
-        // feature; unknown keys are ignored, so they load fine.
+        // Migrate: the Normal/Deep "sleep depth" picker this replaced wrote the same
+        // hibernatemode, so anyone who had chosen Deep was already asking for Sealed Sleep
+        // and keeps it. The old key has no property left to synthesise a case for, hence
+        // the second container.
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        sealedSleep = try c.decodeIfPresent(Bool.self, forKey: .sealedSleep)
+            ?? (try legacy.decodeIfPresent(String.self, forKey: .sleepDepth) == "deep")
+        // Absent in configs written before the choice existed. Those were all hibernating,
+        // so they keep hibernating — changing what someone's Mac does on upgrade, silently,
+        // is worse than leaving them on the slower setting until they pick.
+        sealedSleepFastWake = try c.decodeIfPresent(Bool.self, forKey: .sealedSleepFastWake)
+            ?? (try c.decodeIfPresent(Bool.self, forKey: .sealedSleep) == true ? false
+                                                                              : SealedSleep.fastWakeIsDefault)
+        sealedSleepHibernateAfter = try c.decodeIfPresent(Int.self, forKey: .sealedSleepHibernateAfter) ?? 20
+        sealedSleepRestore = try c.decodeIfPresent(SealedSleepRestore.self, forKey: .sealedSleepRestore)
+        // Older configs still carry `fanMode`, `fanAutoAboveTempC` and the older
+        // `fanBoost*` keys from the fan control that used to live here. Unknown keys are
+        // ignored, so they load fine and the next save drops them.
         mode = try c.decodeIfPresent(SaveMode.self, forKey: .mode) ?? .off
+        performanceRestore = try c.decodeIfPresent(PerformanceRestore.self, forKey: .performanceRestore)
     }
 
     // MARK: - Keep-awake gating
