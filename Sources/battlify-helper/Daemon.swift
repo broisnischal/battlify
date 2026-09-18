@@ -12,7 +12,6 @@ import BattlifyKit
 final class Daemon: @unchecked Sendable {
     private let smc = SMC()
     private let charge: ChargeController
-    private let fans: FanController
     private let lock = NSLock()
 
     // History sampling. Timed rather than counted in ticks, because the tick rate
@@ -53,6 +52,14 @@ final class Daemon: @unchecked Sendable {
     private let signalQueue = DispatchQueue(label: "com.battlify.helper.signals")
     private var signalSources: [DispatchSourceSignal] = []
 
+    // Deferred hibernation (see `DeferredHibernate`): the wake we booked on the way into a
+    // closed-lid sleep, and whether that wake is the one we are expecting. Both live in
+    // memory on purpose — hibernation restores the process image, so they survive the very
+    // sleep they describe, and a daemon restart should forget a deferral it can't finish.
+    private var deferredWakeStamp: String?
+    private var deferredHibernateArmed = false
+    private var handedOverToHibernation = false
+
     // Held IOPMAssertion preventing idle sleep (0 = none held).
     private var idleSleepAssertion: IOPMAssertionID = 0
 
@@ -83,13 +90,17 @@ final class Daemon: @unchecked Sendable {
     private var pmsetCacheAt: Date?
     private var pmsetCacheLPM = false
     private var pmsetCacheToggles: [String: Bool] = [:]
+    private var pmsetCacheHighPower = (supported: false, enabled: false)
+    private var pmsetCacheHibernate: Int?
+    private var pmsetCacheStandby: Bool?
+    /// pmset keys the last Sealed Sleep write asked for and didn't get, reported to the app.
+    private var sealedSleepRefused: [String] = []
     // Longer than the GUI's 30s status poll so periodic refreshes hit the cache
     // instead of forking two `pmset` each time; we invalidate on any change we make.
     private let pmsetCacheTTL: TimeInterval = 60
 
     init() {
         charge = ChargeController(smc: smc)
-        fans = FanController(smc: smc)
     }
 
     static func run() {
@@ -106,6 +117,13 @@ final class Daemon: @unchecked Sendable {
             exit(3)
         }
 
+        // Fan control was removed, but forced fan mode lives in the SMC and outlives the
+        // build that set it. Hand back anything an older helper left pinned, once, here.
+        let releasedFans = FanRelease.releaseAll(smc)
+        if releasedFans > 0 { log("handed \(releasedFans) forced fan(s) back to macOS") }
+
+        reassertSealedSleepIfNeeded()
+
         installSignalHandlers()
 
         let server = ControlServer { [weak self] req in
@@ -120,6 +138,15 @@ final class Daemon: @unchecked Sendable {
         sleepWatcher.onWillSleep = { [weak self] in self?.cutChargingForSleep() }
         sleepWatcher.onDidWake = { [weak self] in self?.reevaluateAfterWake() }
         sleepWatcher.start()
+
+        // A deferral that never finished — the daemon was killed, or the Mac was restarted
+        // while hibernating was set — would otherwise leave every close taking 30 seconds
+        // to open with nothing on screen explaining why.
+        let startupConfig = ConfigStore.load()
+        if startupConfig.sealedSleepFastWake, DeferredHibernate.isHibernating {
+            DeferredHibernate.restoreFastWake()
+            log("instant wake restored (a deferred hibernation was left applied)")
+        }
 
         log("daemon started (scheme: \(charge.schemeDescription))")
 
@@ -154,18 +181,37 @@ final class Daemon: @unchecked Sendable {
             cfg.chargeLimit = min(100, max(20, cfg.chargeLimit))
             // wide recharge band (≤40%) but keep the floor (limit − margin) ≥ 20%
             cfg.resumeMargin = max(1, min(cfg.resumeMargin, 40, cfg.chargeLimit - 20))
+            // Sealed Sleep has a transition to run, so a config write can't be allowed to
+            // flip it: the snapshot it needs on the way in, and the restore on the way out,
+            // both live in `setSealedSleep`. Keep whatever is actually in force.
+            let inForce = ConfigStore.load()
+            cfg.sealedSleep = inForce.sealedSleep
+            cfg.sealedSleepFastWake = inForce.sealedSleepFastWake
+            cfg.sealedSleepRestore = inForce.sealedSleepRestore
             do {
                 try ConfigStore.save(cfg)
                 tick() // apply immediately
-                // System-wide and persistent, so only write it when it differs.
-                if PowerSettings.readHibernateMode() != cfg.sleepDepth.hibernateMode,
-                   !PowerSettings.setSleepDepth(cfg.sleepDepth) {
-                    return status(ok: false, message: "saved, but pmset refused hibernatemode")
-                }
                 return status(ok: true, message: "saved")
             } catch {
                 return status(ok: false, message: "save failed: \(error)")
             }
+
+        case .setSealedSleep(let on):
+            return setSealedSleep(on, fastWake: ConfigStore.load().sealedSleepFastWake)
+
+        case .setSealedSleepFastWake(let fast):
+            let cfg = ConfigStore.load()
+            // Re-applying with the new choice is the whole operation: it rewrites
+            // hibernatemode one way or the other and leaves everything else sealed.
+            guard cfg.sealedSleep else {
+                var next = cfg
+                next.sealedSleepFastWake = fast
+                do { try ConfigStore.save(next) } catch {
+                    return status(ok: false, message: "save failed: \(error)")
+                }
+                return status(ok: true, message: "saved")
+            }
+            return setSealedSleep(true, fastWake: fast)
 
         case .setLowPowerMode(let on):
             let ok = LowPowerMode.set(on)
@@ -196,17 +242,9 @@ final class Daemon: @unchecked Sendable {
             // The GUI asking for what the daemon now also does for itself. Kept so an
             // older app build still gets the cut, and because the app sees lid-close
             // sleeps the daemon's hook and this can race — both paths are idempotent.
-            return status(ok: cutChargingForSleepLocked(), message: "sleep handled")
-
-        case .setFanMode(let mode):
-            var cfg = ConfigStore.load()
-            cfg.fanMode = mode
-            let applied = applyFanMode(mode)
-            do { try ConfigStore.save(cfg) } catch {
-                return status(ok: false, message: "fans set but save failed: \(error)")
-            }
-            return status(ok: applied,
-                          message: applied ? "fans set" : "the SMC refused the fan write")
+            let cut = cutChargingForSleepLocked()
+            releaseMemoryIfSealed()
+            return status(ok: cut, message: "sleep handled")
 
         case .calibrateToFull(let on):
             var cfg = ConfigStore.load()
@@ -221,41 +259,85 @@ final class Daemon: @unchecked Sendable {
             HistoryStore.clear()
             lastSampleAt = Date()
             return status(ok: true, message: "history cleared")
+
+        case .installUpdate(let path):
+            do { try HelperUpdate.apply(replacementAt: path) } catch {
+                err("update refused: \(error)")
+                return status(ok: false, message: "\(error)")
+            }
+            log("helper replaced on disk; restarting onto the new build")
+            // Answer before going down. The client is still waiting on this connection, and
+            // exiting inside the handler would reach it as a dropped socket — indistinguishable
+            // from the daemon crashing on the request. The delay also gets us out from under
+            // `lock`, which this handler holds and `performCleanupAndExit` takes again.
+            // launchd's KeepAlive starts the replacement.
+            Thread.detachNewThread { [self] in
+                Thread.sleep(forTimeInterval: 0.5)
+                performCleanupAndExit()
+            }
+            return status(ok: true, message: "helper updated")
         }
     }
 
     /// Apply the daemon-controlled parts of a save mode; the GUI applies lid-radio prefs separately.
     private func applyMode(_ mode: SaveMode) -> ControlResponse {
         let p = mode.profile
-        var cfg = ConfigStore.load()
-        cfg.mode = mode
-        cfg.chargeLimitEnabled = p.chargeLimitEnabled
-        cfg.chargeLimit = p.chargeLimit
-        cfg.heatAwareEnabled = p.heatAwareEnabled
-        cfg.maxChargeTempC = p.maxChargeTempC
+        let previous = ConfigStore.load()
+        // The settings half of the switch is a pure function in BattlifyKit, where it can
+        // be tested; everything below here is the side effects it implies.
+        let cfg = previous.applying(mode)
+
         do { try ConfigStore.save(cfg) } catch {
             return status(ok: false, message: "save failed: \(error)")
         }
 
         LowPowerMode.set(p.lowPowerMode)
-        PowerSettings.set(.powerNap, p.powerNap)
-        PowerSettings.set(.wakeOnNetwork, p.wakeOnNetwork)
-        PowerSettings.set(.tcpKeepAlive, p.tcpKeepAlive)
+        // Sealed Sleep owns the sleep/wake toggles while it's on, and a mode must not take
+        // them back. Every profile names a value for these, so without this guard picking
+        // "Off" — whose profile turns Power Nap *on* — would quietly unseal the Mac and
+        // leave the switch still reading sealed. The audit would eventually show the leak;
+        // the user would have no idea what caused it.
+        if !cfg.sealedSleep {
+            PowerSettings.set(.powerNap, p.powerNap)
+            PowerSettings.set(.wakeOnNetwork, p.wakeOnNetwork)
+            PowerSettings.set(.tcpKeepAlive, p.tcpKeepAlive)
+        }
+        // Ordering matters on the way out: Low Power Mode and High Power Mode are two
+        // faces of the same pmset key, so the last write wins. Low Power first, High
+        // Power second, and a mode that wants neither writes 0 to both harmlessly.
+        let highPowerApplied = HighPowerMode.set(p.highPowerMode)
         invalidatePmsetCache()
 
         tick() // enforce charge limit immediately
-        return status(ok: true, message: "mode \(mode.rawValue)")
+
+        // Report what the Mac couldn't do rather than claiming the whole mode landed. Only a
+        // handful of Macs expose High Power Mode, and a mode that reports success on
+        // hardware which ignored half of it is lying.
+        let note = (p.highPowerMode && !highPowerApplied)
+            ? "mode \(mode.rawValue) — this Mac has no High Power Mode"
+            : "mode \(mode.rawValue)"
+        return status(ok: true, message: note)
     }
 
     /// pmset-derived state, cached for `pmsetCacheTTL` to avoid forking pmset on every status call.
-    private func pmsetState() -> (lpm: Bool, toggles: [String: Bool]) {
-        if let at = pmsetCacheAt, Date().timeIntervalSince(at) < pmsetCacheTTL {
-            return (pmsetCacheLPM, pmsetCacheToggles)
+    private func pmsetState() -> (lpm: Bool, toggles: [String: Bool],
+                                  highPowerSupported: Bool, highPower: Bool,
+                                  hibernateMode: Int?, standby: Bool?) {
+        if pmsetCacheAt == nil || Date().timeIntervalSince(pmsetCacheAt!) >= pmsetCacheTTL {
+            pmsetCacheLPM = LowPowerMode.isEnabled()
+            // One read, every parse — high power, the toggles and the sleep keys all live
+            // in the same output.
+            let custom = PowerSettings.readCustom()
+            pmsetCacheToggles = PowerSettings.readToggles(from: custom)
+            pmsetCacheHighPower = HighPowerMode.state(from: custom)
+            let values = PowerSettings.readValues(from: custom).battery
+            pmsetCacheHibernate = values["hibernatemode"].flatMap(Int.init)
+            pmsetCacheStandby = values["standby"].map { $0 == "1" }
+            pmsetCacheAt = Date()
         }
-        pmsetCacheLPM = LowPowerMode.isEnabled()
-        pmsetCacheToggles = PowerSettings.readToggles()
-        pmsetCacheAt = Date()
-        return (pmsetCacheLPM, pmsetCacheToggles)
+        return (pmsetCacheLPM, pmsetCacheToggles,
+                pmsetCacheHighPower.supported, pmsetCacheHighPower.enabled,
+                pmsetCacheHibernate, pmsetCacheStandby)
     }
 
     private func invalidatePmsetCache() { pmsetCacheAt = nil }
@@ -275,9 +357,12 @@ final class Daemon: @unchecked Sendable {
             magSafeSupported: charge.isMagSafeSupported,
             dischargeSupported: charge.isAdapterControlSupported,
             discharging: charge.isAdapterControlSupported && !((try? charge.isAdapterEnabled()) ?? true),
-            fans: fans.readAll(),
-            fanControlSupported: fans.controlSupported,
             sensors: SensorReader.readAll(),
+            hibernateMode: pmset.hibernateMode,
+            standbyEnabled: pmset.standby,
+            sealedSleepRefused: sealedSleepRefused,
+            highPowerModeSupported: pmset.highPowerSupported,
+            highPowerModeEnabled: pmset.highPower,
             message: message
         )
     }
@@ -409,7 +494,6 @@ final class Daemon: @unchecked Sendable {
         lastPauseReason = desired ? (enable ? nil : "slow") : reason
         ensure(enabled: enable, current: charging)
         manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
-        updateFans(cfg, snap)
         updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
@@ -476,61 +560,6 @@ final class Daemon: @unchecked Sendable {
         return Double(minutesUntil) <= minutesNeeded
     }
 
-    // MARK: - Fans
-
-    /// Keep the fans in the state the config asks for.
-    ///
-    /// Nothing is written unless the user has asked for a manual speed, and a refusal is
-    /// final.
-    ///
-    /// The first version of this re-asserted every tick and logged on every failure, which on
-    /// a Mac that refuses fan writes — an M3 Pro on macOS 26 refuses all of them — meant a
-    /// line of log spam every few seconds and a pointless SMC write behind it. It also read
-    /// `F<i>Md != 0` as "forced", which is wrong: that machine reports 3 with macOS plainly
-    /// in charge, so the daemon believed the fans were stuck and fought a controller that was
-    /// never there. Both are why the fans appeared to stutter on and off.
-    ///
-    /// So: auto writes nothing at all. Manual tries, and if the SMC says no, `FanController`
-    /// latches that and every later attempt is skipped.
-    private func updateFans(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
-        guard fans.controlSupported else { return }
-        guard case .manual(let percent) = cfg.fanMode else { return }
-
-        // Heat wins over the setting: a manual speed below what the machine needs is the one
-        // way this feature can do damage.
-        if cfg.fanAutoAboveTempC > 0, let temperature = snap.temperature,
-           temperature >= cfg.fanAutoAboveTempC {
-            if fans.restoreAuto() {
-                log("fans handed back to macOS: \(String(format: "%.1f", temperature))°C ≥ guard \(cfg.fanAutoAboveTempC)°C")
-            }
-            return
-        }
-
-        // Re-assert only when the hardware has drifted from what was asked for; writing every
-        // tick would be SMC traffic for nothing.
-        let drifted = fans.readAll().contains { reading in
-            let span = reading.maximum - reading.minimum
-            let wanted = reading.minimum + span * Double(min(100, max(0, percent))) / 100
-            return abs(reading.target - wanted) > 50
-        }
-        guard drifted else { return }
-        if fans.setManual(percent: percent) {
-            log("fans held at \(percent)%")
-        } else {
-            err("this Mac refuses fan writes; leaving the fans to macOS")
-        }
-    }
-
-    /// Apply a mode immediately, for the control request.
-    @discardableResult
-    private func applyFanMode(_ mode: FanMode) -> Bool {
-        guard fans.isSupported else { return false }
-        switch mode {
-        case .auto: return fans.restoreAuto()
-        case .manual(let percent): return fans.setManual(percent: percent)
-        }
-    }
-
     // MARK: - Sleep / wake
 
     /// Cut charging on the way into sleep, so the battery can't cross the limit while
@@ -540,6 +569,80 @@ final class Daemon: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         _ = cutChargingForSleepLocked()
+        releaseMemoryIfSealed()
+        armDeferredHibernate()
+    }
+
+    /// Book the wake that turns a long close into a hibernated one. Caller must hold `lock`.
+    ///
+    /// Battery only, lid only. At a desk the trickle is paid for by the adapter and a
+    /// 30-second wake would be the only thing you'd notice, and an idle sleep with the lid
+    /// open is someone stepping away from a machine they expect to find awake-ish.
+    private func armDeferredHibernate() {
+        let cfg = ConfigStore.load()
+        guard cfg.sealedSleep, cfg.sealedSleepFastWake,
+              cfg.sealedSleepHibernateAfter > 0, !cfg.keepAwake,
+              SystemPower.isClamshellClosed(),
+              !BatteryMonitor.read().onExternalPower else { return }
+
+        if let stale = deferredWakeStamp { DeferredHibernate.cancel(stale) }
+        deferredWakeStamp = DeferredHibernate.schedule(after: cfg.sealedSleepHibernateAfter)
+        deferredHibernateArmed = deferredWakeStamp != nil
+        if deferredHibernateArmed {
+            log("hibernation deferred by \(cfg.sealedSleepHibernateAfter)m")
+        } else {
+            err("could not book the deferred-hibernate wake; staying in ordinary sleep")
+        }
+    }
+
+    /// The other half: we asked to be woken, we're awake, so decide which kind of wake this
+    /// is. Still shut and off the charger means the close outlasted the deferral, and memory
+    /// has nothing left to stay powered for. Caller must hold `lock`.
+    private func resolveDeferredHibernate() {
+        if let stamp = deferredWakeStamp {
+            DeferredHibernate.cancel(stamp)
+            deferredWakeStamp = nil
+        }
+
+        let lidShut = SystemPower.isClamshellClosed()
+
+        if deferredHibernateArmed {
+            deferredHibernateArmed = false
+            let cfg = ConfigStore.load()
+            if lidShut, cfg.sealedSleep, cfg.sealedSleepFastWake,
+               !BatteryMonitor.read().onExternalPower {
+                _ = cutChargingForSleepLocked()
+                handedOverToHibernation = true
+                if DeferredHibernate.handoff() {
+                    log("still shut past the deferral; memory off, hibernating")
+                } else {
+                    handedOverToHibernation = false
+                    err("hibernation handover refused; staying in ordinary sleep")
+                }
+                return
+            }
+        }
+
+        // Opened again: instant wake goes back on, so the next short close is short.
+        if handedOverToHibernation, !lidShut {
+            handedOverToHibernation = false
+            DeferredHibernate.restoreFastWake()
+            log("lid open; instant wake restored")
+        }
+    }
+
+    /// Drop the inactive file cache on the way into a sealed sleep.
+    ///
+    /// Only when Sealed Sleep is on, because only then is memory about to be written to
+    /// disk and read back: with ordinary sleep the pages stay powered where they are and
+    /// purging them buys nothing but a cold cache. Caller must hold `lock`.
+    private func releaseMemoryIfSealed() {
+        let cfg = ConfigStore.load()
+        // Nothing is being written to disk with fast wake on, so there is no image to shrink.
+        guard cfg.sealedSleep, !cfg.sealedSleepFastWake else { return }
+        if SealedSleepController.releaseCachedMemory() {
+            log("released cached memory before hibernating")
+        }
     }
 
     /// The cut itself. Applies whenever a limit is being enforced, not only when the
@@ -572,7 +675,73 @@ final class Daemon: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         settleUntil = Date().addingTimeInterval(wakeSettleDuration)
+        resolveDeferredHibernate()
         tick()
+    }
+
+    // MARK: - Sealed Sleep
+
+    /// Turn Sealed Sleep on or off, snapshotting what it displaces so the exit is exact.
+    ///
+    /// Caller must hold `lock`. Re-applying while already on is not a no-op — it rewrites
+    /// the keys — but it deliberately does not re-snapshot, for the same reason
+    /// `applying(_:)` doesn't: the snapshot has to describe the Mac *before* the feature,
+    /// and overwriting it with the feature's own values would make the exit restore nothing.
+    private func setSealedSleep(_ on: Bool, fastWake: Bool) -> ControlResponse {
+        var cfg = ConfigStore.load()
+        cfg.sealedSleepFastWake = fastWake
+
+        if on {
+            if cfg.sealedSleepRestore == nil { cfg.sealedSleepRestore = SealedSleepController.snapshot() }
+            sealedSleepRefused = SealedSleepController.apply(fastWake: fastWake,
+                                                             restoring: cfg.sealedSleepRestore)
+        } else {
+            // A missing snapshot means the feature was switched on by a build that didn't
+            // keep one, or the config was hand-edited. Fall back to what macOS ships with:
+            // leaving the Mac hibernating after the switch is off is the one outcome that
+            // is definitely wrong.
+            let saved = cfg.sealedSleepRestore
+                ?? SealedSleepRestore(hibernateMode: SealedSleep.hibernateDefault,
+                                      standby: true, powerNap: true,
+                                      wakeForNetwork: false, networkInSleep: true,
+                                      terminalSessionsKeepAwake: false)
+            sealedSleepRefused = SealedSleepController.restore(saved)
+            cfg.sealedSleepRestore = nil
+        }
+        cfg.sealedSleep = on
+        invalidatePmsetCache()
+
+        do { try ConfigStore.save(cfg) } catch {
+            return status(ok: false, message: "sealed sleep applied but save failed: \(error)")
+        }
+
+        if sealedSleepRefused.isEmpty {
+            log("sealed sleep \(on ? (fastWake ? "on (fast wake)" : "on (hibernating)") : "off")")
+            return status(ok: true, message: on ? "sealed" : "unsealed")
+        }
+        let refused = sealedSleepRefused.joined(separator: ", ")
+        err("sealed sleep: this Mac refused \(refused)")
+        return status(ok: false, message: "this Mac refused \(refused)")
+    }
+
+    /// Re-assert Sealed Sleep at startup if the system has drifted from it.
+    ///
+    /// These are `pmset` settings, so they normally outlive everything and need no
+    /// enforcement. "Normally" is the catch: a macOS update rewrites power management
+    /// defaults, and a user who turned this on months ago would otherwise find it quietly
+    /// stopped working, with the switch still showing on. Checked once, here, not per tick.
+    private func reassertSealedSleepIfNeeded() {
+        let cfg = ConfigStore.load()
+        guard cfg.sealedSleep else { return }
+        var state = SealedSleepController.observe(wifiOffOnLidClose: true,
+                                                  bluetoothOffOnLidClose: true,
+                                                  keepAwakeOnBattery: false)
+        state.fastWake = cfg.sealedSleepFastWake
+        guard !state.isSealed else { return }
+        log("sealed sleep had drifted (\(state.leaks.map(\.rawValue).joined(separator: ", "))); re-applying")
+        sealedSleepRefused = SealedSleepController.apply(fastWake: cfg.sealedSleepFastWake,
+                                                         restoring: cfg.sealedSleepRestore)
+        invalidatePmsetCache()
     }
 
     /// "Always Active": keep the Mac awake with the lid closed. `pmset disablesleep`
@@ -664,12 +833,18 @@ final class Daemon: @unchecked Sendable {
         }
     }
 
-    /// Hold an idle-sleep assertion only while prevent-idle-sleep is on, a limit is
-    /// enforced, and on wall power (never keep draining on battery).
+    /// Hold an idle-sleep assertion while prevent-idle-sleep is on and the Mac is on wall
+    /// power (never keep draining on battery).
+    ///
+    /// It used to require `chargeLimitEnabled` as well, on the reasoning that the assertion
+    /// existed so the limit could keep being enforced. That quietly broke the one mode that
+    /// wants it most: Extreme Performance asks for `preventIdleSleep` *and* turns the charge
+    /// limit off, so the two conditions could never both hold and the Mac idled out from
+    /// under a long render. The switch says "keeps the Mac awake on power" — so it does.
     private func updateIdleSleepAssertion(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
         // onExternalPower (not isPluggedIn) so a force-discharge doesn't drop the
         // assertion and let the daemon freeze mid-drain.
-        let want = cfg.preventIdleSleep && cfg.chargeLimitEnabled && snap.onExternalPower
+        let want = cfg.preventIdleSleep && snap.onExternalPower
         if want && idleSleepAssertion == 0 {
             var id: IOPMAssertionID = 0
             let ok = IOPMAssertionCreateWithName(
@@ -807,9 +982,6 @@ final class Daemon: @unchecked Sendable {
     /// (Uninstall re-enables explicitly, after unloading this daemon.)
     private func performCleanupAndExit() -> Never {
         lock.lock()   // hold through exit; serialize SMC access with tick()
-        // Forced fans outlive this process, so leaving them forced on the way out is exactly
-        // how a Mac ends up pinned at full speed by software that no longer exists.
-        if fans.controlSupported { fans.restoreAuto() }
         PowerSettings.setDisableSleep(false)
         if ConfigStore.load().chargeLimitEnabled {
             try? charge.disableCharging()
