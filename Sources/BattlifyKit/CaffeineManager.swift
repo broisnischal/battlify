@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreGraphics
 import IOKit.pwr_mgt
 
 /// How far a keep-awake hold reaches.
@@ -24,11 +25,38 @@ public protocol KeepAwakeAsserting: Sendable {
     /// Acquire a hold that stops idle-sleep. Returns a non-zero token, or 0 on failure.
     func acquire(kind: KeepAwakeHold, reason: String) -> UInt32
     func release(_ token: UInt32)
+
+    /// Push back the screen-saver and lock-screen timers.
+    ///
+    /// A display-sleep assertion is *not* enough on its own: it stops the display idling
+    /// out, but the screen saver runs off how long it's been since the user did anything,
+    /// and locking follows the screen saver. Hold only the assertion and a Mac left alone
+    /// still slides behind the lock screen — which is what "keep awake" is supposed to
+    /// prevent. Declaring user activity is the one public lever that resets that clock,
+    /// and it buys one display-sleep timer's worth, so it has to be repeated.
+    ///
+    /// Returns false when the backend can't do this at all, which tells the caller to
+    /// stop asking.
+    func keepUserActive(reason: String) -> Bool
+    /// Drop the user-active declaration. The timers pick up from the last call.
+    func endUserActive()
+}
+
+public extension KeepAwakeAsserting {
+    func keepUserActive(reason: String) -> Bool { false }
+    func endUserActive() {}
 }
 
 /// Real backend: an IOPM idle-sleep assertion, display-wide or system-only. Needs no
 /// root; auto-released on process exit, so it can't strand the Mac awake.
-public struct IOKitKeepAwake: KeepAwakeAsserting {
+///
+/// A class, not a struct, because the user-activity declaration hands back an ID that
+/// has to be given straight back on the next call — IOKit re-uses or re-issues it
+/// depending on how long it's been.
+public final class IOKitKeepAwake: KeepAwakeAsserting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var activityID: IOPMAssertionID = 0
+
     public init() {}
 
     public func acquire(kind: KeepAwakeHold, reason: String) -> UInt32 {
@@ -47,6 +75,31 @@ public struct IOKitKeepAwake: KeepAwakeAsserting {
     public func release(_ token: UInt32) {
         if token != 0 { IOPMAssertionRelease(token) }
     }
+
+    public func keepUserActive(reason: String) -> Bool {
+        // Declaring activity powers the display back on, so don't do it to a screen the
+        // user just switched off deliberately — resting, the Off button, ⌃⇧⏻. Still
+        // "supported", so the caller keeps checking back rather than giving up.
+        guard CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return true }
+        lock.withLock {
+            var id = activityID
+            // The name is distinct from the hold's: two assertions from one process, and
+            // anything reading them back (tests included) should be able to tell them apart.
+            if IOPMAssertionDeclareUserActivity("\(reason) — user active" as CFString,
+                                                kIOPMUserActiveLocal, &id) == kIOReturnSuccess {
+                activityID = id
+            }
+        }
+        return true
+    }
+
+    public func endUserActive() {
+        lock.withLock {
+            if activityID != 0 { IOPMAssertionRelease(activityID); activityID = 0 }
+        }
+    }
+
+    deinit { endUserActive() }
 }
 
 /// "Caffeine" mode: keep the Mac awake (display on, no idle-sleep) until turned off
@@ -77,14 +130,20 @@ public final class CaffeineManager: ObservableObject {
     private let sleepFor: @Sendable (TimeInterval) async -> Void
     private var token: UInt32 = 0
     private var expiryTask: Task<Void, Never>?
+    /// How often the screen-saver/lock clock gets pushed back while the screen is held on.
+    /// Comfortably under the shortest screen-saver setting macOS offers (one minute).
+    private let userActivityInterval: TimeInterval
+    private var activityTask: Task<Void, Never>?
 
     public init(backend: KeepAwakeAsserting = IOKitKeepAwake(),
                 reason: String = "Battlify: Caffeine (keep awake)",
+                userActivityInterval: TimeInterval = 30,
                 sleepFor: @escaping @Sendable (TimeInterval) async -> Void = { seconds in
                     try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 }) {
         self.backend = backend
         self.reason = reason
+        self.userActivityInterval = userActivityInterval
         self.sleepFor = sleepFor
     }
 
@@ -129,6 +188,7 @@ public final class CaffeineManager: ObservableObject {
             hold = desiredHold
         }
         active = true
+        syncUserActivity()
 
         guard let secs = duration.seconds else { expiresAt = nil; return }
         expiresAt = Date().addingTimeInterval(secs)
@@ -147,6 +207,28 @@ public final class CaffeineManager: ObservableObject {
         active = false
         expiresAt = nil
         hold = nil
+        syncUserActivity()
+    }
+
+    /// Keep the screen-saver and lock clocks pushed back for as long as — and only as
+    /// long as — the screen itself is being held on. A system-only hold means the screen
+    /// is *allowed* to sleep, so locking behind it is the user's own setting, not a bug.
+    private func syncUserActivity() {
+        activityTask?.cancel()
+        guard active, hold == .displayOn else {
+            activityTask = nil
+            backend.endUserActive()
+            return
+        }
+        activityTask = Task { [backend, reason, sleepFor, userActivityInterval] in
+            while !Task.isCancelled {
+                // Declare first, so turning Caffeine on resets the clock immediately —
+                // and a backend that can't do this at all drops out here rather than
+                // spinning on a call that does nothing.
+                guard backend.keepUserActive(reason: reason) else { return }
+                await sleepFor(userActivityInterval)
+            }
+        }
     }
 
     /// Push the policy and the current power source in one idempotent call, so the app
@@ -180,9 +262,14 @@ public final class CaffeineManager: ObservableObject {
         backend.release(token)
         token = replacement
         hold = desiredHold
+        // Unplugging narrows the hold to system-only; the screen is then free to sleep
+        // and lock, so stop insisting the user is active.
+        syncUserActivity()
     }
 
     deinit {
+        activityTask?.cancel()
+        backend.endUserActive()
         if token != 0 { backend.release(token) }
     }
 }
