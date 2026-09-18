@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CoreGraphics
 import IOKit.pwr_mgt
 @testable import BattlifyKit
 
@@ -43,6 +44,25 @@ final class FakeKeepAwake: KeepAwakeAsserting, @unchecked Sendable {
 struct FailingKeepAwake: KeepAwakeAsserting {
     func acquire(kind: KeepAwakeHold, reason: String) -> UInt32 { 0 }
     func release(_ token: UInt32) {}
+}
+
+/// Counts the user-activity declarations — the thing that keeps the screen saver and
+/// the lock screen at bay, which a sleep assertion alone doesn't govern.
+final class ActivityKeepAwake: KeepAwakeAsserting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _declared = 0
+    private var _ended = 0
+
+    var declaredCount: Int { lock.withLock { _declared } }
+    var endedCount: Int { lock.withLock { _ended } }
+
+    func acquire(kind: KeepAwakeHold, reason: String) -> UInt32 { 1 }
+    func release(_ token: UInt32) {}
+    func keepUserActive(reason: String) -> Bool {
+        lock.withLock { _declared += 1 }
+        return true
+    }
+    func endUserActive() { lock.withLock { _ended += 1 } }
 }
 
 /// A one-shot gate that makes injected timed-expiry deterministic: the manager
@@ -97,6 +117,57 @@ struct CaffeineManagerTests {
         m.applyPolicy(keepDisplayOnBattery: false, endOnBattery: false, onExternalPower: true)
         #expect(m.hold == .displayOn)
         #expect(fake.heldCount == 1)
+    }
+
+    // --- Screen saver and lock screen ---
+
+    /// The complaint this exists for: keep-awake was on and the Mac locked itself anyway.
+    /// A display-sleep assertion doesn't touch the screen-saver clock, so the hold has to
+    /// declare user activity as well.
+    @Test func displayHoldPushesBackTheLockClock() async {
+        let backend = ActivityKeepAwake()
+        let m = CaffeineManager(backend: backend)
+        m.activate()
+        await waitUntil { backend.declaredCount >= 1 }
+        #expect(backend.declaredCount >= 1, "holding the screen on must hold off the lock")
+    }
+
+    /// A system-only hold lets the screen sleep by design, so locking behind it is the
+    /// user's own setting — insisting they're active would light the screen back up.
+    @Test func systemOnlyHoldLeavesTheLockClockAlone() async {
+        let backend = ActivityKeepAwake()
+        let m = CaffeineManager(backend: backend)
+        m.applyPolicy(keepDisplayOnBattery: false, endOnBattery: false, onExternalPower: false)
+        m.activate()
+        #expect(m.hold == .systemOnly)
+        for _ in 0..<50 { await Task.yield() }
+        #expect(backend.declaredCount == 0)
+    }
+
+    @Test func deactivateStopsDeclaringActivity() async {
+        let backend = ActivityKeepAwake()
+        let m = CaffeineManager(backend: backend)
+        m.activate()
+        await waitUntil { backend.declaredCount >= 1 }
+        m.deactivate()
+        let after = backend.declaredCount
+        #expect(backend.endedCount >= 1, "the declaration must be dropped, not left running")
+        for _ in 0..<50 { await Task.yield() }
+        #expect(backend.declaredCount == after, "no declarations once the session is over")
+    }
+
+    /// Unplugging narrows the hold to system-only: the screen is then free to sleep, so
+    /// the activity declaration has to stop with it.
+    @Test func unpluggingStopsTheActivityDeclaration() async {
+        let backend = ActivityKeepAwake()
+        let m = CaffeineManager(backend: backend)
+        m.activate()
+        await waitUntil { backend.declaredCount >= 1 }
+        m.applyPolicy(keepDisplayOnBattery: false, endOnBattery: false, onExternalPower: false)
+        let after = backend.declaredCount
+        #expect(backend.endedCount >= 1)
+        for _ in 0..<50 { await Task.yield() }
+        #expect(backend.declaredCount == after)
     }
 
     @Test func keepDisplayOnBatteryOptsOutOfTheDowngrade() {
@@ -273,6 +344,26 @@ struct CaffeineManagerTests {
         m.deactivate()
         #expect(Self.processHoldsAssertion(named: reason) == false,
                 "assertion should be gone after deactivate")
+    }
+
+    /// The other half of the real hold: a `UserIsActive` declaration, which is what the
+    /// screen saver and the lock screen actually watch. Skipped if the display is asleep —
+    /// the backend deliberately declines to light it back up.
+    @Test func realBackendDeclaresUserActivity() async {
+        guard CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
+        let reason = "BattlifyKitTest-\(UUID().uuidString)"
+        let m = CaffeineManager(backend: IOKitKeepAwake(), reason: reason)
+
+        m.activate()
+        guard m.active else { return }   // assertions unavailable → nothing to prove
+        let activity = "\(reason) — user active"
+        await waitUntil { Self.processHoldsAssertion(named: activity) }
+        #expect(Self.processHoldsAssertion(named: activity),
+                "keeping the screen on must also declare the user active, or it locks anyway")
+
+        m.deactivate()
+        #expect(Self.processHoldsAssertion(named: activity) == false,
+                "the declaration must be dropped with the session")
     }
 
     // --- Benchmarks ---
