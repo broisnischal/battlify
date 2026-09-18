@@ -81,11 +81,19 @@ public enum ControlRequest: Codable, Sendable {
     case prepareForSleep
     /// Start (true) or cancel (false) a one-shot charge-to-100% calibration.
     case calibrateToFull(Bool)
-    /// Set the fan mode (auto, or held at a percentage of each fan's range).
-    case setFanMode(FanMode)
+    /// Turn Sealed Sleep on or off. Its own request rather than a config write because the
+    /// daemon has to snapshot what it displaces on the way in and put it back on the way
+    /// out, and a plain config save has no transition to hang that on.
+    case setSealedSleep(Bool)
+    /// Choose instant wake vs hibernation while sealed. Re-applies if Sealed Sleep is on.
+    case setSealedSleepFastWake(Bool)
     /// Delete the daemon-written history file. The GUI can't (root-owned dir), so it
     /// asks the daemon.
     case clearSamples
+    /// Replace the daemon's own binary with the one at this path and restart onto it, so a
+    /// legacy `/usr/local/bin` install can take a new build without an administrator prompt.
+    /// Honoured only when both binaries carry the same Developer ID team — see `HelperUpdate`.
+    case installUpdate(path: String)
 }
 
 public struct ControlResponse: Codable, Sendable {
@@ -102,13 +110,21 @@ public struct ControlResponse: Codable, Sendable {
     public var magSafeSupported: Bool
     public var dischargeSupported: Bool
     public var discharging: Bool
-    /// Live fan state, empty on a fanless Mac or an older daemon.
-    public var fans: [FanReading]
-    /// Whether this Mac accepts fan writes at all — discovered by trying, since the keys read
-    /// fine on machines that refuse every write.
-    public var fanControlSupported: Bool
     /// Temperature sensors, warmest first.
     public var sensors: [SensorReading]
+    /// Live `hibernatemode`. nil from a Mac that does not expose the key, or an older daemon.
+    public var hibernateMode: Int?
+    /// Live `standby`, same caveat.
+    public var standbyEnabled: Bool?
+    /// pmset keys the last Sealed Sleep write asked for and did not get. Empty is the
+    /// normal case; a name in here means this Mac refused that particular setting.
+    public var sealedSleepRefused: [String]
+    /// Whether this Mac exposes macOS High Power Mode at all (Max-chip MacBook Pros and
+    /// the desktops). False from an older daemon, which is the safe reading: the app then
+    /// doesn't promise a switch that isn't there.
+    public var highPowerModeSupported: Bool
+    /// Whether High Power Mode is on right now.
+    public var highPowerModeEnabled: Bool
     public var message: String?
     /// Protocol version of the responding daemon. Older daemons omit it → decode to 0 → outdated.
     public var daemonProtocolVersion: Int
@@ -122,9 +138,12 @@ public struct ControlResponse: Codable, Sendable {
                 powerToggles: [String: Bool] = [:],
                 pauseReason: String? = nil, magSafeSupported: Bool = false,
                 dischargeSupported: Bool = false, discharging: Bool = false,
-                fans: [FanReading] = [],
-                fanControlSupported: Bool = false,
                 sensors: [SensorReading] = [],
+                hibernateMode: Int? = nil,
+                standbyEnabled: Bool? = nil,
+                sealedSleepRefused: [String] = [],
+                highPowerModeSupported: Bool = false,
+                highPowerModeEnabled: Bool = false,
                 message: String? = nil,
                 daemonProtocolVersion: Int = ControlProtocol.version,
                 daemonBuildVersion: Int = HelperBuild.version) {
@@ -139,9 +158,12 @@ public struct ControlResponse: Codable, Sendable {
         self.magSafeSupported = magSafeSupported
         self.dischargeSupported = dischargeSupported
         self.discharging = discharging
-        self.fans = fans
-        self.fanControlSupported = fanControlSupported
         self.sensors = sensors
+        self.hibernateMode = hibernateMode
+        self.standbyEnabled = standbyEnabled
+        self.sealedSleepRefused = sealedSleepRefused
+        self.highPowerModeSupported = highPowerModeSupported
+        self.highPowerModeEnabled = highPowerModeEnabled
         self.message = message
         self.daemonProtocolVersion = daemonProtocolVersion
         self.daemonBuildVersion = daemonBuildVersion
@@ -161,9 +183,12 @@ public struct ControlResponse: Codable, Sendable {
         magSafeSupported = try c.decodeIfPresent(Bool.self, forKey: .magSafeSupported) ?? false
         dischargeSupported = try c.decodeIfPresent(Bool.self, forKey: .dischargeSupported) ?? false
         discharging = try c.decodeIfPresent(Bool.self, forKey: .discharging) ?? false
-        fans = try c.decodeIfPresent([FanReading].self, forKey: .fans) ?? []
-        fanControlSupported = try c.decodeIfPresent(Bool.self, forKey: .fanControlSupported) ?? false
         sensors = try c.decodeIfPresent([SensorReading].self, forKey: .sensors) ?? []
+        hibernateMode = try c.decodeIfPresent(Int.self, forKey: .hibernateMode)
+        standbyEnabled = try c.decodeIfPresent(Bool.self, forKey: .standbyEnabled)
+        sealedSleepRefused = try c.decodeIfPresent([String].self, forKey: .sealedSleepRefused) ?? []
+        highPowerModeSupported = try c.decodeIfPresent(Bool.self, forKey: .highPowerModeSupported) ?? false
+        highPowerModeEnabled = try c.decodeIfPresent(Bool.self, forKey: .highPowerModeEnabled) ?? false
         message = try c.decodeIfPresent(String.self, forKey: .message)
         daemonProtocolVersion = try c.decodeIfPresent(Int.self, forKey: .daemonProtocolVersion) ?? 0
         daemonBuildVersion = try c.decodeIfPresent(Int.self, forKey: .daemonBuildVersion) ?? 0
@@ -181,10 +206,17 @@ public enum ControlProtocol {
     ///   v3: MagSafe LED mode (Auto/Status/Off) + post-wake settling.
     ///   v4: prepareForSleep, calibrateToFull, prevent-idle-sleep.
     ///   v5: clearSamples (delete the daemon-written history file).
+    ///   v6: installUpdate — the daemon can replace its own signed binary on request, which
+    ///       is how a helper update stops costing an admin prompt. The app must know whether
+    ///       the installed helper understands this before it offers the quiet path.
+    ///   v7: the Extreme Performance mode. This one has to be gated: `applyMode` carries a
+    ///       `SaveMode` the old daemon has never heard of, and an unknown enum case fails
+    ///       the whole request decode — the daemon wouldn't apply a weaker version of the
+    ///       mode, it would drop the request on the floor.
     // Note: the dim-on-battery toggle is a plain additive pmset write — an older
     // helper simply ignores an unknown toggle, so it doesn't warrant a version
     // bump or an "outdated helper" warning.
-    public static let version = 5
+    public static let version = 7
 }
 
 public enum HelperBuild {
@@ -219,7 +251,49 @@ public enum HelperBuild {
     ///        short-lived second instance had replaced: launchd reported the job healthy while
     ///        every app request got "connection refused", so the app hung. Bind failures are
     ///        fatal, and the tick loop exits if the path stops pointing at our own socket.
-    public static let version = 10
+    ///   v11: the installer now evicts the old `com.battpie.helper` daemon left behind by the
+    ///        rename. Both daemons ran with KeepAlive and drove the same SMC charge keys on
+    ///        their own timers, so they overwrote each other; when the orphan won a tick while
+    ///        holding the charge inhibit, the Mac drained to empty on the charger. This bump
+    ///        is the whole point of the fix — the eviction only runs when an install runs.
+    ///   v12: Extreme Performance — High Power Mode, a fan floor, no charge limit and no
+    ///        idle sleep, applied and unwound as one unit. A v11 helper can't parse the
+    ///        mode at all, and it's also the helper that would have to *undo* the fan
+    ///        floor on the way out: leaving that to an older build is how a Mac ends up
+    ///        with its fans pinned after the mode is switched off (see v8).
+    ///   v13: Extreme Performance now snapshots what it displaces (`PerformanceRestore`) and
+    ///        puts it back on exit. A v12 helper applies the mode but keeps no snapshot, so
+    ///        leaving it discards a hand-set fan speed and any gentle-charging setting —
+    ///        and it's the daemon, not the app, that owns that state.
+    ///   v14: fan control stopped disabling itself. A v13 helper latched "this Mac refuses
+    ///        fan writes" off any failed write, including `restoreAuto()` — housekeeping that
+    ///        runs on shutdown, on the heat guard and every time anyone picks Auto. On a Mac
+    ///        where nothing was ever forced, the SMC refusing that redundant write left the
+    ///        Custom control greyed out for the rest of the daemon's life, explaining that the
+    ///        hardware couldn't do something nobody had asked it to do. Only a write the user
+    ///        asked for latches now, and `restoreAuto()` skips fans that aren't forced.
+    ///   v15: fan writes are verified by reading the key back. Apple silicon returns success
+    ///        for `F<i>Md = 1` and leaves it reading 0, so a v14 helper believed it had taken
+    ///        the fans over, reported control as working, and held a Custom speed the
+    ///        hardware had never accepted. v15 checks, and says so when the answer is no.
+    ///   v16: fan control is gone, and the removal is the reason this must ship. A v15
+    ///        helper still enforces whatever `fanMode` the old config holds, and it is also
+    ///        the only thing that can undo a fan left forced — the SMC keeps forced mode
+    ///        across a restart. v16 hands every forced fan back to macOS on startup and
+    ///        then never touches them again. It also owns closed-lid sleep: hibernation,
+    ///        the sleep/wake toggles and the radios are applied as one verified unit
+    ///        (`SealedSleep`), which a v15 helper cannot parse at all.
+    ///   v17: "prevent idle sleep" is no longer gated on the charge limit being on. A v16
+    ///        helper ANDed the two, so Extreme Performance — which asks for no idle sleep
+    ///        and deliberately turns the limit off — could never hold the assertion, and a
+    ///        Mac left on a long render idled out from under it. Only the daemon holds that
+    ///        assertion, so the fix ships with the daemon.
+    ///   v18: instant wake now hands over to hibernation once a close outlasts the deferral
+    ///        (`DeferredHibernate`). Apple silicon has no `standbydelay`, so the only way to
+    ///        get both an instant lid and a flat battery line is for the daemon to book its
+    ///        own wake and re-sleep into `hibernatemode 25`. A v17 helper ignores the new
+    ///        config key entirely, so the closed-lid drain it was installed to stop stays.
+    public static let version = 18
 }
 
 public enum ControlError: Error, CustomStringConvertible {
