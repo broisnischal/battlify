@@ -59,6 +59,9 @@ final class RestReminder: ObservableObject {
               RestAdvisor.shouldNotify(now: now,
                                        lastNotifiedAt: defaults.object(forKey: Keys.lastNotified) as? Date)
         else { return }
+        // Don't drop "time to restart" over a film or a game. Nothing is recorded as
+        // notified, so the next evaluate — six hours on, or the next wake — tries again.
+        guard ScreenActivity.busyReason() == nil else { return }
         defaults.set(now, forKey: Keys.lastNotified)
         postNotification()
     }
