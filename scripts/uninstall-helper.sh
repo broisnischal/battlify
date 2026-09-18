@@ -26,4 +26,17 @@ rm -f "$PLIST_DST"
 rm -f "$BIN_DST"
 rm -f /var/run/battlify.sock
 
+# The pre-rename BattPie daemon, if this Mac ever ran it. Uninstalling only the
+# current helper would leave that one loaded and still driving the charge keys,
+# so "uninstalled" would still mean a Mac that won't charge.
+LEGACY_PLIST="/Library/LaunchDaemons/com.battpie.helper.plist"
+LEGACY_BIN="/usr/local/bin/battpie-helper"
+if [[ -e "$LEGACY_PLIST" || -e "$LEGACY_BIN" ]]; then
+    echo "==> Removing the superseded BattPie helper"
+    launchctl bootout system "$LEGACY_PLIST" 2>/dev/null || true
+    pkill -f "^$LEGACY_BIN" 2>/dev/null || true
+    "$LEGACY_BIN" enable 2>/dev/null || true
+    rm -f "$LEGACY_PLIST" "$LEGACY_BIN" /var/run/battpie.sock
+fi
+
 echo "==> Done. (Config left in /Library/Application Support/Battlify)"
