@@ -43,7 +43,10 @@ final class ControlServer {
         }
         guard bound == 0 else { close(fd); fail("bind") }
 
-        // any local user may toggle the charge limit (the only capability exposed)
+        // Mode has to stay permissive: connecting to a unix socket needs write permission
+        // on the path, and the GUI runs as an ordinary user whose uid isn't knowable here.
+        // Access control therefore lives on the accepted connection instead, where the
+        // kernel reports who the peer really is — see `peerIsAuthorized`.
         chmod(path, 0o666)
 
         guard listen(fd, 8) == 0 else { close(fd); fail("listen") }
@@ -87,9 +90,34 @@ final class ControlServer {
         while true {
             let client = accept(fd, nil, nil)
             if client < 0 { continue }
-            handleClient(client, handler: handler)
+            if peerIsAuthorized(client) {
+                handleClient(client, handler: handler)
+            } else {
+                FileHandle.standardError.write(
+                    Data("battlify-helper: refused a control connection from another user\n".utf8))
+            }
             close(client)
         }
+    }
+
+    /// Whether the process on the other end may command this daemon.
+    ///
+    /// The socket is world-writable by necessity (see `start`), so without this any local
+    /// process — any user, any sandboxed thing that can reach /var/run — could stop the
+    /// battery charging, hold the machine awake, or drive the fans, all as root. `getpeereid`
+    /// asks the kernel for the peer's real uid, which the client cannot forge.
+    ///
+    /// Root is allowed because that's the CLI and our own tooling. Beyond that only the
+    /// console owner — the person actually logged in at the screen — which is who the GUI
+    /// runs as. Another logged-out user's background process is not that.
+    private static func peerIsAuthorized(_ fd: Int32) -> Bool {
+        var uid: uid_t = 0
+        var gid: gid_t = 0
+        guard getpeereid(fd, &uid, &gid) == 0 else { return false }
+        if uid == 0 { return true }
+        var info = stat()
+        guard stat("/dev/console", &info) == 0 else { return false }
+        return uid == info.st_uid
     }
 
     private static func handleClient(_ fd: Int32,
