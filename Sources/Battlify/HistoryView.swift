@@ -83,7 +83,11 @@ struct HistoryView: View {
             .padding(18)
         }
         .scrollIndicators(.hidden)
-        .frame(width: 560, height: 540)
+        // Resizable, with a floor rather than a fixed size. Six sections of charts and
+        // tables in a 560x540 box is a scroll view with everything in it squeezed; the
+        // charts in particular only start reading properly with width to spend.
+        .frame(minWidth: 560, idealWidth: 720, maxWidth: .infinity,
+               minHeight: 520, idealHeight: 660, maxHeight: .infinity)
         .onAppear { model.refresh() }
         .confirmationDialog(
             pendingClear?.title ?? "",
@@ -332,7 +336,7 @@ struct HistoryView: View {
         let charging = s.kind == .charging
         return HStack(spacing: 10) {
             Image(systemName: charging ? "bolt.fill" : "battery.75")
-                .foregroundStyle(charging ? Color.green : .secondary)
+                .foregroundStyle(charging ? Color(ChargePalette.accent) : .secondary)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(timeText(s.startAt)).font(.callout)
@@ -343,7 +347,7 @@ struct HistoryView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(deltaText(s))
                     .font(.callout.weight(.semibold))
-                    .foregroundStyle(charging ? Color.green : .primary)
+                    .foregroundStyle(charging ? Color(ChargePalette.accent) : .primary)
                     .monospacedDigit()
                 if let rate = s.ratePerHour {
                     Text(String(format: "%.1f%%/h", rate))
