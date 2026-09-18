@@ -66,13 +66,32 @@ that gap two ways, and you choose which:
   while charging settles. Or force it **off**, or hand it back to macOS — three
   modes, your call. Only shows up on Macs that have a controllable LED.
 
-**Save modes & lid automation**
+**Sealed Sleep — a closed lid that costs nothing**
+
+A closed Mac isn't off. Memory stays powered for as long as the lid is shut, and
+macOS wakes the machine on a timer to run maintenance, check the network, and answer
+Find My. Each wake is seconds; over a weekend they're the difference between the
+number you closed on and a number you didn't expect.
+
+- **One switch** powers memory down to disk (`hibernatemode 25`) and turns off every
+  wake source behind it — Power Nap, wake-for-network, TCP keep-alive, terminal
+  sessions — plus Wi-Fi and Bluetooth as the lid actually closes.
+- **A checklist, not a claim.** Nine named causes of closed-lid drain, each shown as
+  sealed or still costing you something. Two of them Battlify won't decide for you:
+  Find My can't reach a sealed Mac, and a keep-awake you deliberately turned on stays
+  turned on until you say otherwise.
+- **Measured, not estimated.** The charge is read when the lid shuts and again when it
+  opens, so the panel reports what the last close actually cost, per hour and per night.
+- **Reversible.** Every setting it displaces is snapshotted going in and written back
+  when you switch it off.
+
+The cost is honest and it's the reason this is a switch rather than a default: opening
+the lid takes fifteen to thirty seconds while memory is read back from disk.
+
+**Save modes**
 
 - **One-tap Save Modes** — *Off / Normal / Super Saver* flip a whole bundle of
   settings at once instead of hunting through toggles.
-- **Super Save when the lid closes** — closing the lid drops into maximum savings
-  (Low Power Mode, sleep wake-ups off, Wi-Fi and Bluetooth off) and opening it puts
-  everything back the way you left it.
 - **Sleep & Idle controls** — Power Nap, wake-for-network, and TCP keep-alive are
   the settings that silently wake your Mac in a bag. Turn them off from one place.
 
