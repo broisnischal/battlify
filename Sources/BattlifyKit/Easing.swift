@@ -26,6 +26,18 @@ public enum Easing {
         bezier(t, 0.77, 0, 0.175, 1)
     }
 
+    /// Quintic ease-out. Sharper than `outStrong` at the start and far flatter at the end.
+    ///
+    /// For dissipation rather than arrival: a pressure wave, a ripple, anything spending
+    /// energy against a medium. Those cover most of their distance in the first fifth of
+    /// their life and then crawl, which no bezier tuned for *arriving somewhere* gets right
+    /// — an arrival curve decelerates into a target, and a dissipating front has no target
+    /// to decelerate into. It just runs out.
+    public static func outQuint(_ t: Double) -> Double {
+        let c = clamp(t)
+        return 1 - pow(1 - c, 5)
+    }
+
     /// Plain ease-out, for when `outStrong` is too abrupt for a long, gentle sweep.
     public static func outCubic(_ t: Double) -> Double {
         let c = clamp(t)
