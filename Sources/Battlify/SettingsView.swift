@@ -16,7 +16,6 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var notifier: NotificationManager
     @EnvironmentObject private var network: NetworkProfileStore
-    @EnvironmentObject private var endurance: EnduranceStore
     @EnvironmentObject private var triggers: TriggerStore
     @EnvironmentObject private var hotkeys: HotkeyStore
     @Environment(\.openWindow) private var openWindow
@@ -88,7 +87,7 @@ struct SettingsView: View {
         }
         // Wide enough for all seven tabs to sit on one row without crowding —
         // "Sleep & Power" is the one that clips first when this shrinks.
-        .frame(width: 620, height: 580)
+        .frame(width: 580, height: 600)
         .sheet(item: $editingSchedule) { schedule in
             ScheduleEditorView(
                 schedule: schedule,
@@ -171,8 +170,8 @@ struct SettingsView: View {
         ScrollView {
             VStack(spacing: 0) {
                 VStack(spacing: 8) {
-                    HugeIcon("charging", size: 40)
-                        .foregroundStyle(.tint)
+                    BatteryGlyph(percentage: 100, bolt: true,
+                                 color: Color(ChargePalette.legible(1)), width: 40)
                         .frame(width: 76, height: 76)
                         .background(.quaternary.opacity(0.4),
                                     in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -274,15 +273,29 @@ struct SettingsView: View {
         tab {
             if chargeLimit.daemonAvailable {
                 proGate {
+                    if chargeLimit.dischargeSupported {
+                        card("Long-term care") {
+                            toggleRow("Park the battery near \(LongevityCare.targetPercent)%",
+                                      "Charges up to it, runs down to it, then holds there on the adapter.",
+                                      isOn: Binding(get: { chargeLimit.longevityCare },
+                                                    set: { chargeLimit.setLongevityCare($0) }))
+                            if chargeLimit.longevityCare {
+                                divider
+                                infoRow("On. You give up the top \(100 - LongevityCare.targetPercent)% day to day — turn it off before a trip.",
+                                        systemImage: "heart")
+                            }
+                        }
+                    }
+
                     card("Hold") {
                         toggleRow("Don't charge while plugged in",
                                   chargeLimit.magSafeSupported
-                                  ? "Run the Mac off the adapter and leave the battery exactly where it is — no charging, whatever the level or the limit. The MagSafe light stays amber while it's held, so you can see it's deliberate. Only a pause overrides it."
-                                  : "Run the Mac off the adapter and leave the battery exactly where it is — no charging, whatever the level or the limit. Only a pause overrides it.",
+                                  ? "Leaves the battery where it is, whatever the limit says."
+                                  : "Runs off the adapter and leaves the battery where it is, whatever the limit says.",
                                   isOn: bind(\.holdCharge))
                         if chargeLimit.holdCharge {
                             divider
-                            infoRow("Charging is held. The battery will neither rise nor drain while you stay plugged in — turn this off when you want it to charge again.",
+                            infoRow("Held. The battery won't rise or drain while you stay plugged in.",
                                     systemImage: "pause")
                         }
                     }
@@ -290,16 +303,16 @@ struct SettingsView: View {
                     card("Enforcement") {
                         toggleRow("Stop charging before sleep",
                                   chargeLimit.limitEnabled
-                                  ? "Already on: nothing can enforce a limit while the Mac is asleep, so charging is always cut on the way into sleep and resumes on wake. Turn this on as well to cut charging at sleep when no limit is set."
+                                  ? "Cuts charging at sleep even when no limit is set."
                                   : "Cuts charging as the Mac goes to sleep. With a charge limit set this happens anyway — the limit can't be enforced while asleep.",
                                   isOn: bind(\.disableChargingBeforeSleep))
                         divider
                         toggleRow("Prevent idle sleep while plugged in",
-                                  "Keeps the Mac awake on power so the limit is always enforced. Uses a little more energy.",
+                                  "Keeps the Mac awake on power so the limit holds.",
                                   isOn: bind(\.preventIdleSleep))
                         divider
                         toggleRow("Always Active (keep awake with lid closed)",
-                                  "Terminal jobs and background tasks keep running with the lid shut. The display and keyboard backlight switch off while the lid is closed to save power. On AC power by default — it releases when you unplug unless you turn on “Also keep awake on battery” below. Heavy work with the lid closed runs hot, so keep it ventilated.",
+                                  "Work keeps running with the lid shut. AC power only by default.",
                                   isOn: bind(\.keepAwake))
                         if chargeLimit.keepAwake {
                             divider
@@ -310,11 +323,11 @@ struct SettingsView: View {
                             }
                             divider
                             toggleRow("Also keep awake on battery",
-                                      "Keep running with the lid closed even when unplugged. The battery drains quickly and a closed Mac can run hot — set a temperature guardrail below. Off by default.",
+                                      "Drains fast and runs hot. Set a temperature guardrail below.",
                                       isOn: bind(\.keepAwakeOnBattery))
                             divider
                             toggleRow("Only while a task is running",
-                                      "Stay awake only while a matching process runs, then let the Mac sleep — so an overnight build or download finishes and then it rests.",
+                                      "Holds while a matching process runs, then sleeps.",
                                       isOn: bind(\.keepAwakeRequiresTask))
                             if chargeLimit.keepAwakeRequiresTask {
                                 divider
@@ -335,7 +348,7 @@ struct SettingsView: View {
                                     Text("Comma-separated names; matched against running commands. Use “Choose…” to pick from running processes.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
-                                .padding(.horizontal, 12).padding(.vertical, 10)
+                                .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                                 divider
                                 stepperRow("Or any process above",
                                            value: chargeLimit.keepAwakeMinCpu > 0
@@ -346,12 +359,12 @@ struct SettingsView: View {
                                            range: 0...100)
                                 divider
                                 toggleRow("Sleep when the task finishes",
-                                          "Put the Mac to sleep automatically once the matching task stops (waits ~30s to be sure it's really done), so an overnight build or download finishes and then the Mac sleeps.",
+                                          "Sleeps as soon as the task stops, rather than waiting for idle.",
                                           isOn: bind(\.sleepWhenTaskDone))
                             }
                             divider
                             toggleRow("Sleep if it gets too hot",
-                                      "Safety guardrail — releases keep-awake and lets the Mac sleep if it runs hot with the lid closed.",
+                                      "Releases keep-awake and sleeps if the Mac runs hot.",
                                       isOn: Binding(
                                         get: { chargeLimit.keepAwakeMaxTempC > 0 },
                                         set: { chargeLimit.keepAwakeMaxTempC = $0 ? 40 : 0; chargeLimit.apply() }))
@@ -369,7 +382,7 @@ struct SettingsView: View {
 
                     card("Heat") {
                         toggleRow("Pause charging when hot",
-                                  "Stops charging when the battery runs warm to reduce wear.",
+                                  "Stops charging while the battery is warm.",
                                   isOn: bind(\.heatAwareEnabled))
                         if chargeLimit.heatAwareEnabled {
                             divider
@@ -385,7 +398,7 @@ struct SettingsView: View {
                     if chargeLimit.dischargeSupported {
                         card("Discharge") {
                             toggleRow("Discharge to limit",
-                                      "If you plug in above the limit, run off battery until it drops back down.",
+                                      "Runs off battery until it drops back to the limit.",
                                       isOn: bind(\.dischargeEnabled))
                         }
                     }
@@ -393,7 +406,7 @@ struct SettingsView: View {
                     if chargeLimit.magSafeSupported {
                         card("MagSafe LED") {
                             pickerRow(magSafeHint) {
-                                Picker("", selection: Binding(
+                                Picker("MagSafe LED behaviour", selection: Binding(
                                     get: { chargeLimit.magSafeLedMode },
                                     set: { chargeLimit.magSafeLedMode = $0; chargeLimit.apply() })) {
                                     ForEach(MagSafeLEDMode.allCases) { Text($0.title).tag($0) }
@@ -435,7 +448,7 @@ struct SettingsView: View {
             .controlSize(.small)
             .fixedSize()
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
     }
 
     /// Caffeine's live state in one line, including how far the hold reaches — the
@@ -489,7 +502,7 @@ struct SettingsView: View {
             Button("Edit…") { selection = .schedule }
                 .controlSize(.small)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
     }
 
     private func activeBadge(_ text: String = "ACTIVE") -> some View {
@@ -526,13 +539,13 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Toggle("", isOn: Binding(
+                Toggle("Enable this Always Active window", isOn: Binding(
                     get: { s.enabled },
                     set: { var c = s; c.enabled = $0; chargeLimit.updateAwakeSchedule(c) }))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
+            .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -546,7 +559,7 @@ struct SettingsView: View {
                 proGate {
                     card("Charging schedules") {
                         if chargeLimit.schedules.isEmpty {
-                            infoRow("No schedules yet. Add one to charge, hold, or run on battery on a weekly timetable — for example, hold every night from 10 PM for 5 hours.",
+                            infoRow("None yet. A schedule charges, holds or discharges on a weekly timetable.",
                                     systemImage: "clock")
                         } else {
                             ForEach(chargeLimit.schedules) { s in
@@ -562,12 +575,12 @@ struct SettingsView: View {
                                 .controlSize(.small)
                             Spacer()
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                     }
 
                     card("Always Active hours") {
                         if chargeLimit.keepAwakeSchedules.isEmpty {
-                            infoRow("No hours set — Always Active simply holds whenever its switch is on. Add a window to have it switch itself on and off, for example weekdays from 9 AM for 9 hours.",
+                            infoRow("None set — Always Active holds whenever its switch is on.",
                                     systemImage: "clock")
                         } else {
                             ForEach(chargeLimit.keepAwakeSchedules) { window in
@@ -575,7 +588,7 @@ struct SettingsView: View {
                                 divider
                             }
                             if !chargeLimit.keepAwake {
-                                infoRow("Always Active is switched off, so these hours won't do anything until you turn it on under Charging.",
+                                infoRow("Always Active is off, so these hours do nothing yet.",
                                         systemImage: "info")
                                 divider
                             }
@@ -588,12 +601,12 @@ struct SettingsView: View {
                                 .controlSize(.small)
                             Spacer()
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                     }
 
                     card("Ready by") {
                         toggleRow("Charge to a target by a set time",
-                                  "Hold at your limit overnight, then top up so it's ready right on time — minimizing hours spent at a high charge.",
+                                  "Holds overnight, then tops up to be ready on time.",
                                   isOn: Binding(
                                     get: { chargeLimit.readyBy.enabled },
                                     set: { chargeLimit.readyBy.enabled = $0; chargeLimit.apply() }))
@@ -602,13 +615,13 @@ struct SettingsView: View {
                             HStack {
                                 Text("Ready by").font(.callout)
                                 Spacer()
-                                DatePicker("", selection: Binding(
+                                DatePicker("Ready-by time", selection: Binding(
                                     get: { ClockTime.date(fromMinute: chargeLimit.readyBy.targetMinute) },
                                     set: { chargeLimit.readyBy.targetMinute = ClockTime.minute(from: $0); chargeLimit.apply() }),
                                     displayedComponents: .hourAndMinute)
                                 .labelsHidden()
                             }
-                            .padding(.horizontal, 12).padding(.vertical, 10)
+                            .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                             divider
                             stepperRow("Charge to",
                                        value: "\(chargeLimit.readyBy.targetPercent)%",
@@ -623,7 +636,7 @@ struct SettingsView: View {
                                     get: { chargeLimit.readyBy.days },
                                     set: { chargeLimit.readyBy.days = $0; chargeLimit.apply() }))
                             }
-                            .padding(.horizontal, 12).padding(.vertical, 10)
+                            .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                         }
                     }
 
@@ -656,13 +669,13 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Toggle("", isOn: Binding(
+                Toggle("Enable this charging schedule", isOn: Binding(
                     get: { s.enabled },
                     set: { var c = s; c.enabled = $0; chargeLimit.updateSchedule(c) }))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
+            .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -686,7 +699,7 @@ struct SettingsView: View {
                 proGate {
                     card("Rules") {
                         if triggers.rules.isEmpty {
-                            infoRow("No rules yet. A rule watches your Mac — a display connected, an app running, a network joined, the CPU busy — and applies a charging or power setting the whole time that holds, then puts your setting back.",
+                            infoRow("None yet. A rule applies a setting while something is true, and undoes it after.",
                                     systemImage: "wand")
                             divider
                         } else {
@@ -727,12 +740,12 @@ struct SettingsView: View {
 
                             Spacer()
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                     }
 
                     if needsLocationForWiFiRule {
                         card("Permission needed") {
-                            infoRow("macOS treats the Wi-Fi network name as location data, so a Wi-Fi condition can't match until Battlify has Location access.",
+                            infoRow("macOS treats the network name as location data. Allow Location access to match on Wi-Fi.",
                                     systemImage: "location")
                             divider
                             HStack {
@@ -740,7 +753,7 @@ struct SettingsView: View {
                                     .controlSize(.small)
                                 Spacer()
                             }
-                            .padding(.horizontal, 12).padding(.vertical, 10)
+                            .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                         }
                     }
 
@@ -766,103 +779,28 @@ struct SettingsView: View {
     private var sleepPowerTab: some View {
         tab {
             proGate {
-                card("Battery saver (Endurance)") {
-                    toggleRow("Endurance mode",
-                              "Cuts battery drain: dims the screen, turns on Low Power Mode, and trims background wake & Bluetooth. Restores everything when you turn it off.",
-                              isOn: Binding(get: { endurance.active },
-                                            set: { endurance.setActive($0) }))
+                // The closed-lid section is deliberately one thing, not three. It used to
+                // be a "deep sleep" picker, a "super save" switch and a pair of radio
+                // checkboxes — all aimed at the same outcome, none of them sufficient
+                // alone, and easy to leave half-set. `SealedSleepPanel` carries its own
+                // group styling, so it sits directly in the tab rather than in a `card`.
+                SealedSleepPanel(chargeLimit: chargeLimit, automation: automation)
+                    .padding(.horizontal, rowInset)
+
+                card("When the lid closes") {
+                    toggleRow("Turn off Wi-Fi", isOn: $automation.wifiOffOnLidClose)
                     divider
-                    toggleRow("Turn on automatically on battery",
-                              "Activates Endurance whenever you unplug, and turns it back off when you plug in.",
-                              isOn: $endurance.autoOnBattery)
-                    if endurance.brightnessSupported {
+                    toggleRow("Turn off Bluetooth", isOn: $automation.bluetoothOffOnLidClose)
+                    divider
+                    toggleRow("Restore Wi-Fi & Bluetooth on wake", isOn: $automation.restoreOnWake)
+                    if chargeLimit.sealedSleep {
                         divider
-                        stepperRow("Screen brightness cap",
-                                   value: "\(Int((endurance.brightnessCap * 100).rounded()))%",
-                                   binding: Binding(
-                                    get: { endurance.brightnessCap * 100 },
-                                    set: { endurance.brightnessCap = $0 / 100 }),
-                                   range: 20...80)
-                    }
-                    divider
-                    if let s = endurance.savingsPercent {
-                        infoRow("Measured: \(s)% less drain — normal \(fmtW(endurance.normalWatts)) → saver \(fmtW(endurance.enduranceWatts)).\(nowSuffix)",
-                                systemImage: "leaf")
-                    } else {
-                        infoRow("Measuring drain… run on battery with the mode on and off for a few minutes to compare.\(nowSuffix)",
-                                systemImage: "gauge")
+                        infoRow("Sealed Sleep holds these on. Turning it off hands them back.",
+                                systemImage: "lock")
                     }
                 }
-
-                if chargeLimit.fansSupported {
-                    card("Fans") {
-                        // The layout every Mac fan utility uses, because it's the right one:
-                        // which fan, the range it lives in with the current value inside that
-                        // range, and its control — readable as a table rather than a list of
-                        // sentences.
-                        HStack(spacing: 10) {
-                            Text("Fan").frame(width: 96, alignment: .leading)
-                            Text("Min / Current / Max").frame(maxWidth: .infinity, alignment: .leading)
-                            Text("Control").frame(width: 150, alignment: .leading)
-                        }
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
-
-                        ForEach(chargeLimit.fans) { fan in
-                            fanRow(fan)
-                            divider
-                        }
-
-                        if chargeLimit.fanControlSupported {
-                            pickerRow(chargeLimit.fanMode.isManual
-                                      ? "Held where you put them until you set Auto back."
-                                      : "macOS decides, which is right almost always.") {
-                                Picker("", selection: Binding(
-                                    get: { chargeLimit.fanMode.isManual },
-                                    set: { chargeLimit.setFanMode($0 ? .manual(percent: 40) : .auto) })) {
-                                    Text("Auto").tag(false)
-                                    Text("Custom").tag(true)
-                                }
-                                .pickerStyle(.segmented).labelsHidden()
-                            }
-                            if let percent = chargeLimit.fanMode.percent {
-                                divider
-                                stepperRow("Speed", value: "\(percent)% of range",
-                                           binding: Binding(
-                                            get: { Double(percent) },
-                                            set: { chargeLimit.setFanMode(.manual(percent: Int($0))) }),
-                                           range: 0...100)
-                                divider
-                                infoRow("0% is each fan's own minimum, not off. If the machine gets hot, control returns to macOS automatically.",
-                                        systemImage: "thermometer")
-                            }
-                        } else {
-                            infoRow("This Mac reads its fans but refuses to let software drive them — every write is rejected by the SMC, so Battlify leaves them to macOS and shows what they're doing. Fans reading 0 rpm while the machine is cool is normal on Apple silicon: they stop entirely until there's heat to move.",
-                                    systemImage: "info")
-                        }
-                    }
-
-                    if !chargeLimit.sensors.isEmpty {
-                        card("Temperatures") {
-                            ForEach(chargeLimit.sensors.prefix(12)) { sensor in
-                                HStack(spacing: 10) {
-                                    Text(sensor.name).font(.callout)
-                                    Spacer()
-                                    Text(sensor.key).font(.caption).foregroundStyle(.tertiary)
-                                    Text(String(format: "%.1f °C", sensor.celsius))
-                                        .font(.callout.weight(.medium)).monospacedDigit()
-                                        .frame(width: 72, alignment: .trailing)
-                                        .foregroundStyle(sensor.celsius >= 90 ? Color.orange : .primary)
-                                }
-                                .padding(.horizontal, 12).padding(.vertical, 6)
-                            }
-                            divider
-                            infoRow("The warmest twelve of \(chargeLimit.sensors.count) sensors this Mac publishes, read straight from the SMC.",
-                                    systemImage: "info")
-                        }
-                    }
-                }
+                .disabled(chargeLimit.sealedSleep)
+                .opacity(chargeLimit.sealedSleep ? 0.55 : 1)
 
                 card("Rest without closing the lid") {
                     HStack(spacing: 10) {
@@ -880,12 +818,17 @@ struct SettingsView: View {
                         }
                         .controlSize(.small)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                     divider
                     toggleRow("Rest automatically when I'm away",
-                              "Waits for no keyboard, mouse or trackpad activity at all, and never rests while an external display is connected — that usually means someone is looking at something.",
+                              "Waits for no input at all, and holds off during calls, films and games.",
                               isOn: $idleSaver.autoEnabled)
                     if idleSaver.autoEnabled {
+                        if let waiting = idleSaver.waitingBecause {
+                            divider
+                            infoRow("You've been away long enough to rest, but \(waiting) — resting will start once that stops.",
+                                    systemImage: "info")
+                        }
                         divider
                         stepperRow("After",
                                    value: "\(idleSaver.afterMinutes) min",
@@ -904,74 +847,49 @@ struct SettingsView: View {
                     }
                     divider
                     toggleRow("Low Power Mode while resting",
-                              "Restored to whatever it was when you come back.",
+                              "Put back when you return.",
                               isOn: $idleSaver.lowPowerWhileResting)
                     divider
                     toggleRow("Wi-Fi and Bluetooth off while resting",
-                              "Off by default: losing the network mid-download or mid-call costs more than the power it saves. Only the radios Battlify switched off are switched back on.",
+                              "Off by default — losing the network mid-call costs more than it saves.",
                               isOn: $idleSaver.radiosOffWhileResting)
                     divider
-                    infoRow("Fans aren't controllable on Apple silicon — the SMC refuses the write. They wind down on their own once the Mac is actually idle, which is what resting it achieves.",
-                            systemImage: "info")
                 }
 
                 card("Caffeine (keep awake now)") {
                     infoRow(caffeineStateHint, systemImage: "coffee")
                     divider
                     toggleRow("End it when I unplug",
-                              "Caffeine stops the moment you switch to battery, so nothing holds the Mac awake while it's left alone.",
+                              "Caffeine stops the moment you switch to battery.",
                               isOn: $settings.caffeineEndOnBattery)
                     if !settings.caffeineEndOnBattery {
                         divider
                         toggleRow("Keep the screen on when on battery",
-                                  "Leave this off unless you need the screen lit: on battery Caffeine then keeps your work running but lets the screen sleep. A lit idle screen draws several watts — percents of charge per hour — and is the most expensive thing this app can do to a battery.",
+                                  "A lit idle screen costs several watts. Leave off unless you need it.",
                                   isOn: $settings.caffeineKeepDisplayOnBattery)
                     }
-                }
-
-                card("Deep sleep") {
-                    pickerRow(chargeLimit.sleepDepth.summary) {
-                        Picker("", selection: Binding(
-                            get: { chargeLimit.sleepDepth },
-                            set: { chargeLimit.sleepDepth = $0; chargeLimit.apply() })) {
-                            ForEach(SleepDepth.allCases) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented).labelsHidden()
-                    }
-                    if chargeLimit.sleepDepth == .deep {
-                        divider
-                        infoRow("Opening the lid will take a few seconds while memory is read back from disk — the more memory in use, the longer it takes. Worth it only if the Mac often stays closed for a day or more.",
-                                systemImage: "clock")
-                    }
-                    divider
-                    infoRow("A closed Mac already sips power, so expect a small gain, not a large one. macOS still wakes briefly now and then for maintenance either way.",
-                            systemImage: "bulb")
-                }
-
-                card("When the lid closes") {
-                    toggleRow("Super Save when lid closed",
-                              "Maximizes battery while closed, restores when you open it.",
-                              isOn: $automation.superSaveOnLidClose)
-                    divider
-                    Group {
-                        toggleRow("Turn off Wi-Fi", isOn: $automation.wifiOffOnLidClose)
-                        divider
-                        toggleRow("Turn off Bluetooth", isOn: $automation.bluetoothOffOnLidClose)
-                        divider
-                        toggleRow("Restore Wi-Fi & Bluetooth on wake", isOn: $automation.restoreOnWake)
-                    }
-                    .disabled(automation.superSaveOnLidClose)
-                    .opacity(automation.superSaveOnLidClose ? 0.45 : 1)
                 }
 
                 if chargeLimit.daemonAvailable {
                     powerToggleCard("On Battery", category: .batteryOptions)
 
-                    powerToggleCard("Wake while closed", category: .sleepWake)
+                    // Sealed Sleep holds these off and the daemon keeps them that way, so
+                    // leaving them live would offer switches that flip back — worse than
+                    // no switch at all. Greyed, with the reason, and one place to undo it.
+                    VStack(alignment: .leading, spacing: DS.Space.s) {
+                        powerToggleCard("Wake while closed", category: .sleepWake)
+                            .disabled(chargeLimit.sealedSleep)
+                            .opacity(chargeLimit.sealedSleep ? 0.55 : 1)
+                        if chargeLimit.sealedSleep {
+                            Text("Sealed Sleep holds these off. Turn it off above to get them back.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .padding(.leading, DS.Space.xs)
+                        }
+                    }
 
                     card("Power") {
                         toggleRow("Low Power Mode",
-                                  "Save Modes turn this on. It also lowers the display refresh rate on ProMotion Macs — turn it off here to get full refresh rate back.",
+                                  "Also lowers the refresh rate on ProMotion Macs.",
                                   isOn: Binding(
                                     get: { chargeLimit.lowPowerMode },
                                     set: { chargeLimit.setLowPowerMode($0) }))
@@ -988,7 +906,7 @@ struct SettingsView: View {
     private var networkCard: some View {
         card("Network profiles") {
             toggleRow("Switch mode by Wi-Fi network",
-                      "Automatically pick a save mode based on the network you join — e.g. hold 80% at home, charge to full on the road.",
+                      "Pick a save mode from the network you join.",
                       isOn: Binding(get: { network.enabled },
                                     set: { network.enabled = $0 }))
             if network.enabled {
@@ -996,7 +914,7 @@ struct SettingsView: View {
                 labelRow("Current network", network.currentSSID ?? "Not connected")
                 if !network.locationAuthorized {
                     divider
-                    infoRow("Allow Location access so Battlify can read the Wi-Fi network name (macOS requires it). Check System Settings › Privacy & Security › Location Services.",
+                    infoRow("Allow Location access in System Settings › Privacy & Security.",
                             systemImage: "location.slash")
                 }
                 divider
@@ -1020,7 +938,7 @@ struct SettingsView: View {
                         } label: { Image(systemName: "minus.circle.fill") }
                             .buttonStyle(.borderless).foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s)
                     divider
                 }
                 HStack {
@@ -1033,7 +951,7 @@ struct SettingsView: View {
                         .disabled(network.currentSSID == nil)
                     Spacer()
                 }
-                .padding(.horizontal, 12).padding(.vertical, 8)
+                .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s)
             }
         }
     }
@@ -1046,7 +964,7 @@ struct SettingsView: View {
         tab {
             card("Global Shortcuts") {
                 toggleRow("Enable keyboard shortcuts",
-                          "Works from any app. Battlify claims only the combinations below — it never watches what you type.",
+                          "Works from any app. Battlify claims only the combinations below.",
                           isOn: $hotkeys.enabled)
                 if let displacedNote {
                     divider
@@ -1078,42 +996,6 @@ struct SettingsView: View {
         }
         // Recording grabs the keyboard, so it must not survive leaving the tab.
         .onChange(of: selection) { _, _ in recordingAction = nil }
-    }
-
-    /// One fan: name, its range with the current value inside it, and what's driving it.
-    private func fanRow(_ fan: FanReading) -> some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                HugeIcon("refresh", size: 15)
-                    .foregroundStyle(fan.current > 0 ? Color.accentColor : .secondary)
-                Text(FanReading.name(index: fan.index, of: chargeLimit.fans.count))
-                    .font(.callout)
-            }
-            .frame(width: 96, alignment: .leading)
-
-            HStack(spacing: 6) {
-                Text("\(Int(fan.minimum.rounded()))").foregroundStyle(.secondary)
-                Text("—").foregroundStyle(.tertiary)
-                // The live number is the one worth reading, so it's the only one emphasised.
-                Text("\(Int(fan.current.rounded()))")
-                    .fontWeight(.semibold)
-                    .foregroundStyle(fan.current > 0 ? Color.orange : .secondary)
-                Text("—").foregroundStyle(.tertiary)
-                Text("\(Int(fan.maximum.rounded()))").foregroundStyle(.secondary)
-                Text("rpm").font(.caption).foregroundStyle(.tertiary)
-            }
-            .font(.callout).monospacedDigit()
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(chargeLimit.fanControlSupported
-                 ? (chargeLimit.fanMode.isManual ? "Custom" : "Auto")
-                 : "macOS")
-                .font(.caption)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(.quaternary.opacity(0.6), in: Capsule())
-                .frame(width: 150, alignment: .leading)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
     private func shortcutRow(_ action: HotkeyAction) -> some View {
@@ -1154,7 +1036,7 @@ struct SettingsView: View {
                     recordingAction = nil
                 })
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
         .opacity(hotkeys.enabled ? 1 : 0.5)
         .disabled(!hotkeys.enabled)
     }
@@ -1182,20 +1064,20 @@ struct SettingsView: View {
                     }
                     .labelsHidden().frame(width: 160)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 10)
+                .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                 divider
                 toggleRow("Color icon by charge state",
-                          "Green while charging, red when low or warm. Off keeps it monochrome.",
+                          "Green charging, red when low or warm.",
                           isOn: $settings.colorMenuBarIcon)
                 divider
                 toggleRow("Animate the icon while charging",
-                          "A moving glyph costs about a tenth of a core for as long as you're plugged in, because the menu bar re-lays out on every frame. Off keeps a static charging bolt.",
+                          "Costs about a tenth of a core while plugged in.",
                           isOn: $settings.animateMenuBarIcon)
             }
 
             card("Notifications") {
                 toggleRow("Notify me about charge events",
-                          "Charge limit reached, charging paused for heat, low battery, and fully charged.",
+                          "Limit reached, paused for heat, low battery, fully charged.",
                           isOn: Binding(
                             get: { settings.notificationsEnabled },
                             set: { on in
@@ -1204,7 +1086,7 @@ struct SettingsView: View {
                             }))
                 divider
                 toggleRow("Suggest an occasional restart",
-                          "Once your Mac has been running for over a week, remind you that a restart clears memory and helps it run cooler.",
+                          "Reminds you after a week of uptime.",
                           isOn: Binding(
                             get: { settings.restReminderEnabled },
                             set: { settings.restReminderEnabled = $0 }))
@@ -1216,25 +1098,85 @@ struct SettingsView: View {
                         Button("Send Test Notification") { notifier.sendTest() }
                             .controlSize(.small)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                 }
             }
 
                 card("Plug-in feedback (experimental)") {
                     if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                         toggleRow("Animate anyway",
-                                  "macOS Reduce Motion is on, so Battlify's animations — the charging icon, this overlay, the charge-complete flash — are all switched off. Turn this on to play them anyway; nothing else on your Mac is affected.",
+                                  "Reduce Motion is on. Battlify's animations stay off unless you allow them.",
                                   isOn: $settings.animateWithReduceMotion)
                         divider
                     }
                     toggleRow("Tap the trackpad when you plug in",
-                              "Two taps on connect, one on unplug, three when the charge limit is reached. Needs a Force Touch trackpad — a desktop Mac, or a laptop you're driving from an external keyboard, has nothing to tap with, and the trackpad is asleep while the lid is shut.",
+                              "Two taps on connect, one on unplug, three at the limit.",
                               isOn: $settings.hapticsEnabled)
                     divider
-                    toggleRow("Show an animation when you plug in",
-                              "Flashes over whatever you're doing for about a second, then gets out of the way. Click-through, so it can't swallow a click, and it skips the motion entirely if Reduce Motion is on.",
-                              isOn: $settings.chargeOverlayEnabled)
-                    if settings.chargeOverlayEnabled {
+                    toggleRow("Play a sound when you plug in",
+                              "A short cue on connect, a smaller one on unplug.",
+                              isOn: $settings.soundEnabled)
+                    if settings.soundEnabled {
+                        divider
+                        HStack(spacing: 10) {
+                            Text("Sound").font(.callout)
+                            Spacer(minLength: DS.Space.s)
+                            // Plays on change. Choosing a sound by reading five words is
+                            // not choosing a sound.
+                            Picker("", selection: Binding(
+                                get: { settings.soundTheme },
+                                set: {
+                                    settings.soundTheme = $0
+                                    ChargeSound.play(.connect, volume: settings.soundVolume,
+                                                     theme: $0)
+                                }
+                            )) {
+                                ForEach(ChargeSound.Theme.allCases) {
+                                    Text($0.displayName).tag($0)
+                                }
+                            }
+                            .labelsHidden().fixedSize()
+                        }
+                        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
+                        divider
+                        HStack(spacing: 10) {
+                            Text("Volume").font(.callout)
+                            Slider(value: $settings.soundVolume, in: 0.05...1)
+                                .controlSize(.small)
+                            Text("\(Int(settings.soundVolume * 100))%")
+                                .font(.callout).monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .frame(width: 42, alignment: .trailing)
+                            Menu("Test") {
+                                Button("Plugged in") {
+                                    ChargeSound.play(.connect, volume: settings.soundVolume,
+                                                     theme: settings.soundTheme)
+                                }
+                                Button("Unplugged") {
+                                    ChargeSound.play(.disconnect, volume: settings.soundVolume,
+                                                     theme: settings.soundTheme)
+                                }
+                                Button("Charge complete") {
+                                    ChargeSound.play(.complete, volume: settings.soundVolume,
+                                                     theme: settings.soundTheme)
+                                }
+                            }
+                            .menuStyle(.borderlessButton)
+                            .controlSize(.small)
+                            .fixedSize()
+                        }
+                        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
+                    }
+                    divider
+                    if ChargeOverlayFeature.shipped {
+                        toggleRow("Show an animation when you plug in",
+                                  "Flashes for about a second, then gets out of the way.",
+                                  isOn: $settings.chargeOverlayEnabled)
+                    } else {
+                        comingSoonRow("Show an animation when you plug in",
+                                      "Being rebuilt. It plays over whatever you're doing, so it ships when it's right.")
+                    }
+                    if ChargeOverlayFeature.shipped, settings.chargeOverlayEnabled {
                         divider
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
@@ -1274,7 +1216,7 @@ struct SettingsView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                         divider
                         stepperRow("How long",
                                    value: String(format: "%.1f s", settings.chargeOverlayDuration),
@@ -1284,7 +1226,7 @@ struct SettingsView: View {
                                    range: 5...20)
                         divider
                         toggleRow("Play it when you unplug too",
-                                  "The same animation in a cooler colour, without the charge level.",
+                                  "The same animation in a cooler colour.",
                                   isOn: $settings.chargeOverlayOnUnplug)
                     }
                 }
@@ -1323,7 +1265,7 @@ struct SettingsView: View {
                         }
                         .disabled(updater.installing)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                 } else {
                     HStack {
                         Button(updater.checking ? "Checking…" : "Check for Updates…") {
@@ -1334,7 +1276,7 @@ struct SettingsView: View {
                         Text("v\(updater.currentVersion)")
                             .font(.callout).foregroundStyle(.secondary).monospacedDigit()
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
                 }
             }
         }
@@ -1342,33 +1284,72 @@ struct SettingsView: View {
 
     // MARK: - Layout scaffolding
 
+    /// The column every tab's content sits in.
+    ///
+    /// `contentWidth` is the fix for what taking the group boxes away exposed. The window
+    /// is as wide as seven tabs need it to be, and with the boxes gone every row stretched
+    /// to that full width — so a switch ended up five hundred points from the label it
+    /// belongs to, with nothing in between. Proximity is what pairs a control with its
+    /// name, and a box was doing that job by accident; a measured column does it on purpose.
+    ///
+    /// `Space.l` between groups, not `Space.xl`. The larger value was chosen when a filled
+    /// box was also marking each boundary; without one, the same gap just reads as a hole.
     private func tab<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) { content() }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: DS.Space.l) { content() }
+                .frame(width: contentWidth, alignment: .leading)
+                .padding(.vertical, DS.Space.l)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
         .scrollIndicators(.hidden)
     }
 
+    /// Narrower than the window on purpose — see `tab`.
+    private let contentWidth: CGFloat = 468
+
     @ViewBuilder
     private func proGate<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 20) { content() }
+        // Matches `tab`'s own spacing. Two different values here meant the gap between
+        // groups changed depending on whether the pro gate happened to wrap them.
+        VStack(alignment: .leading, spacing: DS.Space.l) { content() }
             .disabled(!license.isPro)
             .opacity(license.isPro ? 1 : 0.45)
     }
 
+    /// A titled group of rows: an uppercase label, then the rows, separated by hairlines.
+    ///
+    /// No surface. Every group used to sit in a filled, bordered, shadowed box, and this
+    /// window has twenty-five of them — several wrapping a single switch, which is a box
+    /// drawn around one thing. Worse, the box and the label were doing the same job twice:
+    /// the heading already says where the group starts, so the border is a second boundary
+    /// announcing the same fact, and a column of them reads as a stack of containers rather
+    /// than as a page of settings.
+    ///
+    /// What separates groups now is space and the label — `better-layout`'s order, space
+    /// first and background shapes second. The tab puts `Space.xl` between groups against
+    /// nothing between rows inside one, which clears the 2× rule comfortably.
+    ///
+    /// The label is inset to `rowInset` rather than hugging the edge, so it starts on the
+    /// same vertical line as the row text beneath it. With the box gone, that shared edge
+    /// is the only thing left holding the group together, and one stray indent undoes it.
     private func card<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            DSSectionLabel(title: title)
+                .padding(.leading, rowInset)
+                // A heading belongs to what comes *after* it, and the gaps have to say so.
+                // Rows carry their own vertical padding, so the bare `Space.l` between
+                // groups left roughly 16pt above each label against 14pt below it — near
+                // enough to equal that the label read as floating between two groups
+                // rather than introducing one. This buys the gap above a clear margin.
+                .padding(.top, DS.Space.s)
             VStack(spacing: 0) { content() }
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
-    private var divider: some View { Divider().padding(.leading, 12) }
+    /// The one horizontal inset every row and every group label uses.
+    private let rowInset = DS.Space.m
+
+    private var divider: some View { DSSeparator() }
 
     private func powerToggleCard(_ title: String, category: PowerToggle.Category) -> some View {
         let toggles = PowerToggle.allCases.filter { $0.category == category }
@@ -1408,16 +1389,23 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
-                if let installError {
-                    Text(installError).font(.caption).foregroundStyle(.red)
+                // A cancelled automatic install is reported here too, so the reason the
+                // helper is still missing is visible next to the button that fixes it.
+                if let message = installError ?? chargeLimit.helperInstallFailure {
+                    Text(message).font(.caption).foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true).lineLimit(3)
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
+            .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
         }
     }
 
     private var helperStatus: (title: String, detail: String, icon: String, installed: Bool) {
+        if chargeLimit.helperInstalling {
+            return ("Installing…",
+                    "Approve the administrator prompt to finish. This is asked once — after that the helper starts at boot and keeps itself current.",
+                    "arrow.down.circle", false)
+        }
         if !chargeLimit.daemonAvailable {
             return ("Not installed",
                     "The root helper enforces the charge limit, heat pause, and sleep settings. Install it once to enable them — it runs at boot on its own.",
@@ -1437,6 +1425,7 @@ struct SettingsView: View {
         installError = nil
         let result = HelperInstaller.install()
         if result.ok {
+            chargeLimit.clearAutoInstallRefusal()
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { chargeLimit.refresh() }
         } else {
             installError = result.message
@@ -1445,7 +1434,15 @@ struct SettingsView: View {
 
     private func uninstallHelper() {
         installError = nil
-        let result = HelperInstaller.uninstall()
+        chargeLimit.suppressAutoInstall()
+        // A bundle-registered daemon was never written to /Library/LaunchDaemons, so the
+        // script can't see it and unregistering is the only thing that stops it. Conversely
+        // the script costs an admin prompt, so it only runs when there's a legacy install
+        // for it to remove.
+        HelperService.unregisterBundledDaemon()
+        let result = HelperService.legacyInstallPresent
+            ? HelperInstaller.uninstall()
+            : (ok: true, message: "Helper removed.")
         if result.ok {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { chargeLimit.refresh() }
         } else {
@@ -1455,9 +1452,28 @@ struct SettingsView: View {
 
     // MARK: - Rows
 
+    /// A real `Toggle` carrying its own label, rather than a `Text` sitting next to a
+    /// `Toggle("")`.
+    ///
+    /// Two things come free from doing it the platform's way, and both were missing.
+    /// The switch gets an accessible name — an unlabelled `Toggle("")` announces itself to
+    /// VoiceOver as a switch and nothing else, so every setting in this window was a row
+    /// of anonymous switches. And the label becomes part of the control, so clicking the
+    /// text flips it; before, the words were dead space and only the 30pt switch worked.
+    ///
+    /// The switch sits centred against the label, which is what `Toggle` does on its own.
+    ///
+    /// It was pinned to the first line for a while, via an `alignmentGuide` that redefined
+    /// the row's own centre. That was the wrong tool and it broke the page: the guide moves
+    /// the row within its parent stack, so rows overlapped their neighbours and the hairline
+    /// between two of them came out drawn through the middle of a subtitle.
+    ///
+    /// The reason for pinning it is gone anyway. It was there because some subtitles ran
+    /// four and five lines, and a switch floating halfway down a paragraph doesn't read as
+    /// belonging to the sentence at the top. Those subtitles are one line now.
     private func toggleRow(_ title: String, _ subtitle: String? = nil,
                            isOn: Binding<Bool>) -> some View {
-        HStack(alignment: .center, spacing: 10) {
+        Toggle(isOn: isOn) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.callout)
                 if let subtitle {
@@ -1465,10 +1481,13 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 8)
-            Toggle("", isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, DS.Space.s)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
+        .frame(minHeight: 34)
     }
 
     private func stepperRow(_ title: String, value: String,
@@ -1481,7 +1500,8 @@ struct SettingsView: View {
             }
         }
         .controlSize(.small)
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
+        .frame(minHeight: 34)
     }
 
     /// Applies on release so dragging doesn't spam the daemon.
@@ -1505,11 +1525,11 @@ struct SettingsView: View {
 
             liveSplitReadout
 
-            Text("How much of the charger's power goes into the battery versus running your Mac. 100% charges at full speed; lower values duty-cycle charging so the battery gets less average power and stays cooler (charging to full takes longer); 0% holds the battery and sends everything to your Mac. The hardware only has an on/off charge switch, so this is an average, not an exact split.")
+            Text("How much of the charger goes to the battery rather than to your Mac. Lower is cooler and slower; 0% holds the battery entirely.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
     }
 
     @ViewBuilder
@@ -1529,14 +1549,14 @@ struct SettingsView: View {
                     }
                 }
                 if cycling {
-                    Text("At \(chargeLimit.chargePower)% charging runs in long on/off cycles (a couple of minutes each), so this reads full while charging and 0 while resting — averaging about \(chargeLimit.chargePower)% of full power.")
+                    Text("Charging runs in long on/off cycles, so this reads full or zero — averaging about \(chargeLimit.chargePower)%.")
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(10)
-            .background(.quaternary.opacity(0.4),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            // No fill. It was the last boxed thing on a page that no longer boxes
+            // anything, which made a live readout look like the one setting worth framing.
+            .padding(.vertical, DS.Space.xs)
         } else {
             Text("On battery — plug in the charger to see the live power split.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -1556,14 +1576,21 @@ struct SettingsView: View {
 
     private func pickerRow<Content: View>(_ hint: String,
                                           @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        // Width was the bug here: with no `Spacer` and no explicit width, the stack sized
+        // itself to the segmented control and the group around it came out visibly
+        // narrower than every other group on the page.
+        VStack(alignment: .leading, spacing: DS.Space.s - 2) {
             content()
             Text(hint).font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
     }
 
+    /// Label on the left, value on the right. Values are always tabular: these rows sit in
+    /// vertical runs, and proportional digits make a column of numbers ripple as they
+    /// change — the one place where the type is doing visible harm.
     private func labelRow(_ title: String, _ value: String) -> some View {
         HStack {
             Text(title).foregroundStyle(.secondary)
@@ -1571,28 +1598,21 @@ struct SettingsView: View {
             Text(value).fontWeight(.medium).monospacedDigit()
         }
         .font(.callout)
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
+        .frame(minHeight: 34)
     }
 
     private func infoRow(_ text: String, systemImage: String) -> some View {
         Label {
             Text(text).font(.caption).fixedSize(horizontal: false, vertical: true)
         } icon: {
-            HugeIcon(systemImage, size: 17).foregroundStyle(.secondary)
+            HugeIcon(systemImage, size: DS.Icon.caption).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, rowInset).padding(.vertical, DS.Space.s + 2)
     }
 
     // MARK: - Helpers
-
-    private func fmtW(_ w: Double?) -> String {
-        guard let w else { return "—" }
-        return String(format: "%.1f W", w)
-    }
-
-    private var nowSuffix: String {
-        endurance.liveWatts > 0.1 ? " Now: \(fmtW(endurance.liveWatts))." : ""
-    }
 
     private var keepAwakeProcessText: Binding<String> {
         Binding(
@@ -1607,6 +1627,31 @@ struct SettingsView: View {
     }
 
     /// Binding that re-applies the policy on change.
+    /// A setting that isn't here yet, said once and without ceremony.
+    ///
+    /// Left in place rather than removed: a control that vanishes reads as a feature that was
+    /// taken away, and someone who turned the animation on in the last build deserves to know
+    /// where it went and that it's coming back.
+    private func comingSoonRow(_ title: String, _ detail: String) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.callout).foregroundStyle(.secondary)
+                Text(detail)
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: DS.Space.s)
+            Text("Next version")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.primary.opacity(0.08)))
+        }
+        .padding(.horizontal, rowInset)
+        .padding(.vertical, DS.Space.s + 2)
+    }
+
     private func bind(_ keyPath: ReferenceWritableKeyPath<ChargeLimitStore, Bool>) -> Binding<Bool> {
         Binding(
             get: { chargeLimit[keyPath: keyPath] },
