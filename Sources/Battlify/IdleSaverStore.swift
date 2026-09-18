@@ -10,14 +10,16 @@ import BattlifyKit
 /// lid open — either on request, or once you've been away long enough — and puts back
 /// exactly what it changed when you come back.
 ///
+/// Automatic resting waits for more than a still keyboard: a film, a video call or a game
+/// on a controller all leave the idle timer climbing, so `ScreenActivity` is consulted
+/// before the screen goes anywhere. Resting on request never asks — that's an instruction.
+///
 /// What it can and can't touch, so the Settings copy can be honest:
 ///   - Display: `pmset displaysleepnow`, the same call the clamshell saver uses. The
 ///     keyboard backlight follows the display, so there's nothing separate to switch.
 ///   - Low Power Mode: through the root daemon, snapshotted first and restored on wake.
 ///   - Wi-Fi and Bluetooth: optional, off by default — losing the network while a
 ///     download or a call is running would be worse than the power it saves.
-///   - Fans: nothing to do. Apple silicon refuses SMC fan writes; the fans wind down on
-///     their own once the machine is idle, which is the point of resting it.
 @MainActor
 final class IdleSaverStore: ObservableObject {
     /// Rest automatically once the Mac has been idle for `afterMinutes`.
@@ -45,6 +47,10 @@ final class IdleSaverStore: ObservableObject {
     @Published private(set) var resting = false
     /// When resting began, for the menu's "resting since…" line.
     @Published private(set) var restingSince: Date?
+    /// Set when the idle threshold has passed but something on screen says otherwise —
+    /// a film, a call, a game. Nil the rest of the time. Drives the Settings status line
+    /// so "why hasn't it rested?" has an answer.
+    @Published private(set) var waitingBecause: String?
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -62,6 +68,8 @@ final class IdleSaverStore: ObservableObject {
 
     private var timer: Timer?
     private var started = false
+    /// Caffeine, so automatic resting can't undo it. Weak: the app owns both.
+    private weak var caffeine: CaffeineManager?
 
     init() {
         autoEnabled = defaults.bool(forKey: Keys.auto)
@@ -73,7 +81,8 @@ final class IdleSaverStore: ObservableObject {
     }
 
     /// Idempotent; called from the always-rendered menu-bar label.
-    func startIfNeeded() {
+    func startIfNeeded(caffeine: CaffeineManager) {
+        self.caffeine = caffeine
         guard !started else { return }
         started = true
         reschedule()
@@ -142,15 +151,42 @@ final class IdleSaverStore: ObservableObject {
             if idle < 3 { endResting(); return }
             if sleepAfterMinutes > 0, let since = restingSince,
                Date().timeIntervalSince(since) >= Double(sleepAfterMinutes) * 60 {
+                // Forcing sleep out from under a held assertion would cut off the very
+                // thing it's protecting — a download, a call, playback that's still
+                // running with the screen dark. Only the assertion counts here: a busy
+                // full-screen app is what *stops* resting, not what postpones sleep once
+                // the Mac is already resting.
+                guard ScreenActivity.busyReason(includingFullScreen: false) == nil else { return }
                 sleepNow()
             }
             return
         }
 
-        guard autoEnabled, idle >= Double(afterMinutes) * 60 else { return }
+        guard autoEnabled, idle >= Double(afterMinutes) * 60 else {
+            waitingBecause = nil
+            return
+        }
+        // Caffeine wins outright. Resting a Mac the user has explicitly asked to stay
+        // awake would blank the screen, lock it behind the password, and cut the radios —
+        // the exact things they turned Caffeine on to prevent.
+        guard caffeine?.active != true else {
+            waitingBecause = "Caffeine is keeping the Mac awake"
+            return
+        }
         // Never rest a Mac that's mid-presentation: an external display usually means
         // someone is looking at something.
-        guard !Self.hasExternalDisplay() else { return }
+        guard !Displays.hasExternal() else {
+            waitingBecause = "an external display is connected"
+            return
+        }
+        // Nor one that's being watched. Idle time counts key presses and mouse moves, and
+        // a film, a video call or a controller-played game produces none of them — so
+        // without this the screen goes black mid-scene once the threshold passes.
+        if let reason = ScreenActivity.busyReason() {
+            waitingBecause = reason.text
+            return
+        }
+        waitingBecause = nil
         beginResting()
     }
 
@@ -159,6 +195,7 @@ final class IdleSaverStore: ObservableObject {
     private func beginResting() {
         resting = true
         restingSince = Date()
+        waitingBecause = nil
         reschedule()   // switch to the fast poll that notices you coming back
 
         if lowPowerWhileResting {
@@ -203,14 +240,5 @@ final class IdleSaverStore: ObservableObject {
         p.arguments = args
         p.standardOutput = Pipe(); p.standardError = Pipe()
         try? p.run()
-    }
-
-    /// True if any non-built-in display is online.
-    private static func hasExternalDisplay() -> Bool {
-        var count: UInt32 = 0
-        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return false }
-        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return false }
-        return ids.prefix(Int(count)).contains { CGDisplayIsBuiltin($0) == 0 }
     }
 }
