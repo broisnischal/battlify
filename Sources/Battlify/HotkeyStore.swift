@@ -41,7 +41,6 @@ final class HotkeyStore: ObservableObject {
     private weak var chargeLimit: ChargeLimitStore?
     private weak var caffeine: CaffeineManager?
     private weak var systemActions: SystemActions?
-    private weak var endurance: EnduranceStore?
     private weak var idleSaver: IdleSaverStore?
     private weak var settings: AppSettings?
     private weak var license: LicenseManager?
@@ -70,7 +69,6 @@ final class HotkeyStore: ObservableObject {
     func attach(chargeLimit: ChargeLimitStore,
                 caffeine: CaffeineManager,
                 systemActions: SystemActions,
-                endurance: EnduranceStore,
                 idleSaver: IdleSaverStore,
                 settings: AppSettings,
                 license: LicenseManager,
@@ -79,7 +77,6 @@ final class HotkeyStore: ObservableObject {
         self.chargeLimit = chargeLimit
         self.caffeine = caffeine
         self.systemActions = systemActions
-        self.endurance = endurance
         self.idleSaver = idleSaver
         self.settings = settings
         self.license = license
@@ -200,7 +197,6 @@ final class HotkeyStore: ObservableObject {
         case .toggleLowPowerMode:  toggleLowPowerMode()
         case .toggleDischarge:     toggleDischarge()
         case .toggleHoldCharge:    toggleHoldCharge()
-        case .toggleEndurance:     toggleEndurance()
         case .toggleRest:          toggleRest()
         case .cycleIconStyle:      cycleIconStyle()
         case .brightnessUp:        nudgeBrightness(by: 0.1)
@@ -223,7 +219,11 @@ final class HotkeyStore: ObservableObject {
             guard let caffeine else { return }
             caffeine.toggle()
             hud(caffeine.active ? "Keep Awake On" : "Keep Awake Off",
-                detail: caffeine.active ? "Display and system won't sleep" : nil)
+                detail: caffeine.active
+                    ? (caffeine.hold == .systemOnly
+                       ? "Tasks keep running; the screen may still sleep"
+                       : "Display and system won't sleep")
+                    : nil)
 
         case .toggleKeepAwake:
             guard let charge = requireDaemon() else { return }
@@ -297,11 +297,21 @@ final class HotkeyStore: ObservableObject {
         }
     }
 
+    /// Cycles the saving modes only.
+    ///
+    /// Extreme Performance is left out deliberately. It drops the charge limit and stops
+    /// the Mac sleeping — neither of which should ever be the result of a
+    /// keystroke you meant for something else. From Extreme, the first press lands on Off,
+    /// so the shortcut is still a way *out*.
     private func cycleSaveMode() {
         guard let charge = requireDaemon() else { return }
-        let all = SaveMode.allCases
-        let index = all.firstIndex(of: charge.mode) ?? 0
-        let next = all[(index + 1) % all.count]
+        let all = SaveMode.allCases.filter { !$0.isPerformance }
+        let next: SaveMode
+        if let index = all.firstIndex(of: charge.mode) {
+            next = all[(index + 1) % all.count]
+        } else {
+            next = .off
+        }
         charge.applyMode(next)
         hud("Save Mode: \(next.title)", detail: next.summary)
     }
@@ -367,16 +377,6 @@ final class HotkeyStore: ObservableObject {
         let next = all[((all.firstIndex(of: settings.batteryIconStyle) ?? 0) + 1) % all.count]
         settings.batteryIconStyle = next
         hud("Icon: \(next.displayName)")
-    }
-
-    private func toggleEndurance() {
-        guard let endurance else {
-            hud("Battery Saver Unavailable", icon: "alert")
-            return
-        }
-        endurance.toggle()
-        hud(endurance.active ? "Battery Saver On" : "Battery Saver Off",
-            detail: endurance.active ? "Dimmed, Low Power Mode, less background wake" : nil)
     }
 
     private func open(_ id: String) {
