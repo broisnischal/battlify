@@ -64,11 +64,12 @@ enum BatteryIconStyle: String, CaseIterable, Identifiable, Codable {
 }
 
 /// A one-off animation played in the menu bar when the power state changes.
+///
+/// Plugging in no longer has one. It used to morph a flat spark up into a bolt, which
+/// was an animation announcing a mark that has since been taken away: while current is
+/// flowing the fill sweeps, and that motion is the message. There's nothing left for a
+/// spark to grow into.
 enum IconTransition: String {
-    /// Adapter connected: a flat spark morphs up into the bolt as the fill sweeps.
-    case connected
-    /// Adapter pulled: the bolt collapses back to a flat spark and goes.
-    case disconnected
     /// Don't-charge switched on: the bolt becomes a pause mark.
     case heldOn
     /// Don't-charge switched off: the pause mark becomes a bolt again.
@@ -85,6 +86,11 @@ enum BatteryIconRenderer {
 
     private static let stroke: CGFloat = 1.5
 
+    /// How far the fill fades while charging is held. Low enough to be unmistakable at a
+    /// glance, high enough that the *level* is still readable — the point of a held battery
+    /// is that you can see where it is being held.
+    private static let holdFillAlpha: CGFloat = 0.4
+
     @MainActor private static var cache: [String: NSImage] = [:]
 
     /// Menu-bar / preview glyph. `tint` neutral ⇒ template image; a colour ⇒
@@ -95,6 +101,7 @@ enum BatteryIconRenderer {
                                  charging: Bool, tint: MenuBarTint,
                                  height: CGFloat = 14, frame: Int = 0,
                                  celebrating: Bool = false,
+                                 pluggedIn: Bool = false,
                                  holding: Bool = false,
                                  transition: IconTransition? = nil,
                                  transitionStep: Int = 0) -> NSImage {
@@ -105,17 +112,17 @@ enum BatteryIconRenderer {
         } else if charging && style == .pixel {
             anim = pixelFillCount(pct: pct, charging: charging, frame: frame) // sweep step
         } else if charging {
-            anim = phase(frame, sweepSteps)                                  // fill sweep + bolt pulse
+            anim = phase(frame, sweepSteps)                                  // fill sweep
         } else if style.animatesOnBattery {
             anim = phase(frame, sweepSteps)                                  // wave keeps moving
         } else {
             anim = 0
         }
-        let key = "\(style.rawValue)|\(pct)|\(charging)|\(celebrating)|\(tint.cacheKey)|\(height)|\(anim)|\(transition?.rawValue ?? "-")\(transitionStep)|\(holding)"
+        let key = "\(style.rawValue)|\(pct)|\(charging)|\(celebrating)|\(tint.cacheKey)|\(height)|\(anim)|\(transition?.rawValue ?? "-")\(transitionStep)|\(holding)|\(pluggedIn)"
         if let cached = cache[key] { return cached }
 
         let baseColor: NSColor = { if case .colored(let c) = tint { return c } else { return .black } }()
-        // Celebration renders at 100% with no bolt, blinking by alpha (which
+        // Celebration renders at 100%, blinking by alpha (which
         // survives the template treatment, so it works monochrome too).
         let effPct = celebrating ? 100 : pct
         let effCharging = celebrating ? false : charging
@@ -136,7 +143,8 @@ enum BatteryIconRenderer {
             cg.translateBy(x: -vb.x, y: -vb.y)
             draw(style: style, pct: effPct, charging: effCharging, color: color,
                  frame: frame, celebrating: celebrating, celebrateFrame: celebrateFrame,
-                 holding: holding, transition: transition, transitionStep: transitionStep)
+                 pluggedIn: pluggedIn, holding: holding,
+                 transition: transition, transitionStep: transitionStep)
             return true
         }
         image.isTemplate = tint.isNeutral
@@ -148,7 +156,8 @@ enum BatteryIconRenderer {
 
     private static func draw(style: BatteryIconStyle, pct: Int, charging: Bool, color: NSColor,
                              frame: Int = 0, celebrating: Bool = false,
-                             celebrateFrame: Int = 0, holding: Bool = false,
+                             celebrateFrame: Int = 0, pluggedIn: Bool = false,
+                             holding: Bool = false,
                              transition: IconTransition? = nil,
                              transitionStep: Int = 0) {
         color.setStroke(); color.setFill()
@@ -161,7 +170,8 @@ enum BatteryIconRenderer {
         case .rounded:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
             fillAndBolt(charging: charging, celebrating: celebrating,
-                        celebrateFrame: celebrateFrame, holding: holding,
+                        celebrateFrame: celebrateFrame,
+                        pluggedIn: pluggedIn, holding: holding,
                         transition: transition,
                         transitionStep: transitionStep, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
@@ -171,7 +181,8 @@ enum BatteryIconRenderer {
         case .bars:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
             fillAndBolt(charging: charging, celebrating: celebrating,
-                        celebrateFrame: celebrateFrame, holding: holding,
+                        celebrateFrame: celebrateFrame,
+                        pluggedIn: pluggedIn, holding: holding,
                         transition: transition,
                         transitionStep: transitionStep, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
@@ -185,7 +196,8 @@ enum BatteryIconRenderer {
             NSBezierPath(roundedRect: NSRect(x: 19, y: 9.6, width: 1.9, height: 4.8),
                          xRadius: 0.7, yRadius: 0.7).fill()
             fillAndBolt(charging: charging, celebrating: celebrating,
-                        celebrateFrame: celebrateFrame, holding: holding,
+                        celebrateFrame: celebrateFrame,
+                        pluggedIn: pluggedIn, holding: holding,
                         transition: transition,
                         transitionStep: transitionStep, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
@@ -197,7 +209,8 @@ enum BatteryIconRenderer {
                                     xRadius: 4, yRadius: 4)
             pill.lineWidth = stroke; pill.stroke()
             fillAndBolt(charging: charging, celebrating: celebrating,
-                        celebrateFrame: celebrateFrame, holding: holding,
+                        celebrateFrame: celebrateFrame,
+                        pluggedIn: pluggedIn, holding: holding,
                         transition: transition,
                         transitionStep: transitionStep, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
@@ -208,7 +221,8 @@ enum BatteryIconRenderer {
             drawPixel(fill: pixelFillCount(pct: pct, charging: charging, frame: frame))
 
         case .vertical:
-            drawVertical(frac: fillFrac, charging: charging, color: color, frame: frame)
+            drawVertical(frac: fillFrac, charging: charging, pluggedIn: pluggedIn,
+                         color: color, frame: frame)
 
         case .ring:
             drawRing(frac: frac, charging: charging, color: color, frame: frame)
@@ -222,7 +236,8 @@ enum BatteryIconRenderer {
         case .wave:
             strokeSVG(bodyPath); strokeSVG(terminalPath)
             fillAndBolt(charging: charging, celebrating: celebrating,
-                        celebrateFrame: celebrateFrame, holding: holding,
+                        celebrateFrame: celebrateFrame,
+                        pluggedIn: pluggedIn, holding: holding,
                         transition: transition,
                         transitionStep: transitionStep, color: color, frame: frame,
                         bolt: boltPath, width: 1.7) {
@@ -245,7 +260,8 @@ enum BatteryIconRenderer {
     /// Stout on purpose. A true-to-life upright cell is about half as wide as it is
     /// tall, which at 14pt is a 6pt sliver with an invisible fill; widening the body
     /// and shortening the can buys a glyph you can actually read in a menu bar.
-    private static func drawVertical(frac: CGFloat, charging: Bool, color: NSColor, frame: Int) {
+    private static func drawVertical(frac: CGFloat, charging: Bool, pluggedIn: Bool,
+                                     color: NSColor, frame: Int) {
         let body = NSRect(x: 6.6, y: 4.6, width: 10.8, height: 14.2)
         let path = NSBezierPath(roundedRect: body, xRadius: 2.8, yRadius: 2.8)
         path.lineWidth = 1.6; path.stroke()
@@ -255,7 +271,8 @@ enum BatteryIconRenderer {
 
         let inset = NSRect(x: body.minX + 1.6, y: body.minY + 1.6,
                            width: body.width - 3.2, height: body.height - 3.2)
-        fillAndBolt(charging: charging, color: color, frame: frame,
+        fillAndBolt(charging: charging, pluggedIn: pluggedIn,
+                    color: color, frame: frame,
                     bolt: uprightBoltPath, width: 1.5) {
             guard frac > 0 else { return }
             let h = min(inset.height, max(2.0, inset.height * frac))
@@ -435,12 +452,9 @@ enum BatteryIconRenderer {
 
     // MARK: - Animation helpers
 
-    /// Bolt opacity cycle while charging — a slow breathe, not a hard blink.
-    private static let boltPulse: [CGFloat] = [1.0, 0.72, 0.45, 0.72]
-
     /// Steps in the charging fill sweep. Also the modulus for every charging
-    /// animation, so one tick drives the sweep, the bolt breathe and the ring marker
-    /// together instead of them drifting against each other.
+    /// animation, so one tick drives the sweep and the ring marker together instead of
+    /// them drifting against each other.
     ///
     /// Six, not eight: the menu-bar tick is 500ms and can't safely go faster (each one
     /// relayouts the status item), so a shorter cycle is the only way to make the sweep
@@ -460,15 +474,6 @@ enum BatteryIconRenderer {
     /// A bolt sized for the upright and round styles, which have no room for the wide
     /// horizontal one.
     private static let uprightBoltPath = "M13 8.4L10.4 12.1C10.2 12.4 10.4 12.7 10.7 12.7L12.6 12.7C12.9 12.7 13.1 13.0 12.9 13.3L10.9 16.2"
-
-    /// A wider bolt, morphed towards while charging so the mark breathes in shape and
-    /// not just in opacity.
-    private static let boltFatPath = "M11.3 8.6L8.6 11.3C8.3 11.6 8.5 12.1 8.9 12.2L11.6 12.7C12.1 12.8 12.3 13.3 12.0 13.7L9.0 15.6"
-
-    /// The flat line the bolt grows out of on connect, and collapses back into on
-    /// unplug. Same span as the bolt, no zig — so the morph reads as energy arriving
-    /// rather than a glyph being swapped.
-    private static let sparkPath = "M10.9 12.4L10.9 12.5L11.2 12.55L11.5 12.6"
 
     /// Frames a connect/disconnect animation runs for. Seven at 32ms is ~220ms — a
     /// state change, so it belongs in the same band as a dropdown, not a page
@@ -504,18 +509,38 @@ enum BatteryIconRenderer {
     /// level, from a sliver to full, and survives the template treatment (macOS tints
     /// by alpha, and the halo is alpha).
     private static func fillAndBolt(charging: Bool, celebrating: Bool = false,
-                                    celebrateFrame: Int = 0, holding: Bool = false,
+                                    celebrateFrame: Int = 0,
+                                    pluggedIn: Bool = false, holding: Bool = false,
                                     transition: IconTransition? = nil,
                                     transitionStep: Int = 0,
                                     color: NSColor, frame: Int,
                                     bolt: String, width: CGFloat,
                                     fill: () -> Void) {
         let glyph = overlayGlyph(charging: charging, celebrating: celebrating,
-                                 celebrateFrame: celebrateFrame, holding: holding,
+                                 celebrateFrame: celebrateFrame,
+                                 pluggedIn: pluggedIn, holding: holding,
                                  transition: transition,
                                  transitionStep: transitionStep, frame: frame, bolt: bolt)
         guard let glyph, let cg = NSGraphicsContext.current?.cgContext else {
-            fill()
+            // A steady hold is a *dimmed* fill, not a mark cut into one.
+            //
+            // The pause mark used to be knocked out of the bar here, and at the menu bar's
+            // 14pt that is two vertical strokes erased from a bar six points tall. It does
+            // not read as a pause symbol at that size — it reads as the fill having gone
+            // stripy, which is the one thing a level indicator must never look like.
+            //
+            // Opacity carries the same fact with no fine geometry at all, so it survives
+            // every style and every size: a full-strength bar is a battery doing something,
+            // a faded one is a battery deliberately held. The bolt→pause morph still plays
+            // on the transition, where it has a full second and the user's attention.
+            if holding, let cg = NSGraphicsContext.current?.cgContext {
+                cg.saveGState()
+                cg.setAlpha(holdFillAlpha)
+                fill()
+                cg.restoreGState()
+            } else {
+                fill()
+            }
             return
         }
         cg.beginTransparencyLayer(auxiliaryInfo: nil)
@@ -523,28 +548,37 @@ enum BatteryIconRenderer {
         cg.saveGState()
         cg.setBlendMode(.destinationOut)   // erases only this layer's own pixels
         color.setStroke()
-        stroke(glyph, width: width + 1.5)
+        // The clearance around the mark. It used to be 1.5 wider than the stroke, sized
+        // back when the bolt only appeared over a fill that was sweeping past it anyway;
+        // now that the mark sits over a *full* bar at the limit, that much erased fill
+        // reads as a bar broken in two rather than a mark laid over it.
+        stroke(glyph, width: width + 1.0)
         cg.restoreGState()
         cg.endTransparencyLayer()
 
-        // The bolt breathes by alpha as well as by shape; the checkmark and the pause mark
-        // stay solid — a completion or a deliberate hold that dims looks like it's failing.
-        let alpha = (celebrating || holding) ? 1 : boltPulse[phase(frame, boltPulse.count)]
-        color.withAlphaComponent(alpha).setStroke()
+        // Solid, always. Every mark that survives here — bolt, pause, checkmark — now
+        // reports a *stationary* state, and a stationary state that breathes reads as
+        // something struggling rather than something settled. The breathing belonged to
+        // the charging bolt, and the charging bolt is gone.
         stroke(glyph, width: width)
-        color.setStroke()
     }
 
     /// The mark drawn over the fill, *morphed* between shapes rather than swapped.
     ///
-    /// Charging breathes between a slim and a fat bolt — the same amount of energy,
-    /// arriving — and the completion flash grows that bolt into a checkmark. Both go
-    /// through `PathMorph`, which resamples the two outlines by arc length, so the
-    /// in-between frames are real intermediate shapes instead of a cross-fade of two
-    /// glyphs sitting on top of each other. Every frame is cached by the renderer, so
-    /// the resampling happens a handful of times per state, not per redraw.
+    /// Nothing is drawn while current is flowing. The fill sweeps then, and a bolt on top
+    /// of it is a second voice saying the same word — which is what made the glyph busy at
+    /// 14pt in the first place. The mark now belongs to the states that *don't* move:
+    /// sitting on the adapter at the limit (a bolt), deliberately holding (a pause), and
+    /// the moment a charge completes (a checkmark).
+    ///
+    /// The held and completion changes still morph rather than swap, through `PathMorph`,
+    /// which resamples both outlines by arc length so the in-between frames are real
+    /// intermediate shapes and not a cross-fade of two glyphs stacked on each other. Every
+    /// frame is cached by the renderer, so the resampling happens a handful of times per
+    /// state, not per redraw.
     private static func overlayGlyph(charging: Bool, celebrating: Bool,
-                                     celebrateFrame: Int, holding: Bool = false,
+                                     celebrateFrame: Int,
+                                     pluggedIn: Bool = false, holding: Bool = false,
                                      transition: IconTransition? = nil,
                                      transitionStep: Int = 0,
                                      frame: Int, bolt: String) -> NSBezierPath? {
@@ -557,25 +591,18 @@ enum BatteryIconRenderer {
             let t = transition == .heldOn ? p : 1 - p
             return PathMorph.morph(from: slim, to: SVGPath.parse(pausePath), t: t)
         }
-        if let transition {
-            let linear = Double(transitionStep) / Double(transitionSteps - 1)
-            // Ease-out: the bolt is most of the way there on the first couple of frames,
-            // which is what makes a 220ms animation feel instant rather than merely short.
-            let p = CGFloat(Easing.outStrong(linear))
-            let t = transition == .connected ? 1 - p : p     // in from flat, or back out to it
-            return PathMorph.morph(from: slim, to: SVGPath.parse(sparkPath), t: t)
-        }
         if celebrating {
             let t = min(1, CGFloat(celebrateFrame) / 2)     // grow over two ticks, then hold
             return PathMorph.morph(from: slim, to: SVGPath.parse(checkPath), t: t)
         }
-        // Held: a pause mark where the bolt would be, so "plugged in and deliberately not
-        // charging" doesn't look identical to "sitting at the limit".
-        if holding { return SVGPath.parse(pausePath) }
-        guard charging else { return nil }
-        let u = CGFloat(Easing.outStrong(Double(phase(frame, sweepSteps)) / Double(sweepSteps)))
-        let t = 1 - abs(2 * u - 1)                          // 0 → 1 → 0, no jump at the wrap
-        return PathMorph.morph(from: slim, to: SVGPath.parse(boltFatPath), t: t)
+        // Held: no mark. The fill is drawn faded instead — see `fillAndBolt` for why two
+        // vertical strokes cut into a six-point bar stop being a pause symbol at menu-bar
+        // size. Returning nil here is what routes it down that path.
+        if holding { return nil }
+        // On the adapter and not taking a charge — at the limit, paused, or simply full.
+        // Nothing about the glyph is moving in this state, so the bolt is the only thing
+        // distinguishing it from running on battery.
+        return pluggedIn && !charging ? slim : nil
     }
 
     private static func stroke(_ path: NSBezierPath, width: CGFloat) {
@@ -583,15 +610,6 @@ enum BatteryIconRenderer {
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
         path.stroke()
-    }
-
-    /// Restores the stroke colour afterward so the rest of the glyph draws at
-    /// full opacity.
-    private static func drawBolt(_ color: NSColor, frame: Int,
-                                 path: String? = nil, width: CGFloat = 1.7) {
-        color.withAlphaComponent(boltPulse[phase(frame, boltPulse.count)]).setStroke()
-        strokeSVG(path ?? boltPath, width: width)
-        color.setStroke()
     }
 
     // MARK: - Pixel style (8-bit battery)
