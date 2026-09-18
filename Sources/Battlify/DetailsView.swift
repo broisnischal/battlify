@@ -50,17 +50,17 @@ struct DetailsView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     GeometryReader { geo in
                         HStack(spacing: 2) {
-                            Rectangle().fill(Color.orange)
+                            Rectangle().fill(Color(ChargePalette.systemDraw))
                                 .frame(width: geo.size.width * sys / total)
-                            Rectangle().fill(Color.green)
+                            Rectangle().fill(Color(ChargePalette.accent))
                                 .frame(width: geo.size.width * chg / total)
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
                     .frame(height: 10)
                     HStack(spacing: 16) {
-                        splitTag(.orange, "System", sys, total)
-                        splitTag(.green, "Into battery", chg, total)
+                        splitTag(Color(ChargePalette.systemDraw), "System", sys, total)
+                        splitTag(Color(ChargePalette.accent), "Into battery", chg, total)
                         Spacer()
                     }
                 }
@@ -124,7 +124,7 @@ struct DetailsView: View {
         return "battery.100"
     }
     private func batteryColor(_ f: PowerFlow) -> Color {
-        if f.batteryWatts > 0.5 { return .green }
+        if f.batteryWatts > 0.5 { return Color(ChargePalette.accent) }
         if f.batteryWatts < -0.5 { return .red }
         return .secondary
     }
