@@ -117,7 +117,6 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
     // Power & radios
     case toggleRest
     case cycleIconStyle
-    case toggleEndurance
     case toggleWiFi
     case toggleBluetooth
 
@@ -145,7 +144,6 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .brightnessDown:      return "Brightness down"
         case .toggleRest:          return "Rest / wake the Mac"
         case .cycleIconStyle:      return "Next menu-bar icon style"
-        case .toggleEndurance:     return "Toggle battery saver"
         case .toggleWiFi:          return "Toggle Wi-Fi"
         case .toggleBluetooth:     return "Toggle Bluetooth"
         case .displayOff:          return "Turn display off"
@@ -162,7 +160,7 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .chargeLimitUp:       return "In 5% steps, up to 100%."
         case .chargeLimitDown:     return "In 5% steps, down to 50%."
         case .togglePauseCharging: return "Stop charging until you resume, or resume now."
-        case .cycleSaveMode:       return "Off → Normal → Super Saver → Off."
+        case .cycleSaveMode:       return "Off → Normal → Super Saver → Off. Skips Extreme Performance — that one you pick on purpose."
         case .toggleLowPowerMode:  return "The system Low Power Mode setting."
         case .toggleDischarge:     return "Run off the battery while plugged in. Needs adapter control."
         case .toggleHoldCharge:    return "Stay plugged in without charging — the battery holds where it is."
@@ -173,7 +171,6 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .brightnessDown:      return "Lower the built-in display by 10% — the cheapest watts you can save."
         case .toggleRest:          return "Screen off and settings held, without closing the lid — any key wakes it."
         case .cycleIconStyle:      return "Cycle through the battery glyphs in the menu bar."
-        case .toggleEndurance:     return "Turn Endurance on or off: dimmer screen, Low Power Mode, trimmed background wake."
         case .toggleWiFi:          return "Turn Wi-Fi on or off."
         case .toggleBluetooth:     return "Turn Bluetooth on or off."
         case .displayOff:          return "Sleep the display now; the Mac stays awake."
@@ -202,7 +199,6 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .brightnessDown:      return "sunLow"
         case .toggleRest:          return "sleep"
         case .cycleIconStyle:      return "battery"
-        case .toggleEndurance:     return "heart"
         case .toggleWiFi:          return "wifi"
         case .toggleBluetooth:     return "bluetooth"
         case .displayOff:          return "moon"
@@ -229,8 +225,7 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
     public var category: Category {
         switch self {
         case .toggleChargeLimit, .chargeLimitUp, .chargeLimitDown, .togglePauseCharging,
-             .cycleSaveMode, .toggleLowPowerMode, .toggleDischarge, .toggleHoldCharge,
-             .toggleEndurance:
+             .cycleSaveMode, .toggleLowPowerMode, .toggleDischarge, .toggleHoldCharge:
             return .charging
         case .toggleCaffeine, .toggleKeepAwake, .toggleDimDisplay, .displayOff, .sleepNow,
              .brightnessUp, .brightnessDown, .toggleRest:
@@ -272,7 +267,6 @@ public enum HotkeyAction: String, Codable, CaseIterable, Identifiable, Sendable 
         case .toggleHoldCharge:    return Hotkey(keyCode: 4, modifiers: base)   // H
         case .brightnessUp:        return Hotkey(keyCode: 30, modifiers: base)  // ]
         case .brightnessDown:      return Hotkey(keyCode: 33, modifiers: base)  // [
-        case .toggleEndurance:     return Hotkey(keyCode: 14, modifiers: base)  // E
         case .toggleRest:          return Hotkey(keyCode: 15, modifiers: base)  // R
         case .cycleIconStyle:      return Hotkey(keyCode: 34, modifiers: base)  // I
         // Unbound on purpose: cutting Wi-Fi or Bluetooth by a mistyped chord is the kind
