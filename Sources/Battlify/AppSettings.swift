@@ -86,6 +86,23 @@ final class AppSettings: ObservableObject {
     @Published var hapticsEnabled: Bool {
         didSet { defaults.set(hapticsEnabled, forKey: Keys.haptics) }
     }
+    /// Play a short synthesised cue on plug, unplug and charge complete. Off by default:
+    /// a sound is the one kind of feedback you can't look away from.
+    @Published var soundEnabled: Bool {
+        didSet { defaults.set(soundEnabled, forKey: Keys.sound) }
+    }
+    /// Cue volume, independent of system volume, 0…1.
+    ///
+    /// Its own control rather than "however loud your Mac is": system volume is set for
+    /// whatever you're listening to, and a notification chime riding along at that level
+    /// is how apps end up being muted entirely.
+    @Published var soundVolume: Double {
+        didSet { defaults.set(soundVolume, forKey: Keys.soundVolume) }
+    }
+    /// Which of the cue voicings to play. See `ChargeSound.Theme`.
+    @Published var soundTheme: ChargeSound.Theme {
+        didSet { defaults.set(soundTheme.rawValue, forKey: Keys.soundTheme) }
+    }
     /// Play Battlify's animations even when macOS's Reduce Motion is on.
     ///
     /// Reduce Motion is respected by default, as it should be. But it's a system-wide
@@ -101,6 +118,16 @@ final class AppSettings: ObservableObject {
     var motionAllowed: Bool {
         animateWithReduceMotion || !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
+
+    /// Whether a cue may sound right now.
+    ///
+    /// Reduce Motion gates audio as well as animation. It isn't a sound setting, but it's
+    /// the closest thing macOS has to one: people who turn it on are usually saying they
+    /// don't want to be startled, not just that they dislike parallax. Gating on it costs
+    /// nothing here because the "Animate anyway" override already exists for anyone who
+    /// does want the feedback — and it's spelled out in Settings rather than left as a
+    /// surprise.
+    var soundAllowed: Bool { soundEnabled && motionAllowed }
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -118,6 +145,9 @@ final class AppSettings: ObservableObject {
         static let overlayDuration = "overlay.duration"
         static let overlayOnUnplug = "overlay.onUnplug"
         static let haptics = "feedback.haptics"
+        static let sound = "feedback.sound"
+        static let soundVolume = "feedback.soundVolume"
+        static let soundTheme = "feedback.soundTheme"
         static let animateAnyway = "motion.overrideReduceMotion"
     }
 
@@ -147,6 +177,13 @@ final class AppSettings: ObservableObject {
         chargeOverlayDuration = storedDuration > 0 ? min(2.0, max(0.5, storedDuration)) : 1.0
         chargeOverlayOnUnplug = defaults.bool(forKey: Keys.overlayOnUnplug)
         hapticsEnabled = defaults.bool(forKey: Keys.haptics)
+        soundEnabled = defaults.bool(forKey: Keys.sound)
+        // 0 means "never set", same as the overlay duration above — a fresh install gets
+        // the subtle default rather than a silent toggle that looks broken when switched on.
+        let storedVolume = defaults.double(forKey: Keys.soundVolume)
+        soundVolume = storedVolume > 0 ? min(1, storedVolume) : ChargeSound.defaultVolume
+        soundTheme = defaults.string(forKey: Keys.soundTheme)
+            .flatMap(ChargeSound.Theme.init(rawValue:)) ?? ChargeSound.defaultTheme
         animateWithReduceMotion = defaults.bool(forKey: Keys.animateAnyway)
     }
 }
