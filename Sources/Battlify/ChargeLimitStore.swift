@@ -13,7 +13,7 @@ final class ChargeLimitStore: ObservableObject {
     /// Build version the daemon reports (0 = predates it).
     @Published private(set) var daemonBuildVersion = 0
     /// Installed helper is older than this build (protocol or behaviour). Triggers an
-    /// automatic update (see autoUpdateHelperIfNeeded).
+    /// automatic update (see autoInstallHelperIfNeeded).
     var daemonOutdated: Bool {
         daemonAvailable && (daemonProtocolVersion < ControlProtocol.version
                             || daemonBuildVersion < HelperBuild.version)
@@ -58,14 +58,13 @@ final class ChargeLimitStore: ObservableObject {
     @Published var dischargeEnabled = false
     /// "Don't charge while plugged in": hold the level exactly where it is.
     @Published var holdCharge = false
-    /// Live fan state from the daemon (empty on a fanless Mac or an older helper).
-    @Published private(set) var fans: [FanReading] = []
-    @Published private(set) var fanMode: FanMode = .auto
-    /// Whether this Mac accepts fan writes — some read fine and refuse every write.
-    @Published private(set) var fanControlSupported = false
+    /// Whether this Mac has macOS High Power Mode at all, and whether it's on. Most Macs
+    /// don't — it's a Max-chip and desktop feature — so Extreme Performance has to be
+    /// able to say which of its levers actually exist here.
+    @Published private(set) var highPowerModeSupported = false
+    @Published private(set) var highPowerMode = false
     /// Temperature sensors, warmest first.
     @Published private(set) var sensors: [SensorReading] = []
-    var fansSupported: Bool { !fans.isEmpty }
     @Published private(set) var dischargeSupported = false
     @Published private(set) var discharging = false
     @Published var disableChargingBeforeSleep = false
@@ -83,8 +82,20 @@ final class ChargeLimitStore: ObservableObject {
     @Published var keepAwakeMaxTempC: Double = 0
     /// Actively sleep the Mac once the monitored task finishes (task-gated keep-awake).
     @Published var sleepWhenTaskDone = false
-    /// How deeply the Mac sleeps when closed and idle.
-    @Published var sleepDepth: SleepDepth = .normal
+    /// Sealed Sleep: memory powered down when the lid shuts, and nothing left to wake it.
+    /// Read-only here — it goes through `setSealedSleep`, because the daemon has a
+    /// transition to run in both directions.
+    @Published private(set) var sealedSleep = false
+    /// Instant wake while sealed (memory stays powered). See `SealedSleep.fastWakeIsDefault`.
+    @Published private(set) var sealedSleepFastWake = SealedSleep.fastWakeIsDefault
+    /// Minutes of closed-lid sleep before instant wake hands over to hibernation (0 = never).
+    @Published var sealedSleepHibernateAfter = 20
+    /// Live `hibernatemode` and `standby`, so the audit can tell "not sealed" from
+    /// "this Mac has no such key".
+    @Published private(set) var hibernateMode: Int?
+    @Published private(set) var standbyEnabled: Bool?
+    /// pmset keys this Mac refused on the last Sealed Sleep write.
+    @Published private(set) var sealedSleepRefused: [String] = []
     /// Windows during which Always Active holds (empty = whenever the toggle is on).
     @Published var keepAwakeSchedules: [AwakeSchedule] = []
     /// When Always Active switches itself off (nil = no timer).
@@ -121,6 +132,13 @@ final class ChargeLimitStore: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 Task { @MainActor in self?.refresh() }
             }
+        }
+        // The 30s poll carries 15s of tolerance, so a window brought forward could show
+        // state most of a minute old. Refreshing on activation costs one socket round-trip
+        // and means what you're looking at is what the daemon currently thinks.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
         }
     }
 
@@ -159,18 +177,139 @@ final class ChargeLimitStore: ObservableObject {
 
     private var didAttemptHelperUpdate = false
 
-    /// Update an outdated helper once per launch via the bundled installer, so daemon
-    /// fixes apply without a manual reinstall. Packaged .app only; cancel falls back to the banner.
-    private func autoUpdateHelperIfNeeded() {
-        guard daemonOutdated, HelperInstaller.canInstall, !didAttemptHelperUpdate else { return }
+    /// True while the installer is running, so the UI can say "installing" instead of
+    /// showing the "not installed" warning behind the admin prompt.
+    @Published private(set) var helperInstalling = false
+    /// Why the last automatic install didn't happen, if it didn't. Cleared by a success.
+    @Published private(set) var helperInstallFailure: String?
+
+    /// Remembers a cancelled admin prompt, stamped with the helper build this app ships.
+    ///
+    /// Auto-install must not become a password dialog on every single launch: someone who
+    /// says no once means it. But a newer helper is a genuinely new question — and the
+    /// build number is exactly what "newer" means here — so a bump asks again.
+    private static let declinedKey = "helper.autoInstallDeclinedForBuild"
+    private var autoInstallDeclined: Bool {
+        get { UserDefaults.standard.integer(forKey: Self.declinedKey) == HelperBuild.version }
+        set { UserDefaults.standard.set(newValue ? HelperBuild.version : 0, forKey: Self.declinedKey) }
+    }
+
+    /// Put the root helper in place without making anyone find a button.
+    ///
+    /// Two situations land here, and only the second was ever handled automatically:
+    ///   - **nothing installed at all** — every charge-limit, heat and sleep feature sits
+    ///     inert until someone opens Settings and notices the banner. The app looks broken
+    ///     rather than uninstalled, which is the worse of the two.
+    ///   - **an installed helper older than the one bundled here**, where the daemon fixes
+    ///     that shipped with this build never reach the Mac that needs them.
+    ///
+    /// Packaged .app only (the scripts live in Resources), at most once per launch, and
+    /// never again for this build once the prompt has been cancelled.
+    private func autoInstallHelperIfNeeded(missing: Bool) {
+        guard missing || daemonOutdated else { return }
+        guard !didAttemptHelperUpdate, !autoInstallDeclined else { return }
+        // Every route needs something only a packaged build has — the bundled binary, a
+        // signature, or the installer script. A bare `swift run` has none of them and is
+        // better left alone than nagged.
+        guard HelperInstaller.canInstall || HelperService.bundledHelperPath != nil else { return }
         didAttemptHelperUpdate = true
-        Task.detached {
-            let result = HelperInstaller.install()
+        helperInstalling = true
+
+        let protocolVersion = daemonProtocolVersion
+        Task.detached { [weak self] in
+            let result = Self.installByCheapestRoute(missing: missing,
+                                                    daemonProtocolVersion: protocolVersion)
+            await MainActor.run {
+                guard let self else { return }
+                self.helperInstalling = false
+                guard result.ok else {
+                    // A cancelled prompt and a broken installer are indistinguishable from
+                    // here, and re-prompting helps neither. Record it and leave the button.
+                    self.autoInstallDeclined = true
+                    self.helperInstallFailure = result.message
+                    return
+                }
+                self.helperInstallFailure = nil
+                self.autoInstallDeclined = false
+            }
             guard result.ok else { return }
-            // launchd relaunches the new daemon; re-sync once it's back up.
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            await MainActor.run { self.refresh() }
+            await self?.resyncAfterInstall()
         }
+    }
+
+    /// Take the least intrusive route that can actually work on this machine.
+    ///
+    /// Order matters, and it's ordered by who gets interrupted rather than by elegance: the
+    /// two quiet routes cost nothing to attempt, and only the last one puts a password
+    /// dialog in front of somebody. Anything that fails falls through to the next, because a
+    /// working helper installed the plain way beats a clever one that didn't install.
+    private nonisolated static func installByCheapestRoute(
+        missing: Bool, daemonProtocolVersion: Int) -> (ok: Bool, message: String) {
+
+        // A daemon already running that can verify and swap its own binary never needs to
+        // ask for anything.
+        if !missing, HelperService.canSelfUpdate(daemonProtocolVersion: daemonProtocolVersion) {
+            let quiet = HelperService.requestQuietUpdate()
+            if quiet.ok { return quiet }
+        }
+
+        // Nothing installed, and this build is signed: let macOS run the daemon out of the
+        // app bundle. That is approved once and then no future build needs installing at
+        // all. Skipped when a legacy install is present — replacing it would cost the very
+        // prompt this is avoiding, and route one already keeps it current.
+        if missing, HelperService.isSigned, !HelperService.legacyInstallPresent,
+           HelperService.registerBundledDaemon() == nil {
+            return (true, "Helper registered with macOS.")
+        }
+
+        guard HelperInstaller.canInstall else {
+            return (false, "This build has no way to install the helper.")
+        }
+        return HelperInstaller.install()
+    }
+
+    /// Poll until the newly installed daemon answers, then refresh.
+    ///
+    /// This replaced a flat two-second sleep, which had to be either optimistic or slow:
+    /// launchd still has to start the helper and the helper binds its socket before it
+    /// serves, so a fixed wait raced the daemon on a busy Mac and idled on a quick one.
+    private nonisolated func resyncAfterInstall(attempts: Int = 20) async {
+        var answered = false
+        for _ in 0..<attempts {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if (try? ControlClient.send(.getStatus)) != nil { answered = true; break }
+        }
+        await MainActor.run {
+            // Installed fine, yet nothing is serving the socket: on this Mac the daemon
+            // can't come up — charge control the SMC doesn't expose, a Gatekeeper kill, a
+            // bootstrap that didn't take. Left alone this is the one path that would ask
+            // for a password on every single launch and never get anywhere, so it counts
+            // as a refusal and the log gets named instead.
+            if !answered {
+                self.autoInstallDeclined = true
+                self.helperInstallFailure =
+                    "The helper installed but isn't responding. See /var/log/battlify-helper.log."
+            }
+            self.refresh()
+        }
+    }
+
+    /// Pressing the button is an explicit yes, so it clears a remembered refusal and lets
+    /// later launches go back to keeping the helper current on their own.
+    func clearAutoInstallRefusal() {
+        autoInstallDeclined = false
+        helperInstallFailure = nil
+    }
+
+    /// Uninstalling is an explicit no, and has to be recorded as one.
+    ///
+    /// Otherwise the very next status poll finds no daemon, decides that's a fresh machine
+    /// wanting a helper, and installs it straight back — turning "remove this" into a loop
+    /// that argues with the person using it.
+    func suppressAutoInstall() {
+        didAttemptHelperUpdate = true
+        autoInstallDeclined = true
+        helperInstallFailure = nil
     }
 
     /// Push GUI settings to the daemon, preserving fields the menu doesn't edit (mode).
@@ -187,6 +326,7 @@ final class ChargeLimitStore: ObservableObject {
         cfg.holdCharge = holdCharge
         cfg.disableChargingBeforeSleep = disableChargingBeforeSleep
         cfg.preventIdleSleep = preventIdleSleep
+        cfg.sealedSleepHibernateAfter = sealedSleepHibernateAfter
         // An auto-off deadline means nothing once the toggle is off (switched off by
         // hand, or by a schedule edit), and a stale countdown in the UI would be a lie.
         if !keepAwake { keepAwakeUntil = nil }
@@ -197,7 +337,6 @@ final class ChargeLimitStore: ObservableObject {
         cfg.keepAwakeMinCpu = keepAwakeMinCpu
         cfg.keepAwakeMaxTempC = keepAwakeMaxTempC
         cfg.sleepWhenTaskDone = sleepWhenTaskDone
-        cfg.sleepDepth = sleepDepth
         cfg.keepAwakeSchedules = keepAwakeSchedules
         cfg.keepAwakeUntil = keepAwakeUntil
         cfg.schedules = schedules
@@ -208,15 +347,44 @@ final class ChargeLimitStore: ObservableObject {
         command(.setConfig(cfg))
     }
 
-    /// Fan mode goes through its own request rather than the whole config: the daemon has to
-    /// tell us whether the SMC accepted the write, which a config save can't express.
-    func setFanMode(_ mode: FanMode) {
-        fanMode = mode   // optimistic; the refresh corrects it if the SMC refused
-        command(.setFanMode(mode))
-    }
-
     func setLowPowerMode(_ on: Bool) {
         command(.setLowPowerMode(on))
+    }
+
+    /// Long-term care: park the battery near 60% and run off the adapter.
+    ///
+    /// Composes settings the daemon already enforces rather than adding a mode of its own —
+    /// see `LongevityCare` for why 60 and why this isn't the same as "don't charge".
+    var longevityCare: Bool { LongevityCare.isActive(currentConfig) }
+
+    func setLongevityCare(_ on: Bool) {
+        let cfg = currentConfig.applyingLongevityCare(on)
+        // Mirror into the published fields the rest of the UI reads, or the sliders and
+        // switches would keep showing the old values until the next daemon refresh.
+        limitEnabled = cfg.chargeLimitEnabled
+        limit = cfg.chargeLimit
+        dischargeEnabled = cfg.dischargeEnabled
+        heatAwareEnabled = cfg.heatAwareEnabled
+        holdCharge = cfg.holdCharge
+        apply()
+    }
+
+    /// Seal the Mac for closed-lid sleep, or hand the settings back to macOS.
+    ///
+    /// Its own request rather than part of `apply()`: switching it on has to snapshot the
+    /// pmset state it displaces, and switching it off has to write that state back. A
+    /// config save has no transition to hang either on. Optimistic locally, corrected by
+    /// the refresh if the Mac refused.
+    func setSealedSleep(_ on: Bool) {
+        sealedSleep = on
+        command(.setSealedSleep(on))
+    }
+
+    /// Instant wake, or hibernation. Re-applies the whole seal, because the choice *is*
+    /// which `hibernatemode` the seal writes.
+    func setSealedSleepFastWake(_ fast: Bool) {
+        sealedSleepFastWake = fast
+        command(.setSealedSleepFastWake(fast))
     }
 
     /// Pause charging: minutes > 0 = for that long; 0 = resume; -1 = indefinitely.
@@ -241,6 +409,16 @@ final class ChargeLimitStore: ObservableObject {
 
     func isPowerToggleOn(_ toggle: PowerToggle) -> Bool {
         powerToggles[toggle.rawValue] ?? false
+    }
+
+    /// The toggle's state, or nil when this Mac doesn't expose the key at all.
+    ///
+    /// The distinction `isPowerToggleOn` flattens. For a switch, "missing" and "off" are
+    /// the same thing; for the closed-lid audit they are opposites — a key that isn't there
+    /// can't be leaking, and listing it as a problem would put a permanent mark against a
+    /// Mac doing everything it can.
+    func powerToggleState(_ toggle: PowerToggle) -> Bool? {
+        powerToggles[toggle.rawValue]
     }
 
     // MARK: - Charging schedules
@@ -339,12 +517,15 @@ final class ChargeLimitStore: ObservableObject {
     private func ingest(_ response: ControlResponse?) {
         guard let r = response else {
             set(\.daemonAvailable, false)
+            // Nothing is listening. If this bundle carries the installer, put the helper in
+            // place now rather than waiting to be asked from a settings pane.
+            autoInstallHelperIfNeeded(missing: true)
             return
         }
         set(\.daemonAvailable, true)
         set(\.daemonProtocolVersion, r.daemonProtocolVersion)
         set(\.daemonBuildVersion, r.daemonBuildVersion)
-        autoUpdateHelperIfNeeded()
+        autoInstallHelperIfNeeded(missing: false)
         set(\.currentConfig, r.config)
         set(\.schemeDescription, r.schemeDescription)
         let wasChargingEnabled = chargingEnabled
@@ -362,9 +543,8 @@ final class ChargeLimitStore: ObservableObject {
         set(\.magSafeSupported, r.magSafeSupported)
         set(\.dischargeEnabled, r.config.dischargeEnabled)
         set(\.holdCharge, r.config.holdCharge)
-        set(\.fans, r.fans)
-        set(\.fanMode, r.config.fanMode)
-        set(\.fanControlSupported, r.fanControlSupported)
+        set(\.highPowerModeSupported, r.highPowerModeSupported)
+        set(\.highPowerMode, r.highPowerModeEnabled)
         set(\.sensors, r.sensors)
         set(\.dischargeSupported, r.dischargeSupported)
         set(\.discharging, r.discharging)
@@ -377,7 +557,12 @@ final class ChargeLimitStore: ObservableObject {
         set(\.keepAwakeMinCpu, r.config.keepAwakeMinCpu)
         set(\.keepAwakeMaxTempC, r.config.keepAwakeMaxTempC)
         set(\.sleepWhenTaskDone, r.config.sleepWhenTaskDone)
-        set(\.sleepDepth, r.config.sleepDepth)
+        set(\.sealedSleep, r.config.sealedSleep)
+        set(\.sealedSleepFastWake, r.config.sealedSleepFastWake)
+        set(\.sealedSleepHibernateAfter, r.config.sealedSleepHibernateAfter)
+        set(\.hibernateMode, r.hibernateMode)
+        set(\.standbyEnabled, r.standbyEnabled)
+        set(\.sealedSleepRefused, r.sealedSleepRefused)
         set(\.keepAwakeSchedules, r.config.keepAwakeSchedules)
         set(\.keepAwakeUntil, r.config.keepAwakeUntil)
         set(\.schedules, r.config.schedules)
