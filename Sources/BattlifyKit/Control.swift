@@ -293,7 +293,16 @@ public enum HelperBuild {
     ///        get both an instant lid and a flat battery line is for the daemon to book its
     ///        own wake and re-sleep into `hibernatemode 25`. A v17 helper ignores the new
     ///        config key entirely, so the closed-lid drain it was installed to stop stays.
-    public static let version = 18
+    ///   v19: a daemon could go deaf and stay running. The health check only compared the
+    ///        socket path to the inode it bound, which passes while our own listener is no
+    ///        longer listening — the socket file sits there refusing every connection, the
+    ///        app reports "helper not installed", and nothing enforces the charge limit or
+    ///        Sealed Sleep until someone notices. One 23-hour close cost 6% that way. v19
+    ///        asks the kernel whether the descriptor is still accepting, rebinds in place
+    ///        when it isn't, and only exits if that fails. It also finishes a hibernation
+    ///        deferral from the tick loop, because a scheduled dark wake doesn't always
+    ///        deliver the wake notification the other half was waiting on.
+    public static let version = 19
 }
 
 public enum ControlError: Error, CustomStringConvertible {
