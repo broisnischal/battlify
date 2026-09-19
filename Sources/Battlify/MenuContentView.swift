@@ -668,9 +668,9 @@ struct MenuContentView: View {
     /// was one mis-click away from ending whatever the other four were protecting. Sleep
     /// is still on its shortcut.
     private var lidClosedButton: some View {
-        let on = chargeLimit.keepAwake && chargeLimit.keepAwakeOnBattery && caffeine.active
+        let on = ClamshellMode.isOn(charge: chargeLimit)
         return Button {
-            setLidClosed(!on)
+            ClamshellMode.set(!on, charge: chargeLimit, caffeine: caffeine)
         } label: {
             VStack(spacing: DS.Space.xs) {
                 HugeIcon("laptop", size: DS.Icon.row)
@@ -683,13 +683,6 @@ struct MenuContentView: View {
         .help(on
               ? "Stop working with the lid closed. Caffeine off, Always Active off."
               : "Keep working with the lid closed: caffeine on, Always Active on, and allowed to hold on battery. Drains fast and runs hot.")
-    }
-
-    private func setLidClosed(_ on: Bool) {
-        on ? caffeine.activate(.indefinite) : caffeine.deactivate()
-        chargeLimit.keepAwake = on
-        chargeLimit.keepAwakeOnBattery = on
-        chargeLimit.apply()
     }
 
     /// Built as a plain button (not a Menu) so it stays the same width as the

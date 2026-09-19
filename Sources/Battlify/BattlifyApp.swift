@@ -180,9 +180,14 @@ struct MenuBarLabel: View {
         // The label re-renders on every snapshot change, which is exactly when Caffeine's
         // power policy needs re-evaluating (unplugging must stop it holding the screen
         // awake and draining). The call is idempotent, so re-sending costs nothing.
+        // `|| discharging`: cutting the adapter to hold a level makes macOS report "Battery
+        // Power" while the cable is still in, and Caffeine reads that as a real unplug —
+        // narrowing its hold to system-only, or ending the session outright if "end on
+        // battery" is set. The hold would have been switching off the very thing the user
+        // asked to keep running, every time it engaged.
         caffeine.applyPolicy(keepDisplayOnBattery: settings.caffeineKeepDisplayOnBattery,
                              endOnBattery: settings.caffeineEndOnBattery,
-                             onExternalPower: snap.onExternalPower)
+                             onExternalPower: snap.onExternalPower || chargeLimit.discharging)
         restReminder.startIfNeeded(settings: settings, battery: battery)
         idleSaver.startIfNeeded(caffeine: caffeine)
         return HStack(spacing: 2) {

@@ -295,7 +295,7 @@ struct SettingsView: View {
                                   isOn: bind(\.holdCharge))
                         if chargeLimit.holdCharge {
                             divider
-                            infoRow("Held. The battery won't rise or drain while you stay plugged in.",
+                            infoRow("Held. The battery stays around the level it was at when you switched this on, instead of climbing to full.",
                                     systemImage: "pause")
                         }
                     }
@@ -786,6 +786,27 @@ struct SettingsView: View {
                 // group styling, so it sits directly in the tab rather than in a `card`.
                 SealedSleepPanel(chargeLimit: chargeLimit, automation: automation)
                     .padding(.horizontal, rowInset)
+
+                // Clamshell: the switch that means "I'm shutting the lid and I want the
+                // Mac to carry on", put where someone looking for lid behaviour will look.
+                // The individual knobs it sets — Always Active and its battery permission
+                // — stay on the Charging tab, where they belong among the other holds;
+                // this is the one control that sets them as the pair they have to be.
+                card("Work with the lid closed") {
+                    toggleRow("Clamshell mode",
+                              "Shut the lid and the Mac keeps running — builds, downloads, a sync, an external display. The built-in screen goes dark; nothing else stops.",
+                              isOn: Binding(
+                                get: { ClamshellMode.isOn(charge: chargeLimit) },
+                                set: { ClamshellMode.set($0, charge: chargeLimit, caffeine: caffeine) }))
+                    if ClamshellMode.isOn(charge: chargeLimit) {
+                        divider
+                        toggleRow("Keep going on battery",
+                                  "On by default — a lid-closed mode that ends the moment you unplug isn't one. Off lets the Mac sleep as soon as the charger comes out.",
+                                  isOn: bind(\.keepAwakeOnBattery))
+                        divider
+                        infoRow(clamshellHint, systemImage: "laptop")
+                    }
+                }
 
                 card("When the lid closes") {
                     toggleRow("Turn off Wi-Fi", isOn: $automation.wifiOffOnLidClose)
@@ -1656,6 +1677,22 @@ struct SettingsView: View {
         Binding(
             get: { chargeLimit[keyPath: keyPath] },
             set: { chargeLimit[keyPath: keyPath] = $0; chargeLimit.apply() })
+    }
+
+    /// What the mode is doing right now, and — on battery — what it costs. The warning is
+    /// the point: a Mac held awake in a bag is the single most expensive mistake this app
+    /// can help someone make, and the cutoff that stops it lives on another tab.
+    private var clamshellHint: String {
+        guard chargeLimit.keepAwakeOnBattery else {
+            return "Holding only while plugged in. Unplug and the Mac sleeps as usual when the lid shuts."
+        }
+        if battery.snapshot.onExternalPower {
+            return "Holding. Shut the lid whenever you like — it keeps going on battery too."
+        }
+        if chargeLimit.keepAwakeMaxTempC > 0 {
+            return "Holding on battery. It drains fast; the Mac sleeps if it passes \(Int(chargeLimit.keepAwakeMaxTempC))\u{00A0}°C."
+        }
+        return "Holding on battery. It drains fast and runs hot with the lid shut — set a temperature cutoff under Charging › Enforcement."
     }
 
     private var magSafeHint: String {
