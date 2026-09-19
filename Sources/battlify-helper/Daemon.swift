@@ -58,6 +58,9 @@ final class Daemon: @unchecked Sendable {
     // sleep they describe, and a daemon restart should forget a deferral it can't finish.
     private var deferredWakeStamp: String?
     private var deferredHibernateArmed = false
+    /// When the booked wake is due, so the tick loop can finish a deferral the wake hook
+    /// never reported.
+    private var deferredHibernateDue: Date?
     private var handedOverToHibernation = false
 
     // Held IOPMAssertion preventing idle sleep (0 = none held).
@@ -156,11 +159,24 @@ final class Daemon: @unchecked Sendable {
             let wait = tickInterval
             lock.unlock()
             // A daemon nobody can reach is worse than no daemon: the app blocks on a socket
-            // that will never answer, and launchd sees a healthy job. Exiting lets launchd
-            // start one that binds the path properly.
-            if let controlServer, !controlServer.ownsSocketPath {
-                err("another instance took the control socket; exiting so launchd restarts us")
-                exit(6)
+            // that will never answer, and launchd sees a healthy job.
+            //
+            // Two ways that happens, and the second one shipped: another instance takes the
+            // path (the inode check), or our own listener stops listening while the path
+            // stays exactly where it was. The second leaves the socket file in place, so
+            // every connection is refused by a daemon that still thinks it is serving —
+            // which is what left a Mac unmanaged overnight and cost 6%.
+            //
+            // Rebinding first, because exiting throws away everything this process is
+            // holding: the charge state, a hibernation deferral part-way through, the
+            // sealed-sleep snapshot that says how to put the Mac back.
+            if let controlServer, !controlServer.isReachable {
+                if controlServer.rebind() {
+                    log("control socket was unreachable; rebound in place")
+                } else {
+                    err("control socket unreachable and cannot be rebound; exiting so launchd restarts us")
+                    exit(6)
+                }
             }
             Thread.sleep(forTimeInterval: wait)
         }
@@ -495,6 +511,7 @@ final class Daemon: @unchecked Sendable {
         ensure(enabled: enable, current: charging)
         manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
         updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
+        completeDeferredHibernateIfDue()
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
         tickInterval = nextInterval(cfg, snap)
@@ -573,6 +590,21 @@ final class Daemon: @unchecked Sendable {
         armDeferredHibernate()
     }
 
+    /// Finish a deferral from the tick loop, for the wakes the sleep hook doesn't see.
+    ///
+    /// `reevaluateAfterWake` is driven by IOKit's wake notification, and a scheduled dark
+    /// wake does not always deliver one to a daemon — the Mac comes up, does its business and
+    /// goes back down without our hook running. The deferral then sits armed forever: the
+    /// booked wake is spent, nothing hands over to hibernation, and the close costs the full
+    /// memory trickle. Which is exactly what one 23-hour close did.
+    ///
+    /// So the tick checks too. Whichever path notices first, the handover happens once.
+    /// Caller must hold `lock`.
+    private func completeDeferredHibernateIfDue() {
+        guard deferredHibernateArmed, let due = deferredHibernateDue, Date() >= due else { return }
+        resolveDeferredHibernate()
+    }
+
     /// Book the wake that turns a long close into a hibernated one. Caller must hold `lock`.
     ///
     /// Battery only, lid only. At a desk the trickle is paid for by the adapter and a
@@ -588,6 +620,9 @@ final class Daemon: @unchecked Sendable {
         if let stale = deferredWakeStamp { DeferredHibernate.cancel(stale) }
         deferredWakeStamp = DeferredHibernate.schedule(after: cfg.sealedSleepHibernateAfter)
         deferredHibernateArmed = deferredWakeStamp != nil
+        deferredHibernateDue = deferredHibernateArmed
+            ? Date().addingTimeInterval(Double(cfg.sealedSleepHibernateAfter) * 60)
+            : nil
         if deferredHibernateArmed {
             log("hibernation deferred by \(cfg.sealedSleepHibernateAfter)m")
         } else {
@@ -608,6 +643,7 @@ final class Daemon: @unchecked Sendable {
 
         if deferredHibernateArmed {
             deferredHibernateArmed = false
+            deferredHibernateDue = nil
             let cfg = ConfigStore.load()
             if lidShut, cfg.sealedSleep, cfg.sealedSleepFastWake,
                !BatteryMonitor.read().onExternalPower {
