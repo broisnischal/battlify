@@ -93,25 +93,68 @@ final class ControlServer {
     }
 
     /// The other way, and the one that cost a user 6% overnight: the path is still ours and
-    /// the descriptor has stopped being a listening socket.
+    /// the descriptor backing it is gone.
     ///
-    /// Owning the path says nothing about whether anyone is still answering on it. A
-    /// listener that has been closed — or a descriptor that came back from a long sleep no
-    /// longer valid — leaves the socket file exactly where it was, so the inode check passes
-    /// while every connection is refused. `SO_ACCEPTCONN` is the kernel's own answer to "is
-    /// this thing still listening", and it costs a syscall.
+    /// Owning the path says nothing about whether anyone is still answering on it. A listener
+    /// that has been closed leaves the socket file exactly where it was, so the inode check
+    /// passes while every connection is refused.
+    ///
+    /// `fcntl(F_GETFD)`, not `getsockopt(SO_ACCEPTCONN)`. The latter is the obvious answer to
+    /// "is this still listening" and Darwin doesn't implement it for unix-domain sockets: it
+    /// fails with `ENOPROTOOPT`, which a health check reads as "not listening", so the daemon
+    /// rebinds a perfectly good socket every single tick. Asking whether the descriptor is
+    /// still open is the question that actually has an answer here, and a closed descriptor
+    /// is precisely the failure this is looking for.
     var isListening: Bool {
-        guard listenFD >= 0 else { return false }
-        var flag: Int32 = 0
-        var size = socklen_t(MemoryLayout<Int32>.size)
-        guard getsockopt(listenFD, SOL_SOCKET, SO_ACCEPTCONN, &flag, &size) == 0 else {
-            return false
-        }
-        return flag != 0
+        listenFD >= 0 && fcntl(listenFD, F_GETFD) != -1
     }
 
     /// Both halves of "can the app still reach us".
     var isReachable: Bool { ownsSocketPath && isListening }
+
+    /// The end-to-end version: connect to our own path and see whether anything answers.
+    ///
+    /// The cheap checks can't see a dead accept loop — the kernel queues a connection to a
+    /// listening socket nobody is accepting on, so `connect` succeeds and the client then
+    /// waits forever, which is what the app experiences as a hang. This is the only check
+    /// that tests the whole path, so it runs on a slow cadence rather than every tick.
+    ///
+    /// Safe to call from the tick thread only while it isn't holding the daemon's lock: the
+    /// request is served on the accept thread, which takes that lock itself.
+    func answersItsOwnCall(timeout: Int32 = 2) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        var tv = timeval(tv_sec: Int(timeout), tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = path.utf8CString
+        guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else { return false }
+        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dst in
+                pathBytes.withUnsafeBufferPointer { src in
+                    dst.update(from: src.baseAddress!, count: src.count)
+                }
+            }
+        }
+        let connected = withUnsafePointer(to: &addr) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard connected == 0 else { return false }
+
+        let request = Data("\"getStatus\"\n".utf8)
+        let sent = request.withUnsafeBytes { raw in write(fd, raw.baseAddress, raw.count) }
+        guard sent == request.count else { return false }
+
+        var byte: UInt8 = 0
+        return read(fd, &byte, 1) == 1
+    }
 
     /// Stand the listener back up in place, without taking the daemon down with it.
     ///

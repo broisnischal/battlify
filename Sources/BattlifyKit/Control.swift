@@ -302,7 +302,13 @@ public enum HelperBuild {
     ///        when it isn't, and only exits if that fails. It also finishes a hibernation
     ///        deferral from the tick loop, because a scheduled dark wake doesn't always
     ///        deliver the wake notification the other half was waiting on.
-    public static let version = 19
+    ///   v20: v19's health check asked `getsockopt(SO_ACCEPTCONN)`, which Darwin does not
+    ///        implement for unix-domain sockets — it fails with ENOPROTOOPT, which reads as
+    ///        "not listening", so a v19 daemon rebinds a healthy socket every tick and drops
+    ///        whatever was in flight while it does. It checks the descriptor instead, probes
+    ///        the socket end to end every two minutes (the only check that can see a dead
+    ///        accept loop), and restarts itself if rebinding stops helping.
+    public static let version = 20
 }
 
 public enum ControlError: Error, CustomStringConvertible {

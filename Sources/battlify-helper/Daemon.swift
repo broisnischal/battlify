@@ -52,6 +52,12 @@ final class Daemon: @unchecked Sendable {
     private let signalQueue = DispatchQueue(label: "com.battlify.helper.signals")
     private var signalSources: [DispatchSourceSignal] = []
 
+    // When the end-to-end socket probe last ran, and the rebinds it has provoked. The probe
+    // is the only check that can see a dead accept loop, and it costs a round trip, so it
+    // runs on a slow cadence rather than every tick.
+    private var lastSocketProbe = Date()
+    private var socketRebinds: [Date] = []
+
     // Deferred hibernation (see `DeferredHibernate`): the wake we booked on the way into a
     // closed-lid sleep, and whether that wake is the one we are expecting. Both live in
     // memory on purpose — hibernation restores the process image, so they survive the very
@@ -170,9 +176,19 @@ final class Daemon: @unchecked Sendable {
             // Rebinding first, because exiting throws away everything this process is
             // holding: the charge state, a hibernation deferral part-way through, the
             // sealed-sleep snapshot that says how to put the Mac back.
-            if let controlServer, !controlServer.isReachable {
+            if let controlServer, !controlServer.isReachable || dueForSocketProbe(controlServer) {
                 if controlServer.rebind() {
                     log("control socket was unreachable; rebound in place")
+                    // A rebind that keeps happening is a rebind that isn't fixing anything.
+                    // Three inside five minutes means this process cannot hold a listener, and
+                    // a restart is the honest answer — a daemon logging the same repair every
+                    // tick is how a broken health check hides in plain sight for an hour.
+                    socketRebinds.append(Date())
+                    socketRebinds = socketRebinds.filter { $0 > Date().addingTimeInterval(-300) }
+                    if socketRebinds.count >= 3 {
+                        err("control socket rebound 3 times in five minutes; exiting so launchd restarts us")
+                        exit(6)
+                    }
                 } else {
                     err("control socket unreachable and cannot be rebound; exiting so launchd restarts us")
                     exit(6)
@@ -180,6 +196,16 @@ final class Daemon: @unchecked Sendable {
             }
             Thread.sleep(forTimeInterval: wait)
         }
+    }
+
+    /// Every two minutes, ask the socket a real question. Called from the tick thread with
+    /// the lock released — the answer comes back on the accept thread, which needs that lock.
+    private func dueForSocketProbe(_ server: ControlServer) -> Bool {
+        guard Date().timeIntervalSince(lastSocketProbe) >= 120 else { return false }
+        lastSocketProbe = Date()
+        guard !server.answersItsOwnCall() else { return false }
+        err("control socket accepted a connection but answered nothing")
+        return true
     }
 
     // MARK: - Control handler (called from server thread)
