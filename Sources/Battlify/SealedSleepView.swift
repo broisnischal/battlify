@@ -35,7 +35,7 @@ struct SealedSleepPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !chargeLimit.sealedSleepRefused.isEmpty { refusedNotice }
-            if chargeLimit.sealedSleep { wakeSpeedRow }
+            if chargeLimit.sealedSleep && chargeLimit.daemonAvailable { wakeSpeedRow }
             checklist
             if let result { measured(result) }
         }
@@ -52,7 +52,7 @@ struct SealedSleepPanel: View {
                 if !verdict.isEmpty {
                     Text(verdict)
                         .font(.caption2)
-                        .foregroundStyle(state.isSealed && chargeLimit.sealedSleep ? DS.Status.good : .secondary)
+                        .foregroundStyle(sealedForReal ? DS.Status.good : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -60,8 +60,14 @@ struct SealedSleepPanel: View {
             // The setter is spelled out rather than passed as `set: setSealed`. A bare
             // method reference here makes the compiler build a reabstraction thunk across
             // the main-actor boundary, and Swift 6.3's IRGen crashes on it.
-            Toggle("Sealed Sleep", isOn: Binding(get: { chargeLimit.sealedSleep },
-                                                 set: { setSealed($0) }))
+            // Off whenever nothing is enforcing it. The switch describes the state of the
+            // Mac, not the state of a preference: a daemon that isn't there applies no
+            // pmset keys, cancels no wake sources and hibernates nothing, so a panel
+            // showing this on over "Helper not installed" is the exact lie the feature
+            // exists to prevent. It cost a user 6% overnight before it was caught.
+            Toggle("Sealed Sleep",
+                   isOn: Binding(get: { chargeLimit.sealedSleep && chargeLimit.daemonAvailable },
+                                 set: { setSealed($0) }))
                 .toggleStyle(.switch).labelsHidden().controlSize(.small)
                 .disabled(!chargeLimit.daemonAvailable)
         }
@@ -72,6 +78,11 @@ struct SealedSleepPanel: View {
     /// that is still waking hourly is the failure this whole panel exists to prevent.
     /// Short enough to hold one line at the panel's width. The long form said the same
     /// thing over two, and a verdict that wraps stops reading as a verdict.
+    /// Sealed, and something is actually holding it that way.
+    private var sealedForReal: Bool {
+        chargeLimit.daemonAvailable && chargeLimit.sealedSleep && state.isSealed
+    }
+
     private var verdict: String {
         guard chargeLimit.daemonAvailable else { return "Helper not installed" }
         guard chargeLimit.sealedSleep else { return "Ordinary macOS sleep" }
