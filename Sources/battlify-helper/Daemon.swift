@@ -69,11 +69,29 @@ final class Daemon: @unchecked Sendable {
     private var deferredHibernateDue: Date?
     private var handedOverToHibernation = false
 
+    /// Level the adapter hold is parked at, remembered from the tick that armed it, and
+    /// whether the adapter is currently cut to defend it. Only used on Macs with no
+    /// charge-inhibit key, where the adapter is the one lever there is.
+    private var holdAnchor: Int?
+    private var adapterHolding = false
+    /// How far the level may fall below the mark before the adapter comes back. Wide
+    /// enough that the top-up isn't a permanent flutter between power sources, narrow
+    /// enough that "held at 85%" means 85%.
+    private let adapterHoldBand = 2
+
+    /// Whether this Mac exposes an SMC charge-inhibit key. Resolved once the SMC is open.
+    /// False disables charge enforcement only — the daemon still serves everything else,
+    /// because Sealed Sleep, the pmset toggles and Always Active need no such key.
+    private var chargeControlSupported = false
+
     // Held IOPMAssertion preventing idle sleep (0 = none held).
     private var idleSleepAssertion: IOPMAssertionID = 0
 
     // "Always Active" state; nil disablesleep = not yet written, so we pmset only on change.
     private var keepAwakeAssertion: IOPMAssertionID = 0
+    /// Held only in docked clamshell — lid shut with a monitor attached — where the display
+    /// the idle timer would put to sleep is the one being worked on (0 = none held).
+    private var keepAwakeDisplayAssertion: IOPMAssertionID = 0
     private var lastDisableSleep: Bool?
     // Last scheduled-window verdict, so a window opening or closing is logged once.
     private var lastKeepAwakeArmed = false
@@ -121,9 +139,13 @@ final class Daemon: @unchecked Sendable {
             err("cannot open SMC: \(error)")
             exit(2)
         }
-        guard charge.isChargingControlSupported else {
-            err("charge control not supported on this Mac")
-            exit(3)
+        // No charge-inhibit key is not a reason to quit. Up to build 20 this exited, launchd
+        // respawned it forever, and the app — which knows the helper only by its socket —
+        // reported "Helper not installed" however many times you installed it. Sealed Sleep,
+        // the sleep/wake toggles, Low Power Mode and Always Active all work without it.
+        chargeControlSupported = charge.isChargingControlSupported
+        if !chargeControlSupported {
+            log("no SMC charge-inhibit key on this Mac; charge limiting is off, everything else runs")
         }
 
         // Fan control was removed, but forced fan mode lives in the SMC and outlives the
@@ -157,7 +179,7 @@ final class Daemon: @unchecked Sendable {
             log("instant wake restored (a deferred hibernation was left applied)")
         }
 
-        log("daemon started (scheme: \(charge.schemeDescription))")
+        log("daemon started (scheme: \(charge.schemeDescription), displays: \(SystemPower.displays().rawValue))")
 
         while true {
             lock.lock()
@@ -391,7 +413,7 @@ final class Daemon: @unchecked Sendable {
             ok: ok,
             config: ConfigStore.load(),
             batteryPercent: snap.percentage,
-            chargingEnabled: (try? charge.isChargingEnabled()) ?? false,
+            chargingEnabled: chargeControlSupported ? ((try? charge.isChargingEnabled()) ?? false) : true,
             schemeDescription: charge.schemeDescription,
             lowPowerModeEnabled: pmset.lpm,
             powerToggles: pmset.toggles,
@@ -470,7 +492,7 @@ final class Daemon: @unchecked Sendable {
         // Settling only holds charging when we'd otherwise be managing it.
         let settling = managing && (settleUntil.map { now < $0 } ?? false)
 
-        let charging = (try? charge.isChargingEnabled()) ?? true
+        let charging = chargeControlSupported ? ((try? charge.isChargingEnabled()) ?? true) : true
         // active schedule window (first match wins) + ready-by top-up; both feed the decision below
         let activeSchedule = cfg.schedules.first { $0.isActive(at: now) }
         let topUp = topUpBypassActive(cfg, level: level, now: now)
@@ -533,9 +555,15 @@ final class Daemon: @unchecked Sendable {
         let enable = chargeDutyGate(desired: desired, power: cfg.chargePower, now: now)
         let chargingRegime = desired && cfg.chargePower > 0
 
-        lastPauseReason = desired ? (enable ? nil : "slow") : reason
+        // Nothing is being held when there's no key to hold it with; reporting a reason
+        // would have the app explain a pause that isn't happening.
+        lastPauseReason = chargeControlSupported ? (desired ? (enable ? nil : "slow") : reason) : nil
         ensure(enabled: enable, current: charging)
         manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
+        // With no charge-inhibit key the adapter hold is the only thing standing between
+        // the battery and full, so it is also the only honest answer to "why has it
+        // stopped" — the branch above has no lever and deliberately reports nothing.
+        if !chargeControlSupported { lastPauseReason = adapterHolding ? "hold" : nil }
         updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
         completeDeferredHibernateIfDue()
         updateIdleSleepAssertion(cfg, snap)
@@ -723,6 +751,7 @@ final class Daemon: @unchecked Sendable {
     ///
     /// Caller must hold `lock`. Returns whether anything was cut.
     private func cutChargingForSleepLocked() -> Bool {
+        guard chargeControlSupported else { return false }
         let cfg = ConfigStore.load()
         guard cfg.chargeLimitEnabled || cfg.disableChargingBeforeSleep else { return false }
         // Charging past the limit is only possible when it's allowed right now.
@@ -865,14 +894,53 @@ final class Daemon: @unchecked Sendable {
             keepAwakeAssertion = 0
         }
 
+        // Docked clamshell: lid shut, monitor attached, hold awake. `disablesleep` and the
+        // system assertion above keep the Mac running, but neither touches the *display*
+        // timer — so after `displaysleep` minutes of no input the one screen left goes
+        // dark, and with the lid already shut there is nothing obvious to wake it with.
+        // Every report of this ends the same way: the user opens the laptop again.
+        //
+        // Only in that exact shape. Lid open, or no external display, and the idle display
+        // timer is left alone: a screen held lit over an empty desk is the most expensive
+        // thing this app can do to a battery.
+        let docked = want && SystemPower.isClamshellClosed()
+            && SystemPower.displays() == .externalAttached
+        if docked && keepAwakeDisplayAssertion == 0 {
+            var id: IOPMAssertionID = 0
+            let ok = IOPMAssertionCreateWithName(
+                kIOPMAssertPreventUserIdleDisplaySleep as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "Battlify: lid closed with an external display" as CFString,
+                &id)
+            if ok == kIOReturnSuccess {
+                keepAwakeDisplayAssertion = id
+                log("keep-awake: holding the external display on while the lid is shut")
+            }
+        } else if !docked && keepAwakeDisplayAssertion != 0 {
+            IOPMAssertionRelease(keepAwakeDisplayAssertion)
+            keepAwakeDisplayAssertion = 0
+            log("keep-awake: external display released to the idle timer")
+        }
+
         // Lid shut + awake: force the display off (keyboard backlight follows) once per
         // close; nothing can wake it. Reset when the lid opens or keep-awake stops holding.
         let lidClosed = want && SystemPower.isClamshellClosed()
         if lidClosed {
             if !displayForcedOffWhileClosed {
-                PowerSettings.displaySleepNow()
+                // Only when the closed lid means nothing is being looked at. Docked, the
+                // lid is shut *because* there's a monitor on the desk, and
+                // `pmset displaysleepnow` blanks every display — so the one it turned off
+                // was the one being worked on, and it stayed off. `unknown` counts as a
+                // monitor: a backlight left burning costs some power, a dark desk costs
+                // the session.
+                switch SystemPower.displays() {
+                case .builtInOnly:
+                    PowerSettings.displaySleepNow()
+                    log("keep-awake: lid closed, display + keyboard backlight off")
+                case .externalAttached, .unknown:
+                    log("keep-awake: lid closed with an external display — leaving it lit")
+                }
                 displayForcedOffWhileClosed = true
-                log("keep-awake: lid closed, display + keyboard backlight off")
             }
         } else {
             displayForcedOffWhileClosed = false
@@ -938,17 +1006,71 @@ final class Daemon: @unchecked Sendable {
             && cfg.chargeLimitEnabled
             && !cfg.calibrateToFull   // calibration is charging up, don't fight it
             && snap.percentage > cfg.chargeLimit
+
+        // The adapter hold. On a Mac that exposes no charge-inhibit key there is nothing
+        // to inhibit charging with, so "don't charge" and the limit had no way to bite at
+        // all — the switch read "Held" while the battery climbed to full. The adapter is
+        // the one lever this hardware does give us, so a hold is built out of it: sit on
+        // the battery while the level is at or above the mark, take the adapter back for a
+        // short top-up once it has fallen `adapterHoldBand` points below it.
+        //
+        // It is not the same thing as inhibiting the charge — the Mac runs off the battery
+        // through the held phase, so this trades a shallow cycle every so often for not
+        // sitting at 100%. That is the better of the two for the cell, and it is the only
+        // trade available here.
+        let adapterHold = !chargeControlSupported && !cfg.calibrateToFull
+            && adapterHoldWanted(cfg, snap)
         // Gate on onExternalPower, NOT isPluggedIn: cutting the adapter makes macOS report
         // "Battery Power", so isPluggedIn would flip false next tick and we'd restore the
         // adapter — oscillating instead of draining. onExternalPower stays true while the cable is in.
-        let shouldDischarge = snap.onExternalPower && (limitDischarge || scheduleDischarge)
+        let shouldDischarge = snap.onExternalPower
+            && (limitDischarge || scheduleDischarge || adapterHold)
 
         let adapterOn = (try? charge.isAdapterEnabled()) ?? true
         if shouldDischarge {
-            if adapterOn { try? charge.disableAdapter(); log("discharging to limit") }
+            if adapterOn {
+                try? charge.disableAdapter()
+                log(adapterHold && !limitDischarge && !scheduleDischarge
+                    ? "hold: on the battery at \(snap.percentage)%, adapter back at \((holdAnchor ?? cfg.chargeLimit) - adapterHoldBand)%"
+                    : "discharging to limit")
+            }
         } else if !adapterOn {
             try? charge.enableAdapter(); log("adapter restored")
         }
+    }
+
+    /// Whether the adapter hold wants the adapter cut this tick.
+    ///
+    /// The mark is the charge limit when one is set, and otherwise the level the "don't
+    /// charge" switch was thrown at — that switch means "leave it where it is", and where
+    /// it is can only be read at the moment it's asked for. Hysteresis is tracked in
+    /// `adapterHolding` rather than inferred from the level, so a Mac sitting exactly on
+    /// the mark doesn't flip power source on every reading.
+    ///
+    /// Caller holds `lock`.
+    private func adapterHoldWanted(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) -> Bool {
+        let mark: Int?
+        if cfg.holdCharge {
+            // Anchored the first time we see it on the charger, and kept across an unplug:
+            // the switch means "leave it where it was when I asked", not "wherever it has
+            // drifted to since you last pulled the cable".
+            if holdAnchor == nil, snap.onExternalPower {
+                holdAnchor = snap.percentage
+                log("hold: parking the battery at \(snap.percentage)% (no charge-inhibit key; using the adapter)")
+            }
+            mark = holdAnchor
+        } else {
+            if holdAnchor != nil { holdAnchor = nil; log("hold: released") }
+            mark = cfg.chargeLimitEnabled ? cfg.chargeLimit : nil
+        }
+        guard let target = mark else { adapterHolding = false; return false }
+
+        if snap.percentage >= target {
+            adapterHolding = true
+        } else if snap.percentage <= target - adapterHoldBand {
+            adapterHolding = false
+        }
+        return adapterHolding
     }
 
     /// Drive the MagSafe LED per mode; only writes the SMC when the actual LED differs from the target.
@@ -1014,6 +1136,7 @@ final class Daemon: @unchecked Sendable {
     }
 
     private func ensure(enabled desired: Bool, current: Bool) {
+        guard chargeControlSupported else { return }
         if current == desired { return }
         do {
             if desired { try charge.enableCharging() } else { try charge.disableCharging() }
@@ -1052,10 +1175,12 @@ final class Daemon: @unchecked Sendable {
     private func performCleanupAndExit() -> Never {
         lock.lock()   // hold through exit; serialize SMC access with tick()
         PowerSettings.setDisableSleep(false)
-        if ConfigStore.load().chargeLimitEnabled {
-            try? charge.disableCharging()
-        } else {
-            try? charge.enableCharging()
+        if chargeControlSupported {
+            if ConfigStore.load().chargeLimitEnabled {
+                try? charge.disableCharging()
+            } else {
+                try? charge.enableCharging()
+            }
         }
         if charge.isAdapterControlSupported { try? charge.enableAdapter() }
         if charge.isMagSafeSupported { try? charge.setMagSafeLED(.system) }

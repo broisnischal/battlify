@@ -308,7 +308,32 @@ public enum HelperBuild {
     ///        whatever was in flight while it does. It checks the descriptor instead, probes
     ///        the socket end to end every two minutes (the only check that can see a dead
     ///        accept loop), and restarts itself if rebinding stops helping.
-    public static let version = 20
+    ///   v21: the daemon no longer quits on a Mac with no SMC charge-inhibit key. Up to v20
+    ///        it exited 3 at startup, launchd respawned it forever, and the app — which only
+    ///        knows the helper by its socket — said "Helper not installed" no matter how
+    ///        many times you installed it. Everything else the helper owns (Sealed Sleep,
+    ///        the sleep/wake toggles, Low Power Mode, Always Active) needs no charge key,
+    ///        so v21 runs without one and skips charge enforcement; `schemeDescription`
+    ///        already reports "unsupported" for anyone who needs to know.
+    ///   v22: working with the lid closed no longer blanks an external display. The hold
+    ///        ran `pmset displaysleepnow` on every lid close, and that command takes every
+    ///        display with it — so a docked Mac kept running with its monitor dark and no
+    ///        input would bring it back. v22 blanks only when the built-in panel is the
+    ///        only display it can see.
+    ///   v23: "don't charge" and the charge limit now hold on Macs with no charge-inhibit
+    ///        key, by cutting the adapter instead. Up to v22 there was nothing to enforce
+    ///        them with on that hardware, so the switch read "Held. The battery won't rise"
+    ///        while the battery charged past it to full — measured climbing 80% → 85% with
+    ///        the hold on. The adapter is the only lever those Macs expose, so the hold
+    ///        parks on it: battery while at or above the mark, a short top-up two points
+    ///        below.
+    ///   v24: docked clamshell holds the display awake. `disablesleep` and the system
+    ///        assertion keep the Mac running with the lid shut, but neither stops the
+    ///        display idle timer, so after five minutes the external monitor — the only
+    ///        screen left — went dark with no obvious way back, and the laptop had to be
+    ///        opened again. v24 holds `PreventUserIdleDisplaySleep` while, and only while,
+    ///        the lid is shut over an attached monitor.
+    public static let version = 24
 }
 
 public enum ControlError: Error, CustomStringConvertible {
