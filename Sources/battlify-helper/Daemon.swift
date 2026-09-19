@@ -638,6 +638,13 @@ final class Daemon: @unchecked Sendable {
     /// open is someone stepping away from a machine they expect to find awake-ish.
     private func armDeferredHibernate() {
         let cfg = ConfigStore.load()
+        // Say so when the deferral is switched off. "Never" is a legitimate choice, but a
+        // config holding 0 while Sealed Sleep promises a flat battery line is the difference
+        // between a close costing nothing and a close costing 6%, and nothing anywhere said
+        // which of the two this Mac was set up for.
+        if cfg.sealedSleep, cfg.sealedSleepFastWake, cfg.sealedSleepHibernateAfter == 0 {
+            log("hibernation deferral is off; a long close will cost the memory trickle")
+        }
         guard cfg.sealedSleep, cfg.sealedSleepFastWake,
               cfg.sealedSleepHibernateAfter > 0, !cfg.keepAwake,
               SystemPower.isClamshellClosed(),
