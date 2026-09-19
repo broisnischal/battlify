@@ -92,6 +92,17 @@ enum BatteryIconRenderer {
     private static let holdFillAlpha: CGFloat = 0.4
 
     @MainActor private static var cache: [String: NSImage] = [:]
+    /// Keys in the order they were first drawn, so the oldest can go when the cache is full.
+    @MainActor private static var cacheOrder: [String] = []
+    /// Roughly two full animation cycles' worth of distinct frames, across a couple of
+    /// charge levels and both tints.
+    ///
+    /// The cache had no bound at all. Its key carries the charge percentage, the animation
+    /// phase, the transition step, the tint and four flags, so a Mac left running draws a new
+    /// entry for every combination it passes through and never gives one back — a menu-bar
+    /// app quietly accumulating thousands of NSImages over a few days. A cache that never
+    /// evicts is a leak with a lookup table in front of it.
+    private static let cacheLimit = 192
 
     /// Menu-bar / preview glyph. `tint` neutral ⇒ template image; a colour ⇒
     /// fixed palette colour. `frame` is a monotonically increasing animation tick;
@@ -148,8 +159,23 @@ enum BatteryIconRenderer {
             return true
         }
         image.isTemplate = tint.isNeutral
-        cache[key] = image
+        remember(image, for: key)
         return image
+    }
+
+    /// Store a frame, dropping the oldest quarter when the cache is full.
+    ///
+    /// A quarter at a time rather than one per insert: evicting singly on every miss turns a
+    /// steady stream of new frames into a steady stream of dictionary churn, and the frames
+    /// being drawn right now are the ones most likely to be wanted again in a second.
+    @MainActor
+    private static func remember(_ image: NSImage, for key: String) {
+        if cache.count >= cacheLimit {
+            for stale in cacheOrder.prefix(cacheLimit / 4) { cache.removeValue(forKey: stale) }
+            cacheOrder.removeFirst(min(cacheLimit / 4, cacheOrder.count))
+        }
+        cache[key] = image
+        cacheOrder.append(key)
     }
 
     // MARK: - Per-style drawing (viewBox coordinates)

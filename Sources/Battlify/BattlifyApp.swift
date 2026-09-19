@@ -133,14 +133,11 @@ struct MenuBarLabel: View {
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
     /// never while discharging (a battery saver shouldn't burn cycles on battery).
-    @State private var animFrame = 0
     @State private var celebrating = false
-    @State private var celebrateTicks = 0
     /// When charging last stopped — to tell "just finished" from arriving full via wake.
     @State private var chargeStoppedAt: Date?
     /// A one-off connect/disconnect animation, and how far through it we are.
     @State private var transition: IconTransition?
-    @State private var transitionStep = 0
 
     var body: some View {
         let snap = battery.snapshot
@@ -189,56 +186,28 @@ struct MenuBarLabel: View {
         restReminder.startIfNeeded(settings: settings, battery: battery)
         idleSaver.startIfNeeded(caffeine: caffeine)
         return HStack(spacing: 2) {
-            // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
-            // labels, and the renderer draws the charging bolt inside the glyph.
-            Image(nsImage: BatteryIconRenderer.image(
-                style: settings.batteryIconStyle,
-                percentage: snap.percentage,
-                charging: snap.isCharging,
-                tint: tint,
-                frame: animFrame,
-                celebrating: celebratingNow,
-                pluggedIn: snap.isPluggedIn,
-                holding: holdingNow,
-                transition: transition,
-                transitionStep: transitionStep))
+            // Its own view, and that is the whole point: the animation ticks four times a
+            // second, and when the frame lived in this body every tick re-evaluated the
+            // label — twelve observable objects read, five stores poked, the tint and the
+            // help text recomputed — to change one small image. That measured around 13% of
+            // a core, sustained, for as long as the Mac was plugged in. Now a frame change
+            // invalidates the icon and nothing else.
+            MenuBarIcon(style: settings.batteryIconStyle,
+                        percentage: snap.percentage,
+                        charging: snap.isCharging,
+                        tint: tint,
+                        celebrating: celebratingNow,
+                        pluggedIn: snap.isPluggedIn,
+                        holding: holdingNow,
+                        animating: animating,
+                        celebrateEnded: { celebrating = false },
+                        transition: $transition)
             if let text = labelText(snap) {
                 // Monospaced digits so the item doesn't shift width as it ticks.
                 Text(text).monospacedDigit()
             }
         }
         .help(helpText(snap))
-        // One shared tick; task(id:) cancels it when nothing animates. 250ms — twice the
-        // rate of the old 500ms, because a six-step sweep at 2fps reads as a slideshow no
-        // matter how it's eased. It only runs while plugged in with animation opted into,
-        // and stops the moment nothing needs it.
-        .task(id: animating) {
-            guard animating else { animFrame = 0; return }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                animFrame &+= 1
-                if celebrating {
-                    celebrateTicks += 1
-                    if celebrateTicks >= 12 {   // ~3 s at 250ms, as before
-                        celebrating = false
-                        celebrateTicks = 0
-                    }
-                }
-            }
-        }
-        // The transition runs on its own clock: the shared 500ms tick is far too slow to
-        // read as a morph, and this only lasts about half a second.
-        .task(id: transition) {
-            guard transition != nil else { transitionStep = 0; return }
-            for step in 0..<BatteryIconRenderer.transitionSteps {
-                transitionStep = step
-                try? await Task.sleep(
-                    nanoseconds: UInt64(BatteryIconRenderer.transitionStepDuration * 1_000_000_000))
-                if Task.isCancelled { return }
-            }
-            transition = nil
-            transitionStep = 0
-        }
         // Record when charging stops, *before* the completion check below reads it.
         .onChange(of: snap.isCharging) { old, new in
             if old && !new { chargeStoppedAt = Date() }
@@ -255,12 +224,10 @@ struct MenuBarLabel: View {
             }
             guard settings.motionAllowed else { return }
             celebrating = true
-            celebrateTicks = 0
         }
         // Held on or off: morph the bolt into a pause mark and back.
         .onChange(of: holdingNow) { was, isNow in
             guard was != isNow, settings.motionAllowed else { return }
-            transitionStep = 0
             transition = isNow ? .heldOn : .heldOff
         }
         // Plug and unplug feedback. Driven off the snapshot rather than a power-source
@@ -395,5 +362,85 @@ extension BatterySnapshot {
         if percentage <= 20 && !isPluggedIn { return .colored(.systemRed) }
         guard isPluggedIn else { return .neutral }
         return .colored(NSColor(ChargePalette.legible(Double(percentage) / 100)))
+    }
+}
+
+/// The menu-bar glyph and its clocks, kept apart from the label that surrounds it.
+///
+/// Two reasons it is its own view. The animation ticks four times a second, and a frame
+/// number living in the parent meant the entire label re-evaluated on every tick — every
+/// observable object it reads, every store call it makes — to change one 24pt image; that
+/// was around 13% of a core for as long as the Mac was plugged in. And the tick now stops
+/// when the screens are asleep: a lid shut on a charger was animating a glyph that nobody
+/// could see, four times a second, until it was opened again.
+private struct MenuBarIcon: View {
+    let style: BatteryIconStyle
+    let percentage: Int
+    let charging: Bool
+    let tint: MenuBarTint
+    let celebrating: Bool
+    let pluggedIn: Bool
+    let holding: Bool
+    let animating: Bool
+    /// Called when the completion flash has run its ~3 seconds; the parent owns that flag
+    /// because the tint depends on it.
+    let celebrateEnded: () -> Void
+    @Binding var transition: IconTransition?
+
+    @State private var animFrame = 0
+    @State private var celebrateTicks = 0
+    @State private var transitionStep = 0
+    @State private var screensAsleep = false
+
+    private var running: Bool { animating && !screensAsleep }
+
+    var body: some View {
+        // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
+        // labels, and the renderer draws the charging bolt inside the glyph.
+        Image(nsImage: BatteryIconRenderer.image(
+            style: style,
+            percentage: percentage,
+            charging: charging,
+            tint: tint,
+            frame: animFrame,
+            celebrating: celebrating,
+            pluggedIn: pluggedIn,
+            holding: holding,
+            transition: transition,
+            transitionStep: transitionStep))
+        // One shared tick; task(id:) cancels it when nothing animates. 250ms — twice the
+        // rate of the old 500ms, because a six-step sweep at 2fps reads as a slideshow no
+        // matter how it's eased.
+        .task(id: running) {
+            guard running else { animFrame = 0; return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                animFrame &+= 1
+                if celebrating {
+                    celebrateTicks += 1
+                    if celebrateTicks >= 12 {   // ~3 s at 250ms, as before
+                        celebrateTicks = 0
+                        celebrateEnded()
+                    }
+                }
+            }
+        }
+        // The transition runs on its own clock: the shared tick is far too slow to read as
+        // a morph, and this only lasts about half a second.
+        .task(id: transition) {
+            guard transition != nil else { transitionStep = 0; return }
+            for step in 0..<BatteryIconRenderer.transitionSteps {
+                transitionStep = step
+                try? await Task.sleep(
+                    nanoseconds: UInt64(BatteryIconRenderer.transitionStepDuration * 1_000_000_000))
+                if Task.isCancelled { return }
+            }
+            transition = nil
+            transitionStep = 0
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.screensDidSleepNotification)) { _ in screensAsleep = true }
+        .onReceive(NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.screensDidWakeNotification)) { _ in screensAsleep = false }
     }
 }
