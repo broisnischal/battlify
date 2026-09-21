@@ -44,7 +44,7 @@ enum DS {
     /// before it picked up the content.
     ///
     /// Each size is tied to the text it sits beside, which is what keeps an icon from
-    /// looking either bolted on or apologetic: `row` beside `.callout`, `caption` beside
+    /// looking either bolted on or apologetic: `row` beside a `Typo.rowTitle`, `caption` beside
     /// `.caption`/`.caption2`, `label` for the uppercase section headings.
     enum Icon {
         /// Beside a `.caption`-sized line: an inline hint, a status note.
@@ -54,6 +54,32 @@ enum DS {
         /// The glyph on a section heading. Smaller than the row icons on purpose — it
         /// labels the group rather than joining the list of things in it.
         static let label: CGFloat = 12
+    }
+
+    /// Two text sizes and the rule for which is which.
+    ///
+    /// The panel had four. Row titles were `.body` in one section and `.callout` in the
+    /// next; a note under a row was `.caption2` while a note standing on its own was
+    /// `.caption`; and the footer was `.body` — larger than any control it navigates away
+    /// from. Nothing was wrong with any single value. What read as untidy was that two
+    /// rows stacked directly on top of each other disagreed about how big a row title is.
+    enum Typo {
+        /// Every row title: a switch row, a slider label, a status line.
+        static let rowTitle = Font.body
+        /// The line under a row title. Subordinate to it, so one step down.
+        static let rowCaption = Font.caption2
+        /// A note, hint or receipt that stands on its own rather than under a title.
+        static let note = Font.caption
+        /// Navigation: smaller than the content it leads to, never larger.
+        static let nav = Font.callout
+    }
+
+    /// Control metrics. One row height for every row, so a row with a caption under it and
+    /// a row without don't sit at two different rhythms in the same list; one hit size for
+    /// the icon-only buttons, since a 16pt glyph is a 16pt target unless it's given one.
+    enum Metric {
+        static let row: CGFloat = 24
+        static let hit: CGFloat = 26
     }
 
     /// Durations, in the ranges that read as responsive rather than as animation.
@@ -200,6 +226,41 @@ struct DSSectionLabel: View {
     }
 }
 
+// MARK: - Note
+
+/// A glyph and a line of text — the one shape for every hint, warning and receipt.
+///
+/// These were all `Label`s, and `Label` sizes its icon column for a `.body` row. Beside
+/// `.caption` text that column is about 20pt of indent, so every note in the panel began
+/// well to the right of the row it was describing: the panel had two leading edges, one
+/// for its controls and a deeper one for anything it wanted to say about them. Here the
+/// glyph sits in a caption-sized column and the text starts one spacing step after it, so
+/// a note, a checklist row and the panel's own inset all share one edge.
+///
+/// The baseline guide is why this isn't simply `HStack(alignment: .firstTextBaseline)`: a
+/// stroked path has no baseline, so SwiftUI falls back to aligning the glyph's *bottom*
+/// edge to the first line's baseline, which leaves it floating high above a note that
+/// wraps to two lines.
+struct DSNote<Content: View>: View {
+    let icon: String
+    var tint: Color = .secondary
+    var font: Font = DS.Typo.note
+    var iconSize: CGFloat = DS.Icon.caption
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+            HugeIcon(icon, size: iconSize)
+                .foregroundStyle(tint)
+                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
+            content
+                .font(font)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 // MARK: - Separator
 
 /// The line between rows in a group.
@@ -317,9 +378,9 @@ struct DSSegmentedControl<Value: Hashable>: View {
                 .foregroundStyle(selected ? Color.primary : Color.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-                .padding(.horizontal, DS.Space.xs)
+                .padding(.horizontal, DS.Space.hair)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, DS.Space.xs + 2)
+                .padding(.vertical, DS.Space.xs + DS.Space.hair)
                 .background {
                     if selected {
                         // No border on the pill. A stroke plus a fill on a control this
@@ -413,7 +474,7 @@ private struct MenuPanelChrome: ViewModifier {
     }
 }
 
-/// Sizes the hosting window to the view, instead of hoping it agrees.
+/// Sizes the hosting window to the view, and clips it to the panel's own corner.
 ///
 /// `MenuBarExtra(.window)` sizes its panel from the content's frame, but only upwards: it
 /// grows when the content grows and keeps the larger size when the content shrinks. Switch
@@ -426,8 +487,36 @@ private struct MenuPanelChrome: ViewModifier {
 /// slide it down the screen every time a section opened.
 struct WindowSizer: NSViewRepresentable {
     let size: CGSize
+    /// The radius the panel draws itself with. The window is clipped to the same shape —
+    /// see `clipToPanelShape`, and keep the two in step or the corner doubles again.
+    var radius: CGFloat = DS.Radius.group
 
     func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+
+    /// Clip everything the window paints to the shape the panel actually draws.
+    ///
+    /// `MenuBarExtra(.window)` doesn't hand you a bare window: it paints its own backdrop
+    /// with a corner radius of about 4pt, and our panel draws a 14pt *continuous* corner
+    /// inside that. A continuous corner cuts further in along the diagonal than a circular
+    /// one of the same radius, so the system's shallower corner stuck out past ours — a
+    /// lighter, almost-square shoulder in each of the four corners, which is what read as
+    /// "the radius is wrong". Clearing `backgroundColor` never touched it, because the
+    /// backdrop isn't the window's background colour.
+    ///
+    /// So the content layer carries the mask. `.continuous` on the layer is the same
+    /// squircle `RoundedRectangle(style: .continuous)` draws, which is the only way the
+    /// mask and the hairline we stroke inside it describe one curve rather than two.
+    private func clipToPanelShape(_ window: NSWindow) {
+        guard let content = window.contentView else { return }
+        content.wantsLayer = true
+        guard let layer = content.layer else { return }
+        if layer.cornerRadius != radius {
+            layer.cornerRadius = radius
+            layer.cornerCurve = .continuous
+            layer.masksToBounds = true
+            window.invalidateShadow()
+        }
+    }
 
     func updateNSView(_ view: NSView, context: Context) {
         // Next runloop pass: during `updateNSView` the window is mid-layout, and setting
@@ -447,6 +536,9 @@ struct WindowSizer: NSViewRepresentable {
             if window.backgroundColor != .clear {
                 window.backgroundColor = .clear
             }
+            // And an opaque window paints its corners whatever its background colour is.
+            if window.isOpaque { window.isOpaque = false }
+            clipToPanelShape(window)
 
             let current = window.frame.size
             guard abs(current.height - size.height) > 0.5

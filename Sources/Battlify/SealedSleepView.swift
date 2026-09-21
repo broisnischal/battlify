@@ -31,7 +31,7 @@ struct SealedSleepPanel: View {
         VStack(alignment: .leading, spacing: compact ? DS.Space.s : DS.Space.m) {
             header
             if !compact {
-                Text(explanation).font(.caption).foregroundStyle(.secondary)
+                Text(explanation).font(DS.Typo.note).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !chargeLimit.sealedSleepRefused.isEmpty { refusedNotice }
@@ -44,14 +44,17 @@ struct SealedSleepPanel: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+        // Centred rather than baseline-aligned: a switch has no baseline of its own, so
+        // `.firstTextBaseline` aligned its bottom edge to the title's and sat it lower
+        // than the switches on the rows above. See `statusRow` in `MenuContentView`.
+        HStack(alignment: .center, spacing: DS.Space.s) {
             VStack(alignment: .leading, spacing: 1) {
-                // Plain `.callout`, matching every other row title in the panel. It was
+                // The shared row title, matching every other row in the panel. It was
                 // `.medium`, which made this one row read as a heading among peers.
-                Text("Sealed Sleep").font(.body)
+                Text("Sealed Sleep").font(DS.Typo.rowTitle)
                 if !verdict.isEmpty {
                     Text(verdict)
-                        .font(.caption2)
+                        .font(DS.Typo.rowCaption)
                         .foregroundStyle(sealedForReal ? DS.Status.good : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -71,6 +74,7 @@ struct SealedSleepPanel: View {
                 .toggleStyle(.switch).labelsHidden().controlSize(.small)
                 .disabled(!chargeLimit.daemonAvailable)
         }
+        .frame(minHeight: DS.Metric.row)
     }
 
     /// One line, and it has to be true. "Sealed" is claimed only when the switch is on
@@ -102,23 +106,47 @@ struct SealedSleepPanel: View {
     /// is how a feature gets switched off instead of adjusted.
     private var wakeSpeedRow: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
-                Text("Wake instantly").font(.body)
+            HStack(alignment: .center, spacing: DS.Space.s) {
+                Text("Wake instantly").font(DS.Typo.rowTitle)
                 Spacer(minLength: DS.Space.s)
                 Toggle("Wake instantly",
                        isOn: Binding(get: { chargeLimit.sealedSleepFastWake },
                                      set: { chargeLimit.setSealedSleepFastWake($0) }))
                     .toggleStyle(.switch).labelsHidden().controlSize(.small)
             }
+            .frame(minHeight: DS.Metric.row)
             // Only the state that costs something to be in gets a caption. Instant wake is
             // the default and the label says what it does; spelling out that memory stays
             // powered is a line the menu spends to tell you nothing has changed.
             if !chargeLimit.sealedSleepFastWake {
                 Text("Opening the lid takes 15 to 30 seconds.")
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(DS.Typo.rowCaption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if chargeLimit.sealedSleepFastWake && !compact { hibernateAfterRow }
+            if handoverIsOff { handoverOffNote }
+        }
+    }
+
+    /// Instant wake, with nothing to hand over to.
+    ///
+    /// The one state where this panel's verdict is wrong. The switch reads on, the
+    /// checklist is clear, the receipt says 0% lost — and a long close still pays the
+    /// memory trickle for every hour of it, because "Then hibernate after" is set to
+    /// Never and so nothing ever powers memory down. The only thing that said so was a
+    /// line in a root-owned log file, which is not a place anyone looks.
+    ///
+    /// Never is a legitimate choice, so this reports rather than warns.
+    private var handoverIsOff: Bool {
+        chargeLimit.daemonAvailable && chargeLimit.sealedSleep
+            && chargeLimit.sealedSleepFastWake && chargeLimit.sealedSleepHibernateAfter == 0
+    }
+
+    private var handoverOffNote: some View {
+        DSNote(icon: "alert", tint: DS.Status.attention) {
+            Text(compact
+                 ? "Memory stays powered however long the lid is shut. Set \"Then hibernate after\" in Settings to stop that."
+                 : "Memory stays powered however long the lid is shut. Pick a time above and a long close costs nothing.")
         }
     }
 
@@ -128,11 +156,11 @@ struct SealedSleepPanel: View {
     /// overnight one take half a minute", and that question doesn't come up often enough to
     /// spend a row of the menu on. See `DeferredHibernate` for what it drives.
     private var hibernateAfterRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+        HStack(alignment: .center, spacing: DS.Space.s) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("Then hibernate after").font(.callout)
+                Text("Then hibernate after").font(DS.Typo.rowTitle)
                 Text("Memory powers down once the lid has been shut this long, so a long close costs nothing.")
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(DS.Typo.rowCaption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: DS.Space.s)
@@ -157,12 +185,9 @@ struct SealedSleepPanel: View {
     }
 
     private var refusedNotice: some View {
-        Label {
+        DSNote(icon: "alert", tint: DS.Status.attention) {
             Text("This Mac refused: \(chargeLimit.sealedSleepRefused.joined(separator: ", ")). "
                  + "Those settings are unchanged; everything else applied.")
-                .font(.caption).fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            HugeIcon("alert", size: DS.Icon.caption).foregroundStyle(DS.Status.attention)
         }
     }
 
@@ -197,17 +222,20 @@ struct SealedSleepPanel: View {
     }
 
     private func row(_ leak: SleepLeak, leaking: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+            // The glyph column `DSNote` uses, not a `DS.Icon.row`-wide one: a leak and the
+            // receipt printed under it are both notes about this section, so they start on
+            // the same line rather than at two different indents.
             HugeIcon(leaking ? leak.icon : "check", size: DS.Icon.caption)
                 .foregroundStyle(leaking ? (leak.isAutomatic ? Color.secondary : DS.Status.attention) : DS.Status.good)
-                .frame(width: DS.Icon.row, alignment: .leading)
+                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
             VStack(alignment: .leading, spacing: 1) {
                 Text(leak.title)
-                    .font(.caption)
+                    .font(DS.Typo.note)
                     .foregroundStyle(leaking ? Color.primary : .secondary)
                     .strikethrough(!leaking, color: .secondary)
                 if leaking && !compact {
-                    Text(leak.cost).font(.caption2).foregroundStyle(.secondary)
+                    Text(leak.cost).font(DS.Typo.rowCaption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -227,7 +255,7 @@ struct SealedSleepPanel: View {
                 chargeLimit.keepAwakeOnBattery = false
                 chargeLimit.apply()
             }
-            .buttonStyle(.link).font(.caption)
+            .buttonStyle(.link).font(DS.Typo.note)
         }
     }
 
@@ -236,12 +264,9 @@ struct SealedSleepPanel: View {
     /// What the last closed-lid stretch actually cost. No projection, no estimate — the
     /// charge was read when the lid shut and again when it opened.
     private func measured(_ result: SealedSleepResult) -> some View {
-        Label {
-            Text(measuredText(result)).font(.caption)
-                .fixedSize(horizontal: false, vertical: true)
-        } icon: {
-            HugeIcon(result.isEssentiallyZero ? "check" : "chart", size: DS.Icon.caption)
-                .foregroundStyle(result.isEssentiallyZero ? DS.Status.good : .secondary)
+        DSNote(icon: result.isEssentiallyZero ? "check" : "chart",
+               tint: result.isEssentiallyZero ? DS.Status.good : .secondary) {
+            Text(measuredText(result))
         }
     }
 

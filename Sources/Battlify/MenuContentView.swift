@@ -14,6 +14,7 @@ struct MenuContentView: View {
     @EnvironmentObject private var hotkeys: HotkeyStore
     @EnvironmentObject private var restReminder: RestReminder
     @EnvironmentObject private var idleSaver: IdleSaverStore
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
     @State private var installError: String?
     /// A performance mode waiting on confirmation — see `requestMode`.
@@ -53,7 +54,7 @@ struct MenuContentView: View {
                 header(snap)
                     .padding(.horizontal, inset)
                     .padding(.top, DS.Space.m)
-                    .padding(.bottom, DS.Space.s)
+                    .padding(.bottom, DS.Space.m)
 
                 if let update = updater.available { notice { updateBanner(update) } }
                 if !license.isLicensed { notice { licenseBanner } }
@@ -90,7 +91,8 @@ struct MenuContentView: View {
         .frame(width: popoverWidth, height: min(contentHeight, maxPopoverHeight))
         // And make the window agree with that frame — it doesn't on its own. See `WindowSizer`.
         .background(WindowSizer(size: CGSize(width: popoverWidth,
-                                             height: min(contentHeight, maxPopoverHeight))))
+                                             height: min(contentHeight, maxPopoverHeight)),
+                                radius: DS.Radius.group))
         // The panel's surface. Without it `MenuBarExtra(.window)` is an opaque grey
         // rectangle; with it the panel picks up what's behind it the way every other
         // menu-bar panel on the system does.
@@ -135,9 +137,9 @@ struct MenuContentView: View {
             HugeIcon("download", size: DS.Icon.row).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Update available: v\(update.version)")
-                    .font(.callout.weight(.medium))
+                    .font(DS.Typo.rowTitle.weight(.medium))
                 Text("You have v\(updater.currentVersion)")
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(DS.Typo.rowCaption).foregroundStyle(.secondary)
             }
             Spacer(minLength: DS.Space.s)
             Button(updater.installing ? "Installing…" : "Update") { updater.installUpdate() }
@@ -153,9 +155,9 @@ struct MenuContentView: View {
         HStack(alignment: .top, spacing: DS.Space.s) {
             HugeIcon("sleep", size: DS.Icon.row).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Give your Mac a rest").font(.callout.weight(.medium))
+                Text("Give your Mac a rest").font(DS.Typo.rowTitle.weight(.medium))
                 Text(restReminder.message)
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(DS.Typo.rowCaption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: DS.Space.s) {
                     Button("Restart…") { confirmRestart() }.controlSize(.small)
@@ -185,10 +187,10 @@ struct MenuContentView: View {
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(expired ? "Trial ended, controls locked" : license.statusText)
-                    .font(.callout.weight(.medium))
+                    .font(DS.Typo.rowTitle.weight(.medium))
                 Text(expired ? "Activate to keep using Battlify."
                              : "Activate any time to unlock permanently.")
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(DS.Typo.rowCaption).foregroundStyle(.secondary)
             }
             Spacer(minLength: DS.Space.s)
             Button("Activate") { openDetached("license") }
@@ -206,8 +208,8 @@ struct MenuContentView: View {
     /// caption, so the three are now a single dot-separated line and the gauge draws the
     /// limit itself.
     private func header(_ snap: BatterySnapshot) -> some View {
-        VStack(alignment: .leading, spacing: DS.Space.s + 2) {
-            HStack(alignment: .firstTextBaseline, spacing: DS.Space.s + 2) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
                 (Text("\(snap.percentage)")
                     .font(.system(size: 30, weight: .semibold, design: .rounded))
                  + Text("%")
@@ -231,7 +233,7 @@ struct MenuContentView: View {
             // gauge already draws; "Charging paused — warm" is not.
             if let note = limitNote(snap) {
                 Text(note)
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(DS.Typo.note).foregroundStyle(.secondary)
             }
         }
     }
@@ -257,7 +259,7 @@ struct MenuContentView: View {
     private func limitNote(_ snap: BatterySnapshot) -> String? {
         if chargeLimit.isPaused { return "Charging paused" }
         guard chargeLimit.limitEnabled else { return nil }
-        if !chargeLimit.chargingEnabled { return "Holding at \(chargeLimit.limit)%" }
+        if chargeLimit.isHoldingCharge { return "Holding at \(chargeLimit.limit)%" }
         if snap.isCharging { return "Charging to \(chargeLimit.limit)%" }
         return nil
     }
@@ -296,7 +298,7 @@ struct MenuContentView: View {
     /// nothing on screen says so.
     @ViewBuilder
     private var modeSection: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s + 2) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             if chargeLimit.daemonAvailable {
                 DSSegmentedControl(items: SaveMode.allCases,
                                    title: { $0.title },
@@ -310,13 +312,13 @@ struct MenuContentView: View {
                     performanceConfirmation(for: pending)
                 } else if chargeLimit.mode.isPerformance {
                     Text(performanceReality)
-                        .font(.caption2)
+                        .font(DS.Typo.note)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 Text("Install the helper to use save modes.")
-                    .font(.caption)
+                    .font(DS.Typo.note)
                     .foregroundStyle(.secondary)
             }
         }
@@ -464,18 +466,23 @@ struct MenuContentView: View {
     /// leading edge whatever mix of switches, buttons and captions it happens to hold.
     private func statusRow<Trailing: View>(_ title: String, _ caption: String?,
                                            @ViewBuilder trailing: () -> Trailing) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+        // Centred, not baseline-aligned. A switch has no baseline, so `.firstTextBaseline`
+        // lined its *bottom edge* up with the title's baseline and dropped it a couple of
+        // points lower than the switch on the row above — which was most of what made two
+        // adjacent rows look like they came from different screens.
+        HStack(alignment: .center, spacing: DS.Space.s) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.callout)
+                Text(title).font(DS.Typo.rowTitle)
                 if let caption, !caption.isEmpty {
                     Text(caption)
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(DS.Typo.rowCaption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: DS.Space.s)
             trailing()
         }
+        .frame(minHeight: DS.Metric.row)
     }
 
     private func pauseCaption() -> String {
@@ -495,7 +502,7 @@ struct MenuContentView: View {
     /// "Don't charge" used to lead, which put an override above the thing it overrides.
     @ViewBuilder
     private var chargeLimitSection: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s + 2) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             if chargeLimit.daemonAvailable {
                 // The update is automatic now, so only send someone to Settings once the
                 // app has actually stopped trying (prompt cancelled, or installer missing).
@@ -543,13 +550,29 @@ struct MenuContentView: View {
                 calibrationControl
 
                 // Live state: why charging is currently paused.
+                //
+                // Gated on `pauseReason` alone. It used to require `!chargingEnabled` as
+                // well, which reads as a tautology and isn't: a Mac with no charge-inhibit
+                // key always reports charging as enabled, so on that hardware this whole
+                // block was dead and the panel explained nothing it was doing.
                 if chargeLimit.discharging {
-                    hintLabel("Discharging to reach the limit…", systemImage: "batteryLow")
-                } else if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
+                    // The adapter is cut either way; the reason says whether that's a hold
+                    // sitting on the level or a run down towards the limit.
+                    hintLabel(chargeLimit.pauseReason == "hold"
+                              ? "Running off the battery to hold the level"
+                              : "Discharging to reach the limit…",
+                              systemImage: "batteryLow")
+                } else if let reason = chargeLimit.pauseReason {
                     switch reason {
                     case "heat":     hintLabel("Charging paused, battery is warm", systemImage: "thermometer")
                     case "limit":    hintLabel("Charging paused to hold limit", systemImage: "pause")
                     case "settling": hintLabel("Charging resumes shortly after wake", systemImage: "sleep")
+                    case "hold":     hintLabel("Holding the level where it is", systemImage: "pause")
+                    case "schedule": hintLabel("A schedule is holding charging", systemImage: "clock")
+                    case "slow":     hintLabel("Charging gently, at \(chargeLimit.chargePower)% power",
+                                               systemImage: "batteryLow")
+                    // "paused" has its own row with a Resume button; "sleep" is the cut on
+                    // the way into sleep and is gone by the time anyone can read it.
                     default:         EmptyView()
                     }
                 }
@@ -573,25 +596,23 @@ struct MenuContentView: View {
                 Spacer()
                 Text("\(value)%").fontWeight(.semibold).monospacedDigit()
             }
-            .font(.callout)
+            .font(DS.Typo.rowTitle)
 
             Slider(value: binding, in: range, step: 5,
-                   onEditingChanged: { if !$0 { chargeLimit.apply() } })
+                   onEditingChanged: { $0 ? chargeLimit.beginEditing() : chargeLimit.endEditing() })
                 .controlSize(.small)
         }
     }
 
     @ViewBuilder
     private var helperMissingView: some View {
-        Label {
+        DSNote(icon: "alert", font: DS.Typo.rowTitle, iconSize: DS.Icon.row) {
             Text(chargeLimit.helperInstalling ? "Installing helper…" : "Helper not installed")
-        } icon: { HugeIcon("alert", size: DS.Icon.row) }
-            .font(.callout)
-            .foregroundStyle(.secondary)
+        }
         Text(chargeLimit.helperInstalling
              ? "Approve the administrator prompt to finish."
              : "Charge limiting, Low Power Mode, and sleep settings need the root helper.")
-            .font(.caption)
+            .font(DS.Typo.note)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         // Offering the button mid-install would start a second osascript behind the first.
@@ -610,10 +631,10 @@ struct MenuContentView: View {
             }
         } else {
             Text("Or run scripts/install-helper.sh")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(DS.Typo.note).foregroundStyle(.secondary)
         }
         if let installError {
-            Text(installError).font(.caption).foregroundStyle(.red).lineLimit(3)
+            Text(installError).font(DS.Typo.note).foregroundStyle(.red).lineLimit(3)
         }
     }
 
@@ -621,8 +642,8 @@ struct MenuContentView: View {
 
     @ViewBuilder
     private var quickActionsSection: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s + 2) {
-            HStack(spacing: DS.Space.xs + 2) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(spacing: DS.Space.xs) {
                 actionButton(actions.dimmed ? "Brighten" : "Dim",
                              systemImage: actions.dimmed ? "sun" : "sunLow",
                              help: (actions.dimmed ? "Restore the previous brightness"
@@ -649,10 +670,7 @@ struct MenuContentView: View {
                 caffeineButton
             }
             if caffeine.active {
-                Label { Text(caffeineStatusText) } icon: { HugeIcon("coffee", size: DS.Icon.caption) }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                DSNote(icon: "coffee") { Text(caffeineStatusText) }
             }
         }
     }
@@ -674,10 +692,10 @@ struct MenuContentView: View {
         } label: {
             VStack(spacing: DS.Space.xs) {
                 HugeIcon("laptop", size: DS.Icon.row)
-                Text("Lid").font(.caption2)
+                Text("Lid").font(DS.Typo.rowCaption).lineLimit(1)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, DS.Space.s - 1)
+            .padding(.vertical, DS.Space.s)
         }
         .buttonStyle(QuickActionButtonStyle(active: on, activeTint: .accentColor))
         .help(on
@@ -693,15 +711,15 @@ struct MenuContentView: View {
         } label: {
             VStack(spacing: DS.Space.xs) {
                 HugeIcon("coffee", size: DS.Icon.row)
-                Text("Awake").font(.caption2)
+                Text("Awake").font(DS.Typo.rowCaption).lineLimit(1)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, DS.Space.s - 1)
+            .padding(.vertical, DS.Space.s)
         }
         .buttonStyle(QuickActionButtonStyle(active: caffeine.active, activeTint: .yellow))
         .help((caffeine.active
                ? (caffeine.hold == .systemOnly
-                  ? "Keeping the Mac awake, but on battery the screen may still sleep and lock. Turn on \"Keep the screen on when on battery\" in Settings to hold it. Click to turn off; right-click for a timer."
+                  ? "Keeping the Mac awake, but the screen is free to sleep and lock. Right-click and tick \"Keep the screen on\" to hold it too. Click to turn off."
                   : "Keeping the Mac awake. The display won't sleep or lock. Click to turn off; right-click for a timer.")
                : "Keep the Mac awake. Display and system won't sleep. Click for on; right-click to set a timer.")
               + shortcutHint(.toggleCaffeine))
@@ -710,32 +728,39 @@ struct MenuContentView: View {
                 Button("Turn Off") { caffeine.deactivate() }
                 Divider()
             }
+            // How far the hold reaches, on the control it belongs to rather than three
+            // clicks away in Settings. On the charger the display is held whatever this
+            // says, so the switch is only ever about what happens on battery — and it
+            // takes effect on the live session, not just the next one.
+            Toggle("Keep the screen on", isOn: $settings.caffeineKeepDisplayOnBattery)
+                .help("Off lets the screen sleep and lock on battery while tasks keep running. Saves several watts.")
+            Divider()
             ForEach(CaffeineManager.Duration.allCases) { duration in
                 Button(duration.title) { caffeine.activate(duration) }
             }
         }
     }
 
+    /// Middot-joined, like the header's status line, and it always says how far the hold
+    /// reaches.
+    ///
+    /// It used to name the reach only when the hold had narrowed, which meant the one
+    /// state worth being sure about — the screen is being held — was the state that said
+    /// nothing. "Keeping awake" over a screen that then locked itself is how the feature
+    /// came to look broken.
     private var caffeineStatusText: String {
-        // On battery the hold narrows to system-only unless you've asked otherwise, and a
-        // screen that's free to sleep is a screen that locks. Say so rather than claiming
-        // the display is being held.
-        let narrowed = caffeine.hold == .systemOnly
-        guard let until = caffeine.expiresAt else {
-            return narrowed
-                ? "Keeping awake. Tasks keep running, the screen may sleep and lock"
-                : "Keeping awake. Display and system won't sleep"
-        }
-        let remaining = max(0, until.timeIntervalSinceNow)
-        let mins = Int((remaining / 60).rounded())
-        let left: String
-        if mins >= 60 {
-            let h = mins / 60, m = mins % 60
-            left = m > 0 ? "\(h)h \(m)m left" : "\(h)h left"
-        } else {
-            left = "\(max(1, mins))m left"
-        }
-        return "Keeping awake · \(left)" + (narrowed ? " · screen may sleep" : "")
+        let reach = caffeine.hold == .systemOnly ? "screen may sleep and lock" : "screen stays on"
+        return ["Keeping awake", reach, caffeineTimeLeft()]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    private func caffeineTimeLeft() -> String? {
+        guard let until = caffeine.expiresAt else { return nil }
+        let mins = Int((max(0, until.timeIntervalSinceNow) / 60).rounded())
+        guard mins >= 60 else { return "\(max(1, mins))m left" }
+        let h = mins / 60, m = mins % 60
+        return m > 0 ? "\(h)h \(m)m left" : "\(h)h left"
     }
 
     /// " · ⌃⌥⌘C" for a bound action, or nothing — appended to tooltips so the
@@ -750,10 +775,13 @@ struct MenuContentView: View {
         Button(action: run) {
             VStack(spacing: DS.Space.xs) {
                 HugeIcon(systemImage, size: DS.Icon.row)
-                Text(title).font(.caption2)
+                // Five tiles across 288pt leaves ~54pt each, and "Brighten" is wider than
+                // that at `.caption2`. Scaling the one long label down a hair is invisible;
+                // letting it wrap moves that tile's icon off the row's shared centre line.
+                Text(title).font(DS.Typo.rowCaption).lineLimit(1).minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, DS.Space.s - 1)
+            .padding(.vertical, DS.Space.s)
         }
         .buttonStyle(QuickActionButtonStyle())
         .help(help)
@@ -777,21 +805,23 @@ struct MenuContentView: View {
             // nothing visually and roughly doubles what you have to hit.
             Button { battery.refresh(); chargeLimit.refresh() } label: {
                 HugeIcon("refresh", size: DS.Icon.row)
-                    .frame(width: 30, height: 30)
+                    .frame(width: DS.Metric.hit, height: DS.Metric.hit)
                     .contentShape(Rectangle())
             }
             .help("Refresh")
             .foregroundStyle(.secondary)
             Button { NSApplication.shared.terminate(nil) } label: {
                 HugeIcon("power", size: DS.Icon.row)
-                    .frame(width: 30, height: 30)
+                    .frame(width: DS.Metric.hit, height: DS.Metric.hit)
                     .contentShape(Rectangle())
             }
             .help("Quit Battlify")
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.borderless)
-        .font(.body)
+        // Was `.body`, which made the row that leaves the panel the largest text in it
+        // after the percentage. Navigation is never bigger than what it navigates to.
+        .font(DS.Typo.nav)
         .imageScale(.medium)
         .lineLimit(1)
         .fixedSize(horizontal: false, vertical: true)
@@ -808,18 +838,22 @@ struct MenuContentView: View {
     /// limit or mode is never a mystery.
     @ViewBuilder
     private var activeRulesSection: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s + 2) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             ForEach(triggers.activeRules) { rule in
-                HStack(spacing: DS.Space.s) {
+                // Same glyph column as every note and checklist row in the panel, so an
+                // active rule lines up with them rather than starting on its own indent.
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
                     HugeIcon(rule.action.icon, size: DS.Icon.caption, weight: 2)
                         .foregroundStyle(Color.accentColor)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(rule.displayName).font(.callout)
+                        Text(rule.displayName).font(DS.Typo.rowTitle)
                         Text(rule.actionSummary)
-                            .font(.caption2).foregroundStyle(.secondary)
+                            .font(DS.Typo.rowCaption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: DS.Space.s)
                 }
+                .frame(minHeight: DS.Metric.row)
             }
         }
     }
@@ -839,7 +873,10 @@ struct MenuContentView: View {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, inset)
-                .padding(.vertical, DS.Space.s)
+                // Rows inside a section sit `Space.s` apart, so a section's own margin has
+                // to be the next step up or the last row of one group and the first row of
+                // the next read as neighbours with a line accidentally between them.
+                .padding(.vertical, DS.Space.m)
         }
     }
 
@@ -851,12 +888,8 @@ struct MenuContentView: View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, inset)
-            .padding(.vertical, DS.Space.s + 2)
+            .padding(.vertical, DS.Space.m)
             .background(Color.primary.opacity(0.05))
-    }
-
-    private func sectionHeader(_ title: String, _ icon: String) -> some View {
-        DSSectionLabel(title: title, icon: icon)
     }
 
     /// A title and a switch, with room for one more control before the switch.
@@ -867,8 +900,8 @@ struct MenuContentView: View {
         _ title: String, _ value: Binding<Bool>,
         @ViewBuilder trailing: () -> Trailing = { EmptyView() }
     ) -> some View {
-        HStack(spacing: DS.Space.xs) {
-            Text(title).font(.body)
+        HStack(alignment: .center, spacing: DS.Space.xs) {
+            Text(title).font(DS.Typo.rowTitle)
             Spacer(minLength: DS.Space.s)
             trailing()
                 .padding(.trailing, DS.Space.hair)
@@ -878,16 +911,12 @@ struct MenuContentView: View {
             Toggle(title, isOn: value)
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
-        // One height for every switch row, so a row with a caption under it and a row
-        // without don't sit at two different rhythms in the same list.
-        .frame(minHeight: 22)
+        // One height for every row in the app — see `DS.Metric.row`.
+        .frame(minHeight: DS.Metric.row)
     }
 
     private func hintLabel(_ text: String, systemImage: String) -> some View {
-        Label { Text(text) } icon: { HugeIcon(systemImage, size: DS.Icon.caption) }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        DSNote(icon: systemImage) { Text(text) }
     }
 
     // MARK: - Formatting
@@ -952,15 +981,18 @@ private struct ChargeGauge: View {
                     let x = w * CGFloat(limit) / 100
                     Rectangle()
                         .fill(Color.primary.opacity(0.65))
-                        .frame(width: 2, height: 15)
-                        .position(x: min(max(1, x), w - 1), y: 7.5)
+                        .frame(width: 2, height: 12)
+                        .position(x: min(max(1, x), w - 1), y: 6)
                         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: limit)
                         .transition(.opacity)
                 }
             }
-            .frame(height: 15)
+            .frame(height: 12)
         }
-        .frame(height: 15)
+        // 12, not 15: the marker overhangs the 8pt track by 2pt on each side and nothing
+        // else in here is taller, so the extra 3pt was blank panel above and below a bar
+        // that is meant to sit tight under the percentage it belongs to.
+        .frame(height: 12)
         .onAppear { pulsing = charging }
         .onChange(of: charging) { _, now in pulsing = now }
         .help(limitEnabled
