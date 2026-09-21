@@ -55,8 +55,7 @@ final class SleepWatcher {
         }, &notifier)
 
         guard rootPort != 0, let port else {
-            FileHandle.standardError.write(
-                Data("battlify-helper: error: IORegisterForSystemPower failed\n".utf8))
+            HelperLog.error("IORegisterForSystemPower failed")
             return
         }
         notifyPort = port

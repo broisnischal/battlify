@@ -41,8 +41,17 @@ public final class ChargeController {
     private lazy var cachedUsesLegacyKeys: Bool = smc.keyExists(ch0b) && smc.keyExists(ch0c)
     private lazy var cachedHasChte: Bool = smc.keyExists(chte)
     private lazy var cachedMagSafeSupported: Bool = smc.keyExists(aclc)
-    private lazy var cachedChargingControlSupported: Bool =
-        smc.keyExists(ch0b) || smc.keyExists(ch0c) || cachedHasChte
+    /// The same key set `isChargingEnabled`, `enableCharging` and `disableCharging`
+    /// actually use — both legacy keys, or CHTE.
+    ///
+    /// It was `ch0b || ch0c || chte`, which is a different question. A Mac exposing only
+    /// one of the legacy pair answered yes here and then failed every read and write: the
+    /// legacy path needs both, so `usesLegacyKeys` was false and all three calls went to a
+    /// CHTE that isn't there. The daemon reported charge control as supported, the app
+    /// offered the limit, and every enforcement attempt threw into a `try?`.
+    /// `schemeDescription` already told the truth about that Mac — it says "unsupported"
+    /// for exactly this case — so the two were contradicting each other.
+    private lazy var cachedChargingControlSupported: Bool = cachedUsesLegacyKeys || cachedHasChte
     private lazy var cachedHasAcw: Bool = smc.keyExists(acw)
 
     // MARK: - AC / wall power presence

@@ -378,7 +378,7 @@ final class Daemon: @unchecked Sendable {
         // handful of Macs expose High Power Mode, and a mode that reports success on
         // hardware which ignored half of it is lying.
         let note = (p.highPowerMode && !highPowerApplied)
-            ? "mode \(mode.rawValue) — this Mac has no High Power Mode"
+            ? "mode \(mode.rawValue): this Mac has no High Power Mode"
             : "mode \(mode.rawValue)"
         return status(ok: true, message: note)
     }
@@ -938,7 +938,7 @@ final class Daemon: @unchecked Sendable {
                     PowerSettings.displaySleepNow()
                     log("keep-awake: lid closed, display + keyboard backlight off")
                 case .externalAttached, .unknown:
-                    log("keep-awake: lid closed with an external display — leaving it lit")
+                    log("keep-awake: lid closed with an external display, leaving it lit")
                 }
                 displayForcedOffWhileClosed = true
             }
@@ -958,7 +958,7 @@ final class Daemon: @unchecked Sendable {
             } else if keepAwakeSawTask {
                 keepAwakeTaskIdleTicks += 1
                 if cfg.sleepWhenTaskDone && keepAwakeTaskIdleTicks >= sleepAfterTaskIdleTicks {
-                    log("keep-awake task finished — sleeping now")
+                    log("keep-awake task finished, sleeping now")
                     keepAwakeSawTask = false
                     keepAwakeTaskIdleTicks = 0
                     PowerSettings.sleepNow()
@@ -1078,6 +1078,14 @@ final class Daemon: @unchecked Sendable {
                                   charging desired: Bool, settling: Bool) {
         guard charge.isMagSafeSupported else { return }
 
+        // Tracked before the mode switch, not inside the `.status` branch that uses it.
+        // Parked there, a hold thrown while the LED was off or system-managed never updated
+        // it — so the next switch to `.status` compared today's hold against a stale `false`
+        // and fired the three-blink "hold just engaged" announcement for a hold that had
+        // engaged hours earlier.
+        let holdChanged = cfg.holdCharge != lastHoldForLed
+        lastHoldForLed = cfg.holdCharge
+
         let target: MagSafeLED
         switch cfg.magSafeLedMode {
         case .system:
@@ -1106,8 +1114,7 @@ final class Daemon: @unchecked Sendable {
         // Announce the moment hold engages: three quick amber/off blinks, then settle on
         // the steady colour. One-off and only on the transition — a light that blinks
         // forever is a fault indicator, not a status.
-        if cfg.magSafeLedMode == .status, cfg.holdCharge != lastHoldForLed {
-            lastHoldForLed = cfg.holdCharge
+        if cfg.magSafeLedMode == .status, holdChanged {
             if cfg.holdCharge, snap.onExternalPower {
                 for _ in 0..<3 {
                     try? charge.setMagSafeLED(.off)
@@ -1187,10 +1194,6 @@ final class Daemon: @unchecked Sendable {
         exit(0)
     }
 
-    private func log(_ m: String) {
-        FileHandle.standardError.write(Data("battlify-helper: \(m)\n".utf8))
-    }
-    private func err(_ m: String) {
-        FileHandle.standardError.write(Data("battlify-helper: error: \(m)\n".utf8))
-    }
+    private func log(_ m: String) { HelperLog.info(m) }
+    private func err(_ m: String) { HelperLog.error(m) }
 }

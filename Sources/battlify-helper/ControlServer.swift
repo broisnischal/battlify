@@ -69,7 +69,7 @@ final class ControlServer {
         if stat(path, &info) == 0 {
             boundInode = (info.st_dev, info.st_ino)
         }
-        FileHandle.standardError.write(Data("battlify-helper: control socket listening at \(path)\n".utf8))
+        HelperLog.info("control socket listening at \(path)")
 
         let handler = self.handler
         Thread.detachNewThread {
@@ -171,8 +171,7 @@ final class ControlServer {
 
     private func fail(_ what: String) -> Never {
         perror(what)
-        FileHandle.standardError.write(
-            Data("battlify-helper: error: cannot serve the control socket at \(path); exiting so launchd retries\n".utf8))
+        HelperLog.error("cannot serve the control socket at \(path); exiting so launchd retries")
         exit(5)
     }
 
@@ -190,16 +189,14 @@ final class ControlServer {
                 case EINTR, ECONNABORTED, EAGAIN, EMFILE, ENFILE:
                     continue
                 default:
-                    FileHandle.standardError.write(
-                        Data("battlify-helper: accept failed (\(errno)); listener is down\n".utf8))
+                    HelperLog.error("accept failed (\(errno)); listener is down")
                     return
                 }
             }
             if peerIsAuthorized(client) {
                 handleClient(client, handler: handler)
             } else {
-                FileHandle.standardError.write(
-                    Data("battlify-helper: refused a control connection from another user\n".utf8))
+                HelperLog.info("refused a control connection from another user")
             }
             close(client)
         }

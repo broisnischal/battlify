@@ -62,7 +62,7 @@ public enum PowerToggle: String, Codable, Sendable, CaseIterable {
         case .wakeOnNetwork: return "Lets other devices wake this Mac over the network"
         case .tcpKeepAlive: return "Keeps Find My & push active during sleep"
         case .dimOnBattery: return "Lowers brightness a little when unplugged to stretch battery life"
-        case .proximityWake: return "Lets an iPhone or Watch nearby wake this Mac — repeatedly, in a bag"
+        case .proximityWake: return "Lets an iPhone or Watch nearby wake this Mac, over and over in a bag"
         case .ttysKeepAwake: return "Keeps the Mac fully awake while any terminal or SSH session is open"
         }
     }
@@ -333,7 +333,16 @@ public enum HelperBuild {
     ///        screen left — went dark with no obvious way back, and the laptop had to be
     ///        opened again. v24 holds `PreventUserIdleDisplaySleep` while, and only while,
     ///        the lid is shut over an attached monitor.
-    public static let version = 24
+    ///   v25: three fixes that only a running daemon can carry. Charge control is now
+    ///        claimed only for the key set the read/write paths actually use — a Mac with
+    ///        one of the two legacy keys and no CHTE advertised charge limiting and then
+    ///        failed every SMC call into a `try?`, while `schemeDescription` said
+    ///        "unsupported" beside it. The MagSafe hold-blink tracks the hold whatever the
+    ///        LED mode is, so switching the light to Status no longer announces a hold that
+    ///        engaged hours ago. And every line the helper logs is stamped with the local
+    ///        time: the log is the only record of what happened inside a closed lid, and
+    ///        four thousand undated sentences answer no question anyone brings to it.
+    public static let version = 25
 }
 
 public enum ControlError: Error, CustomStringConvertible {
