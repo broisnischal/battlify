@@ -356,7 +356,7 @@ struct CaffeineManagerTests {
 
         m.activate()
         guard m.active else { return }   // assertions unavailable → nothing to prove
-        let activity = "\(reason) — user active"
+        let activity = "\(reason): user active"
         await waitUntil { Self.processHoldsAssertion(named: activity) }
         #expect(Self.processHoldsAssertion(named: activity),
                 "keeping the screen on must also declare the user active, or it locks anyway")
@@ -413,5 +413,104 @@ struct CaffeineManagerTests {
         else { return false }
         let mine = byPID[NSNumber(value: getpid())] ?? []
         return mine.contains { ($0[kIOPMAssertionNameKey as String] as? String) == name }
+    }
+}
+
+// MARK: - Session persistence
+
+/// The hold is a power assertion owned by the process, so it dies when the app restarts to
+/// install an update. Without these, that was silent: the tile read on over a Mac whose
+/// screen went dark half an hour later.
+@Suite("Caffeine session survives a restart")
+@MainActor
+struct CaffeineSessionRestoreTests {
+
+    /// A throwaway defaults suite, so a test never reads or writes the real app's session.
+    private func store(_ name: String = UUID().uuidString) -> UserDefaults {
+        let d = UserDefaults(suiteName: name)!
+        d.removePersistentDomain(forName: name)
+        return d
+    }
+
+    @Test("an indefinite session comes back after a restart")
+    func indefiniteSessionIsRestored() {
+        let defaults = store()
+        let first = FakeKeepAwake()
+        // Held, not a temporary: `CaffeineManager.deinit` releases the assertion, which is
+        // right for a process going away and would otherwise be measured as a failure here.
+        let original = CaffeineManager(backend: first, sessionStore: defaults)
+        original.activate(.indefinite)
+        #expect(first.heldCount == 1)
+
+        // A new manager over the same defaults is what launching again looks like.
+        let second = FakeKeepAwake()
+        let relaunched = CaffeineManager(backend: second, sessionStore: defaults)
+        #expect(!relaunched.active, "nothing is held until the launch hook runs")
+        relaunched.restoreSessionIfNeeded()
+        #expect(relaunched.active)
+        #expect(relaunched.expiresAt == nil, "indefinite must not come back as a timed session")
+        #expect(second.heldCount == 1)
+    }
+
+    @Test("a timed session comes back with only its remaining time")
+    func timedSessionKeepsItsDeadline() {
+        let defaults = store()
+        let first = CaffeineManager(backend: FakeKeepAwake(), sessionStore: defaults)
+        first.activate(.hour1)
+        let deadline = first.expiresAt
+
+        let relaunched = CaffeineManager(backend: FakeKeepAwake(), sessionStore: defaults)
+        relaunched.restoreSessionIfNeeded()
+        #expect(relaunched.active)
+        if let restored = relaunched.expiresAt, let original = deadline {
+            #expect(abs(restored.timeIntervalSince(original)) < 2,
+                    "it resumes to the original deadline, not a fresh hour")
+        } else {
+            Issue.record("a timed session must come back with a deadline")
+        }
+    }
+
+    @Test("a session whose timer ran out while the app was closed stays off")
+    func expiredSessionIsNotRestored() {
+        let defaults = store()
+        defaults.set(Date().addingTimeInterval(-60).timeIntervalSince1970, forKey: "caffeine.session")
+        let backend = FakeKeepAwake()
+        let relaunched = CaffeineManager(backend: backend, sessionStore: defaults)
+        relaunched.restoreSessionIfNeeded()
+        #expect(!relaunched.active)
+        #expect(backend.heldCount == 0)
+    }
+
+    @Test("turning it off is remembered too")
+    func deactivateClearsTheSession() {
+        let defaults = store()
+        let manager = CaffeineManager(backend: FakeKeepAwake(), sessionStore: defaults)
+        manager.activate(.indefinite)
+        manager.deactivate()
+
+        let relaunched = CaffeineManager(backend: FakeKeepAwake(), sessionStore: defaults)
+        relaunched.restoreSessionIfNeeded()
+        #expect(!relaunched.active, "a session switched off must not come back")
+    }
+
+    @Test("restoring twice holds one assertion")
+    func restoreIsIdempotent() {
+        let defaults = store()
+        CaffeineManager(backend: FakeKeepAwake(), sessionStore: defaults).activate(.indefinite)
+
+        let backend = FakeKeepAwake()
+        let relaunched = CaffeineManager(backend: backend, sessionStore: defaults)
+        // The only reliable launch hook is the status-item label's body, which runs often.
+        for _ in 0..<5 { relaunched.restoreSessionIfNeeded() }
+        #expect(backend.heldCount == 1)
+    }
+
+    @Test("no store means no persistence")
+    func withoutAStoreNothingIsRemembered() {
+        let manager = CaffeineManager(backend: FakeKeepAwake())
+        manager.activate(.indefinite)
+        let other = CaffeineManager(backend: FakeKeepAwake())
+        other.restoreSessionIfNeeded()
+        #expect(!other.active)
     }
 }

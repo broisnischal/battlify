@@ -85,7 +85,7 @@ public final class IOKitKeepAwake: KeepAwakeAsserting, @unchecked Sendable {
             var id = activityID
             // The name is distinct from the hold's: two assertions from one process, and
             // anything reading them back (tests included) should be able to tell them apart.
-            if IOPMAssertionDeclareUserActivity("\(reason) — user active" as CFString,
+            if IOPMAssertionDeclareUserActivity("\(reason): user active" as CFString,
                                                 kIOPMUserActiveLocal, &id) == kIOReturnSuccess {
                 activityID = id
             }
@@ -126,6 +126,13 @@ public final class CaffeineManager: ObservableObject {
 
     private let backend: KeepAwakeAsserting
     private let reason: String
+    /// Where a live session is remembered across launches, or nil to remember nothing.
+    ///
+    /// Nil by default on purpose: the tests build their own manager per case, and a
+    /// default of `.standard` would have them reading and writing the real app's session.
+    private let sessionStore: UserDefaults?
+    private static let sessionKey = "caffeine.session"
+    private var didRestore = false
     /// Injectable delay so timed-expiry can be driven deterministically in tests.
     private let sleepFor: @Sendable (TimeInterval) async -> Void
     private var token: UInt32 = 0
@@ -137,12 +144,14 @@ public final class CaffeineManager: ObservableObject {
 
     public init(backend: KeepAwakeAsserting = IOKitKeepAwake(),
                 reason: String = "Battlify: Caffeine (keep awake)",
+                sessionStore: UserDefaults? = nil,
                 userActivityInterval: TimeInterval = 30,
                 sleepFor: @escaping @Sendable (TimeInterval) async -> Void = { seconds in
                     try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 }) {
         self.backend = backend
         self.reason = reason
+        self.sessionStore = sessionStore
         self.userActivityInterval = userActivityInterval
         self.sleepFor = sleepFor
     }
@@ -180,6 +189,35 @@ public final class CaffeineManager: ObservableObject {
     /// Start keep-awake (or re-arm the timer with a new duration if already on).
     /// Idempotent: never stacks more than one assertion.
     public func activate(_ duration: Duration = .indefinite) {
+        engage(holdingFor: duration.seconds)
+    }
+
+    /// Re-engage a session that was still running when the app last quit.
+    ///
+    /// The hold is a power assertion owned by this process, so it dies with the process —
+    /// and this app restarts itself to install updates. That silently dropped the hold:
+    /// the tile still read on, nothing in the panel changed, and the screen went dark
+    /// half an hour later with the user certain they had turned Awake on. It also went
+    /// for a crash, and for every `pkill` during development, which is how it stayed
+    /// invisible. Idempotent, because the only reliable launch hook in a menu-bar app is
+    /// the status-item label's body, which runs many times.
+    public func restoreSessionIfNeeded() {
+        guard !didRestore else { return }
+        didRestore = true
+        guard let sessionStore,
+              let stored = sessionStore.object(forKey: Self.sessionKey) as? Double else { return }
+        // 0 is the indefinite session; anything else is a deadline.
+        guard stored != 0 else { engage(holdingFor: nil); return }
+        let remaining = Date(timeIntervalSince1970: stored).timeIntervalSinceNow
+        guard remaining > 0 else {
+            sessionStore.removeObject(forKey: Self.sessionKey)
+            return
+        }
+        engage(holdingFor: remaining)
+    }
+
+    /// Take the hold, for a number of seconds or until told otherwise.
+    private func engage(holdingFor seconds: TimeInterval?) {
         expiryTask?.cancel(); expiryTask = nil
 
         if token == 0 {
@@ -190,14 +228,25 @@ public final class CaffeineManager: ObservableObject {
         active = true
         syncUserActivity()
 
-        guard let secs = duration.seconds else { expiresAt = nil; return }
-        expiresAt = Date().addingTimeInterval(secs)
+        guard let seconds else { expiresAt = nil; saveSession(); return }
+        expiresAt = Date().addingTimeInterval(seconds)
+        saveSession()
         // Runs on the main actor; the cancel + isCancelled check drops it if state changes.
         expiryTask = Task { [weak self, sleepFor] in
-            await sleepFor(secs)
+            await sleepFor(seconds)
             guard !Task.isCancelled else { return }
             self?.deactivate()
         }
+    }
+
+    /// Remember the session across launches, or forget it. See `restoreSessionIfNeeded`.
+    private func saveSession() {
+        guard let sessionStore else { return }
+        guard active else {
+            sessionStore.removeObject(forKey: Self.sessionKey)
+            return
+        }
+        sessionStore.set(expiresAt?.timeIntervalSince1970 ?? 0, forKey: Self.sessionKey)
     }
 
     /// Release keep-awake and let the Mac sleep/dim normally again. No-op if inactive.
@@ -207,6 +256,9 @@ public final class CaffeineManager: ObservableObject {
         active = false
         expiresAt = nil
         hold = nil
+        // Before `syncUserActivity`, so a session ended by its own timer is forgotten
+        // even if releasing the activity declaration throws.
+        saveSession()
         syncUserActivity()
     }
 
