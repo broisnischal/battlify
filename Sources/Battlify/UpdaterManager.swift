@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import Security
 import BattlifyKit
 
 /// In-app update checks against a public JSON feed: on launch, daily, and on demand.
@@ -76,13 +77,23 @@ final class UpdaterManager: ObservableObject {
             return
         }
 
+        // No signing identity means nothing to verify the replacement against, and a
+        // signature check with nothing to check against is decoration. Hand it to the
+        // browser instead, where the user downloads it themselves and Gatekeeper applies.
+        guard let team = HelperService.teamIdentifier else {
+            showInfoAlert("This build isn't Developer ID signed, so Battlify won't replace itself automatically. Opening the download so you can install it manually.")
+            downloadAvailable()
+            return
+        }
+
         installing = true
         lastResult = nil
         let pid = ProcessInfo.processInfo.processIdentifier
         let bundleID = Bundle.main.bundleIdentifier ?? "com.battlify.app"
         Task.detached {
             do {
-                try await Self.performInstall(from: url, bundlePath: bundlePath, pid: pid, bundleID: bundleID)
+                try await Self.performInstall(from: url, bundlePath: bundlePath, pid: pid,
+                                              bundleID: bundleID, team: team)
                 // The swap script now waits for us to quit, then relaunches.
                 await MainActor.run { NSApplication.shared.terminate(nil) }
             } catch {
@@ -99,11 +110,13 @@ final class UpdaterManager: ObservableObject {
 
     private enum UpdaterError: LocalizedError {
         case appNotFoundInDMG
+        case rejected(String)
         case tool(String, String)
 
         var errorDescription: String? {
             switch self {
             case .appNotFoundInDMG: return "the update disk image didn't contain Battlify.app"
+            case .rejected(let why): return "the downloaded update was rejected: \(why)"
             case .tool(let name, let msg):
                 let detail = msg.trimmingCharacters(in: .whitespacesAndNewlines)
                 return "\(name) failed" + (detail.isEmpty ? "" : ": \(detail)")
@@ -111,9 +124,48 @@ final class UpdaterManager: ObservableObject {
         }
     }
 
+    // MARK: - Trust
+
+    /// Refuse to install anything not signed by the team that signed what's running.
+    ///
+    /// This is the check the helper's own update path has had all along, and the reason it
+    /// gives applies with more force here: `HelperUpdate` says "a path from a client is a
+    /// claim, not evidence", and a URL out of a JSON feed is exactly the same kind of
+    /// claim. Up to now the only thing standing between that feed and `ditto` over the
+    /// running app was TLS to raw.githubusercontent.com — and the script then stripped
+    /// `com.apple.quarantine`, so Gatekeeper never looked at the result either. Whoever
+    /// could write to the release repo could replace the app on every install, silently.
+    ///
+    /// `anchor apple generic` pins the chain to Apple's Developer ID root, so a self-signed
+    /// certificate carrying the right OU doesn't pass. Evaluated by the Security framework
+    /// against the bundle on disk, not against anything the feed said about it.
+    nonisolated private static func verify(bundleAt path: String, matchesTeam team: String) throws {
+        var candidate: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &candidate)
+                == errSecSuccess, let candidate else {
+            throw UpdaterError.rejected("the update has no readable code signature")
+        }
+
+        var requirement: SecRequirement?
+        let text = "anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
+        guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess,
+              let requirement else {
+            throw UpdaterError.rejected("could not build a signing requirement")
+        }
+
+        var error: Unmanaged<CFError>?
+        let status = SecStaticCodeCheckValidityWithErrors(
+            candidate, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), requirement, &error)
+        guard status == errSecSuccess else {
+            throw UpdaterError.rejected(error?.takeRetainedValue().localizedDescription
+                                        ?? "it isn't signed by team \(team)")
+        }
+    }
+
     /// Download, mount, and hand off to a detached script that waits for this process
     /// to exit, swaps the bundle, and relaunches. Off the main actor — local files only.
-    nonisolated private static func performInstall(from url: URL, bundlePath: String, pid: Int32, bundleID: String) async throws {
+    nonisolated private static func performInstall(from url: URL, bundlePath: String, pid: Int32,
+                                                   bundleID: String, team: String) async throws {
         let fm = FileManager.default
         let tmp = NSTemporaryDirectory()
         let stamp = UUID().uuidString
@@ -138,6 +190,16 @@ final class UpdaterManager: ObservableObject {
             throw UpdaterError.appNotFoundInDMG
         }
 
+        // 3a. Before a swap script is even written. Everything past this point runs
+        //     detached, after this process has exited, with nobody left to refuse.
+        do {
+            try verify(bundleAt: srcApp, matchesTeam: team)
+        } catch {
+            try? runTool("/usr/bin/hdiutil", ["detach", mountPoint, "-quiet"])
+            try? fm.removeItem(atPath: dmgPath)
+            throw error
+        }
+
         // 4. Swap-and-relaunch script: waits for THIS pid to exit so it never overwrites
         //    a running bundle, keeps a .bak to roll back, refreshes Launch Services (else
         //    the new bundle is shadowed by a stale registration). Output goes to a log
@@ -152,13 +214,22 @@ final class UpdaterManager: ObservableObject {
         if /usr/bin/ditto "\(srcApp)" "\(bundlePath).new"; then
           /usr/bin/xattr -dr com.apple.quarantine "\(bundlePath).new" 2>/dev/null || true
           /bin/rm -rf "\(bundlePath).bak"
-          /bin/mv "\(bundlePath)" "\(bundlePath).bak" 2>/dev/null || true
-          if /bin/mv "\(bundlePath).new" "\(bundlePath)"; then
-            echo "swap ok"
-            /bin/rm -rf "\(bundlePath).bak"
+          # This `mv` has to succeed before the next one runs. `mv new old` where `old` is
+          # still a directory does not fail — it moves `new` *inside* it — so a tolerated
+          # failure here left a Battlify.app/Battlify.app.new, printed "swap ok" and threw
+          # the backup away.
+          if /bin/mv "\(bundlePath)" "\(bundlePath).bak"; then
+            if /bin/mv "\(bundlePath).new" "\(bundlePath)"; then
+              echo "swap ok"
+              /bin/rm -rf "\(bundlePath).bak"
+            else
+              echo "swap failed; restoring backup"
+              /bin/rm -rf "\(bundlePath)"
+              /bin/mv "\(bundlePath).bak" "\(bundlePath)" 2>/dev/null || true
+            fi
           else
-            echo "swap failed; restoring backup"
-            /bin/mv "\(bundlePath).bak" "\(bundlePath)" 2>/dev/null || true
+            echo "could not move the old bundle aside; leaving it where it is"
+            /bin/rm -rf "\(bundlePath).new"
           fi
         else
           echo "ditto failed"
