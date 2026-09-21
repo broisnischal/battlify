@@ -142,7 +142,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// Evaluate current state and fire notifications for new transitions. Idempotent.
     func evaluate(settings: AppSettings, battery: BatteryStore, chargeLimit: ChargeLimitStore) {
         let snap = battery.snapshot
-        let reason = chargeLimit.chargingEnabled ? nil : chargeLimit.pauseReason
+        // `isHoldingCharge`, not `!chargingEnabled`. A Mac with no SMC charge-inhibit key
+        // always reports charging as enabled, so `reason` was permanently nil there and
+        // neither "Charge limit reached" nor "Charging paused, battery warm" could ever
+        // fire — on the hardware that holds the level by cutting the adapter instead.
+        let reason = chargeLimit.isHoldingCharge ? chargeLimit.pauseReason : nil
         let low = !snap.isPluggedIn && snap.percentage <= lowThreshold
         let full = snap.isFullyCharged
 

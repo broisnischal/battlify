@@ -150,7 +150,12 @@ struct MenuBarLabel: View {
         // Plugged in and deliberately not charging. Worth a glyph of its own: without one
         // the menu bar looks exactly like sitting at the limit, and the whole point of the
         // switch is that you chose it.
-        let holdingNow = chargeLimit.holdCharge && snap.isPluggedIn
+        // `|| discharging` for the same reason Caffeine's policy needs it: holding the
+        // level on a Mac with no charge-inhibit key means cutting the adapter, and macOS
+        // then reports "Battery Power" — so `isPluggedIn` went false and the icon stopped
+        // showing the hold at precisely the moment the hold was doing something.
+        let holdingNow = chargeLimit.holdCharge
+            && (snap.isPluggedIn || chargeLimit.discharging)
         // The success flash uses the ramp's own full-charge colour — which is what the
         // flash means — rather than a stock green that matches nothing else here. Mono
         // blinks by alpha instead.
@@ -266,10 +271,13 @@ struct MenuBarLabel: View {
     }
 
     /// Truly full, or held at the user's charge limit.
+    ///
+    /// Both halves of the old test failed on a Mac with no charge-inhibit key: charging is
+    /// always reported enabled there, and the reason the daemon gives for an adapter hold
+    /// is "hold", not "limit". So the icon never once showed a limit being honoured on that
+    /// hardware. `isHoldingCharge` asks the question without naming a lever.
     private func chargeComplete(_ snap: BatterySnapshot) -> Bool {
-        snap.isFullyCharged
-            || (chargeLimit.limitEnabled && !chargeLimit.chargingEnabled
-                && chargeLimit.pauseReason == "limit")
+        snap.isFullyCharged || (chargeLimit.limitEnabled && chargeLimit.isHoldingCharge)
     }
 
     /// Red when warm or critically low, the red-yellow-green ramp on power, neutral on
