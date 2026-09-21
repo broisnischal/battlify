@@ -102,7 +102,7 @@ public enum SleepLeak: String, Codable, Sendable, CaseIterable, Identifiable {
         case .powerNap:
             return "Wakes the Mac on a schedule to fetch mail and sync iCloud. Each wake is short; overnight there are dozens."
         case .wakeForNetwork:
-            return "Any machine on the network can wake yours — a shared printer or a stray scan is enough."
+            return "Any machine on the network can wake yours. A shared printer or a stray scan is enough."
         case .networkInSleep:
             return "Keeps Wi-Fi and part of the SoC alive through sleep so Find My and Messages keep working. That's the trade: locating a closed Mac costs power."
         case .terminalSessions:

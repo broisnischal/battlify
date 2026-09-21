@@ -203,7 +203,7 @@ struct TriggerRuleEditorView: View {
 
             VStack(spacing: 0) {
                 if draft.conditions.isEmpty {
-                    Text("No conditions yet. Pick what Battlify should watch for — the rule applies the whole time it's true, and undoes itself when it stops.")
+                    Text("No conditions yet. Pick what Battlify should watch for. The rule applies the whole time it's true, and undoes itself when it stops.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -413,7 +413,7 @@ struct TriggerRuleEditorView: View {
                 ? "Turns the charge limit off (charge to full) while the rule holds."
                 : "Holds the battery at \(draft.percent)% while the rule holds, then restores your usual limit."
         case .holdCharging:
-            return "Stops charging entirely while the rule holds — the battery neither charges nor is used, so the adapter runs your Mac."
+            return "Stops charging entirely while the rule holds: the battery neither charges nor is used, so the adapter runs your Mac."
         case .keepAwake:
             return "Keeps the Mac fully awake (lid open or closed) while the rule holds. Applies on AC power only."
         case .lowPowerMode:
@@ -421,7 +421,7 @@ struct TriggerRuleEditorView: View {
         case .chargePower:
             return draft.percent == 0
                 ? "Sends all adapter power to your Mac and none to the battery."
-                : "Duty-cycles charging to about \(draft.percent)% of full power — cooler and gentler, but slower to fill."
+                : "Duty-cycles charging to about \(draft.percent)% of full power, cooler and gentler but slower to fill."
         }
     }
 

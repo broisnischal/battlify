@@ -24,7 +24,7 @@ struct HistoryView: View {
             case .lid:
                 return "Removes the record of how much the battery drained while the lid was closed. This can't be undone."
             case .all:
-                return "Removes every stored battery history — samples, sessions, and lid records. This can't be undone."
+                return "Removes every stored battery history: samples, sessions, and lid records. This can't be undone."
             }
         }
         var confirmLabel: String {
@@ -186,7 +186,7 @@ struct HistoryView: View {
             }
 
             if !r.hasData {
-                Text("Not enough history yet. Battlify records a sample every 5 minutes — check back after a day or two of use.")
+                Text("Not enough history yet. Battlify records a sample every 5 minutes. Check back after a day or two of use.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -445,7 +445,7 @@ struct HistoryView: View {
         var parts: [String] = []
         if d.chargingTime > 0 { parts.append("charged \(durationText(d.chargingTime))") }
         if d.batteryTime > 0 { parts.append("on battery \(durationText(d.batteryTime))") }
-        return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+        return parts.isEmpty ? "–" : parts.joined(separator: " · ")
     }
 
     private func tempText(avg: Double?, peak: Double) -> String {

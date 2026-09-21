@@ -90,7 +90,7 @@ public enum WearAnalysis {
             id: "high",
             title: "Time at high charge",
             detail: highSev == .ok
-                ? String(format: "Only %.0f h ≥ 90%% — good.", r.highChargeHours)
+                ? String(format: "Only %.0f h ≥ 90%%. Good.", r.highChargeHours)
                 : String(format: "%.0f h ≥ 90%% (%.0f%% of tracked time). A charge limit cuts this.", r.highChargeHours, highPct * 100),
             severity: highSev))
 
@@ -109,7 +109,7 @@ public enum WearAnalysis {
             id: "deep",
             title: "Deep discharges",
             detail: deepSev == .ok
-                ? "Rarely dropped below \(deepDischargePct)% — good."
+                ? "Rarely dropped below \(deepDischargePct)%. Good."
                 : "Dropped below \(deepDischargePct)% \(r.deepDischarges) times. Frequent deep drains add wear.",
             severity: deepSev))
 

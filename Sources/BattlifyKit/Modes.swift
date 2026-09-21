@@ -161,9 +161,9 @@ public enum SaveMode: String, Codable, Sendable, CaseIterable, Identifiable {
     public var summary: String {
         switch self {
         case .extremePerformance:
-            return "Extreme Performance — High Power Mode where the Mac has it, Low Power Mode off, no charge limit so the battery can feed peak loads, and no idle sleep. Runs hot, charges to 100%, and costs battery lifespan. Meant for a render or a build, not all day."
+            return "Extreme Performance: High Power Mode where the Mac has it, Low Power Mode off, no charge limit so the battery can feed peak loads, and no idle sleep. Runs hot, charges to 100%, and costs battery lifespan. Meant for a render or a build, not all day."
         case .off:
-            return "No battery saving — standard macOS behavior."
+            return "No battery saving, standard macOS behavior."
         case .normal:
             return "Charge limit 80%, pause when warm, Power Nap off. Find My stays active."
         case .superSaver:

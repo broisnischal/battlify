@@ -71,12 +71,12 @@ case "verify":
     do {
         let info = try License.verify(token, deviceID: value("--device"),
                                       publicKeyBase64: value("--pub") ?? License.publicKeyBase64)
-        print("VALID — \(info.name.isEmpty ? info.email : "\(info.name) <\(info.email)>")")
+        print("VALID: \(info.name.isEmpty ? info.email : "\(info.name) <\(info.email)>")")
         print("  issued:  \(info.issuedAt)")
         print("  expires: \(info.expiresAt.map { "\($0)" } ?? "never")")
         print("  device:  \(info.deviceID ?? "?")")
     } catch {
-        print("INVALID — \(error)")
+        print("INVALID: \(error)")
         exit(1)
     }
 

@@ -281,7 +281,7 @@ struct SettingsView: View {
                                                     set: { chargeLimit.setLongevityCare($0) }))
                             if chargeLimit.longevityCare {
                                 divider
-                                infoRow("On. You give up the top \(100 - LongevityCare.targetPercent)% day to day — turn it off before a trip.",
+                                infoRow("On. You give up the top \(100 - LongevityCare.targetPercent)% day to day, so turn it off before a trip.",
                                         systemImage: "heart")
                             }
                         }
@@ -304,7 +304,7 @@ struct SettingsView: View {
                         toggleRow("Stop charging before sleep",
                                   chargeLimit.limitEnabled
                                   ? "Cuts charging at sleep even when no limit is set."
-                                  : "Cuts charging as the Mac goes to sleep. With a charge limit set this happens anyway — the limit can't be enforced while asleep.",
+                                  : "Cuts charging as the Mac goes to sleep. With a charge limit set this happens anyway: the limit can't be enforced while asleep.",
                                   isOn: bind(\.disableChargingBeforeSleep))
                         divider
                         toggleRow("Prevent idle sleep while plugged in",
@@ -456,11 +456,11 @@ struct SettingsView: View {
     /// percents per hour and almost nothing.
     private var caffeineStateHint: String {
         guard caffeine.active else {
-            return "Caffeine is off — the Mac sleeps and dims normally. Turn it on from the menu bar."
+            return "Caffeine is off. The Mac sleeps and dims normally. Turn it on from the menu bar."
         }
         let reach = (caffeine.hold ?? .displayOn).title.lowercased()
-        guard let until = caffeine.expiresAt else { return "Caffeine is holding — \(reach)." }
-        return "Caffeine is holding until \(Self.clockFormatter.string(from: until)) — \(reach)."
+        guard let until = caffeine.expiresAt else { return "Caffeine is holding: \(reach)." }
+        return "Caffeine is holding until \(Self.clockFormatter.string(from: until)): \(reach)."
     }
 
     private var keepAwakeTimerLabel: String {
@@ -580,7 +580,7 @@ struct SettingsView: View {
 
                     card("Always Active hours") {
                         if chargeLimit.keepAwakeSchedules.isEmpty {
-                            infoRow("None set — Always Active holds whenever its switch is on.",
+                            infoRow("None set. Always Active holds whenever its switch is on.",
                                     systemImage: "clock")
                         } else {
                             ForEach(chargeLimit.keepAwakeSchedules) { window in
@@ -794,14 +794,14 @@ struct SettingsView: View {
                 // this is the one control that sets them as the pair they have to be.
                 card("Work with the lid closed") {
                     toggleRow("Clamshell mode",
-                              "Shut the lid and the Mac keeps running — builds, downloads, a sync, an external display. The built-in screen goes dark; nothing else stops.",
+                              "Shut the lid and the Mac keeps running: builds, downloads, a sync, an external display. The built-in screen goes dark; nothing else stops.",
                               isOn: Binding(
                                 get: { ClamshellMode.isOn(charge: chargeLimit) },
                                 set: { ClamshellMode.set($0, charge: chargeLimit, caffeine: caffeine) }))
                     if ClamshellMode.isOn(charge: chargeLimit) {
                         divider
                         toggleRow("Keep going on battery",
-                                  "On by default — a lid-closed mode that ends the moment you unplug isn't one. Off lets the Mac sleep as soon as the charger comes out.",
+                                  "On by default: a lid-closed mode that ends the moment you unplug isn't one. Off lets the Mac sleep as soon as the charger comes out.",
                                   isOn: bind(\.keepAwakeOnBattery))
                         divider
                         infoRow(clamshellHint, systemImage: "laptop")
@@ -828,7 +828,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Rest now").font(.callout)
                             Text(idleSaver.resting
-                                 ? "Resting — the screen is off and settings are held. Touch anything to come back."
+                                 ? "Resting. The screen is off and settings are held. Touch anything to come back."
                                  : "Screen and keyboard backlight off, and the settings below applied, without shutting the lid.")
                                 .font(.caption).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -847,7 +847,7 @@ struct SettingsView: View {
                     if idleSaver.autoEnabled {
                         if let waiting = idleSaver.waitingBecause {
                             divider
-                            infoRow("You've been away long enough to rest, but \(waiting) — resting will start once that stops.",
+                            infoRow("You've been away long enough to rest, but \(waiting). Resting will start once that stops.",
                                     systemImage: "info")
                         }
                         divider
@@ -872,7 +872,7 @@ struct SettingsView: View {
                               isOn: $idleSaver.lowPowerWhileResting)
                     divider
                     toggleRow("Wi-Fi and Bluetooth off while resting",
-                              "Off by default — losing the network mid-call costs more than it saves.",
+                              "Off by default: losing the network mid-call costs more than it saves.",
                               isOn: $idleSaver.radiosOffWhileResting)
                     divider
                 }
@@ -886,7 +886,7 @@ struct SettingsView: View {
                     if !settings.caffeineEndOnBattery {
                         divider
                         toggleRow("Keep the screen on when on battery",
-                                  "A lit idle screen costs several watts. Leave off unless you need it.",
+                                  "On by default: on the charger the screen is held either way. Off lets it sleep and lock while tasks keep running, which saves several watts.",
                                   isOn: $settings.caffeineKeepDisplayOnBattery)
                     }
                 }
@@ -1033,7 +1033,7 @@ struct SettingsView: View {
                 // A global grab beats the frontmost app to the keystroke, so a chord built
                 // only from ⌘ and ⇧ takes it away from every app that uses it.
                 if let key = hotkeys.bindings.hotkey(for: action), key.collidesWithAppShortcuts {
-                    Text("\(key.displayString) has no ⌃ or ⌥, so Battlify takes it from every app that uses it — ⌘D stops being Duplicate, ⇧⌘D stops being Send.")
+                    Text("\(key.displayString) has no ⌃ or ⌥, so Battlify takes it from every app that uses it: ⌘D stops being Duplicate, ⇧⌘D stops being Send.")
                         .font(.caption).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1047,7 +1047,7 @@ struct SettingsView: View {
                 onCapture: { key in
                     let displaced = hotkeys.set(key, for: action)
                     displacedNote = displaced.map {
-                        "\(key.displayString) moved to “\(action.title)” — “\($0.title)” now has no shortcut."
+                        "\(key.displayString) moved to “\(action.title)”. “\($0.title)” now has no shortcut."
                     }
                     recordingAction = nil
                 },
@@ -1228,11 +1228,11 @@ struct SettingsView: View {
                                     }
                                     .controlSize(.small)
                                     Text(count == 0
-                                         ? "No frames yet — the dot grid plays until you add some."
+                                         ? "No frames yet. The dot grid plays until you add some."
                                          : "\(count) frame\(count == 1 ? "" : "s") found, played in filename order.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
-                                Text("Export a numbered image sequence (frame_001.png, frame_002.png, …) from Rive, Lottie or After Effects — up to \(ChargeFrameSequence.maxFrames) frames, scaled to fit and centred. No plug-in or runtime needed.")
+                                Text("Export a numbered image sequence (frame_001.png, frame_002.png, …) from Rive, Lottie or After Effects. Up to \(ChargeFrameSequence.maxFrames) frames, scaled to fit and centred. No plug-in or runtime needed.")
                                     .font(.caption).foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -1275,7 +1275,7 @@ struct SettingsView: View {
                 if let update = updater.available {
                     HStack(alignment: .center) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Update available — v\(update.version)")
+                            Text("Update available · v\(update.version)")
                                 .font(.callout.weight(.medium))
                             Text("You have v\(updater.currentVersion)")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -1424,12 +1424,12 @@ struct SettingsView: View {
     private var helperStatus: (title: String, detail: String, icon: String, installed: Bool) {
         if chargeLimit.helperInstalling {
             return ("Installing…",
-                    "Approve the administrator prompt to finish. This is asked once — after that the helper starts at boot and keeps itself current.",
+                    "Approve the administrator prompt to finish. This is asked once. After that the helper starts at boot and keeps itself current.",
                     "arrow.down.circle", false)
         }
         if !chargeLimit.daemonAvailable {
             return ("Not installed",
-                    "The root helper enforces the charge limit, heat pause, and sleep settings. Install it once to enable them — it runs at boot on its own.",
+                    "The root helper enforces the charge limit, heat pause, and sleep settings. Install it once to enable them. It runs at boot on its own.",
                     "exclamationmark.triangle.fill", false)
         }
         if chargeLimit.daemonOutdated {
@@ -1540,7 +1540,7 @@ struct SettingsView: View {
                     set: { chargeLimit.chargePower = Int($0) }
                 ),
                 in: 0...100, step: 5,
-                onEditingChanged: { editing in if !editing { chargeLimit.apply() } }
+                onEditingChanged: { $0 ? chargeLimit.beginEditing() : chargeLimit.endEditing() }
             )
             .controlSize(.small)
 
@@ -1570,7 +1570,7 @@ struct SettingsView: View {
                     }
                 }
                 if cycling {
-                    Text("Charging runs in long on/off cycles, so this reads full or zero — averaging about \(chargeLimit.chargePower)%.")
+                    Text("Charging runs in long on/off cycles, so this reads full or zero, averaging about \(chargeLimit.chargePower)%.")
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1579,7 +1579,7 @@ struct SettingsView: View {
             // anything, which made a live readout look like the one setting worth framing.
             .padding(.vertical, DS.Space.xs)
         } else {
-            Text("On battery — plug in the charger to see the live power split.")
+            Text("On battery. Plug in the charger to see the live power split.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -1687,12 +1687,12 @@ struct SettingsView: View {
             return "Holding only while plugged in. Unplug and the Mac sleeps as usual when the lid shuts."
         }
         if battery.snapshot.onExternalPower {
-            return "Holding. Shut the lid whenever you like — it keeps going on battery too."
+            return "Holding. Shut the lid whenever you like; it keeps going on battery too."
         }
         if chargeLimit.keepAwakeMaxTempC > 0 {
             return "Holding on battery. It drains fast; the Mac sleeps if it passes \(Int(chargeLimit.keepAwakeMaxTempC))\u{00A0}°C."
         }
-        return "Holding on battery. It drains fast and runs hot with the lid shut — set a temperature cutoff under Charging › Enforcement."
+        return "Holding on battery. It drains fast and runs hot with the lid shut. Set a temperature cutoff under Charging › Enforcement."
     }
 
     private var magSafeHint: String {

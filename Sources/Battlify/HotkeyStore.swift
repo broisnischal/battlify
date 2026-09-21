@@ -366,7 +366,7 @@ final class HotkeyStore: ObservableObject {
             hud("Awake")
         } else {
             // The HUD has to be up before the screen goes dark, or it's a banner nobody sees.
-            hud("Resting", detail: "Screen off, settings held — press any key to come back")
+            hud("Resting", detail: "Screen off, settings held. Press any key to come back")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { idleSaver.restNow() }
         }
     }

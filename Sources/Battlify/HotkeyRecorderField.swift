@@ -168,7 +168,7 @@ struct HotkeyRecorderField: View {
     private var helpText: String {
         if isRecording { return "Type the shortcut, or press ⎋ to cancel" }
         if unavailable {
-            return "Another app already owns \(hotkey?.displayString ?? "this shortcut") — pick a different one."
+            return "Another app already owns \(hotkey?.displayString ?? "this shortcut"). Pick a different one."
         }
         return hotkey == nil ? "Click to set a shortcut" : "Click to change this shortcut"
     }

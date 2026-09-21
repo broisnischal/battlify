@@ -48,7 +48,7 @@ enum ChargeOverlayStyle: String, CaseIterable, Identifiable, Codable {
         case .dotGrid: return "A dot matrix fills to your charge level in one rise, warm amber at the bottom cooling to white at the top."
         case .ring:    return "Rings push out from the port with the charge level in the middle."
         case .aurora:  return "A soft glow rises off the bottom edge and fades."
-        case .custom:  return "Plays your own frames — export a numbered image sequence from Rive, Lottie or After Effects and drop it in the folder."
+        case .custom:  return "Plays your own frames. Export a numbered image sequence from Rive, Lottie or After Effects and drop it in the folder."
         }
     }
 }

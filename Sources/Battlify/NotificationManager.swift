@@ -161,7 +161,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             switch reason {
             case "heat":
                 post("heat", "Charging paused",
-                     "Your battery is warm — charging paused to protect it.",
+                     "Your battery is warm, so charging is paused to protect it.",
                      icon: "thermometer")
             case "limit":
                 post("limit", "Charge limit reached",
@@ -173,7 +173,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         }
 
         if low && !lastLow {
-            post("low", "Low battery", "\(snap.percentage)% remaining — plug in soon.",
+            post("low", "Low battery", "\(snap.percentage)% remaining. Plug in soon.",
                  icon: "batteryLow")
         }
         if full && !lastFull {

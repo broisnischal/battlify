@@ -66,7 +66,7 @@ struct DetailsView: View {
                 }
 
                 if chg > 0.5 {
-                    Text("\(watts(chg)) of the \(watts(adapter)) from the adapter is charging the battery — \(pct(chg, of: total)); the rest runs your Mac.")
+                    Text("\(watts(chg)) of the \(watts(adapter)) from the adapter is charging the battery, \(pct(chg, of: total)); the rest runs your Mac.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -165,7 +165,7 @@ struct DetailsView: View {
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 if a.isUnderNegotiated, let w = a.watts, let m = a.maxAvailableWatts {
-                    Label("This adapter can supply \(m) W but the Mac negotiated \(w) W. That's usually the cable — a charge cable rated below the adapter caps the whole chain.",
+                    Label("This adapter can supply \(m) W but the Mac negotiated \(w) W. That's usually the cable: a charge cable rated below the adapter caps the whole chain.",
                           systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -199,7 +199,7 @@ struct DetailsView: View {
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             if automation.isClamshellMode {
-                Label("In clamshell (docked) mode the battery tends to sit at 100% and run hot — the two biggest causes of wear. Keep a charge limit and heat-pause enabled.",
+                Label("In clamshell (docked) mode the battery tends to sit at 100% and run hot, the two biggest causes of wear. Keep a charge limit and heat-pause enabled.",
                       systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -265,7 +265,7 @@ struct DetailsView: View {
         var tips: [String] = []
 
         if let t = snap.temperature, t >= 35 {
-            tips.append(String(format: "Battery is warm (%.0f°C). Heat is the biggest wear factor — avoid charging in hot spots.", t))
+            tips.append(String(format: "Battery is warm (%.0f°C). Heat is the biggest wear factor, so avoid charging in hot spots.", t))
         }
         if snap.percentage >= 95 && snap.isPluggedIn {
             tips.append("Sitting at ~100% while plugged in ages the battery faster. A charge limit keeps it lower.")
@@ -279,7 +279,7 @@ struct DetailsView: View {
             }
         }
         if let h = snap.healthPercent, h < 80 {
-            tips.append("Maximum capacity is \(h)% — Apple considers under 80% as service-recommended.")
+            tips.append("Maximum capacity is \(h)%. Apple considers under 80% as service-recommended.")
         }
         if tips.isEmpty {
             tips.append("Your battery settings look healthy. Nice work keeping it cool and capped.")

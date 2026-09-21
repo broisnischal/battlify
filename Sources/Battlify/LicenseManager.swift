@@ -159,7 +159,7 @@ final class LicenseManager: ObservableObject {
     var statusText: String {
         switch state {
         case .licensed(let name): return "Licensed · \(name)"
-        case .trial(let d): return "Trial — \(d) free day\(d == 1 ? "" : "s") left"
+        case .trial(let d): return "Trial · \(d) free day\(d == 1 ? "" : "s") left"
         case .expired: return "Trial ended"
         }
     }

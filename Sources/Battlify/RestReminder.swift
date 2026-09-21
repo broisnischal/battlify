@@ -75,7 +75,7 @@ final class RestReminder: ObservableObject {
     /// One-line rationale, sharpened when the battery is running warm.
     var message: String {
         if let t = battery?.snapshot.temperature, t >= WearAnalysis.hotThresholdC {
-            return "Your Mac has been on for \(uptimeDays) days and is running warm — a restart clears memory and helps it cool down."
+            return "Your Mac has been on for \(uptimeDays) days and is running warm. A restart clears memory and helps it cool down."
         }
         return "Your Mac has been on for \(uptimeDays) days. An occasional restart clears out memory and keeps it running smoothly."
     }
