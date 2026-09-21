@@ -59,7 +59,6 @@ final class LicenseManager: ObservableObject {
     @Published private(set) var state: State = .trial(daysLeft: 30)
     @Published var enteredKey: String = ""
     @Published private(set) var lastError: String?
-    @Published private(set) var verifying = false
 
     /// Premium controls unlocked (active trial or valid license).
     var isPro: Bool {

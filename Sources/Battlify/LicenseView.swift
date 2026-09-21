@@ -110,7 +110,6 @@ struct LicenseView: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...3)
                 .font(.system(.callout, design: .monospaced))
-                .disabled(license.verifying)
         }
 
         if let err = license.lastError {
@@ -123,12 +122,12 @@ struct LicenseView: View {
             Link("Buy Battlify · $2.99", destination: buyURL)
                 .font(.callout.weight(.medium))
             Spacer()
-            if license.verifying {
-                ProgressView().controlSize(.small)
-            }
+            // No progress spinner: `activate()` is offline Ed25519 verification and returns
+            // in well under a frame. The `verifying` flag that gated one here was never set
+            // by anything, so the spinner and the two disabled states were unreachable —
+            // a loading phase the app doesn't have.
             Button("Activate") { license.activate() }
                 .keyboardShortcut(.defaultAction)
-                .disabled(license.verifying)
         }
     }
 }
