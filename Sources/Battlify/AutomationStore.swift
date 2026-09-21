@@ -114,10 +114,15 @@ final class AutomationStore: ObservableObject {
     private func startClamshellSaver() {
         guard clamshellSaverTimer == nil else { return }
         forceInternalDisplayOff()
-        let t = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
+        // Every 30s, not every 10. The re-issue exists because a maintenance wake can turn
+        // the panel back on inside a shut lid, and that is a once-in-a-while event — at 10s
+        // this forked `pmset` 360 times an hour, for hours, in an app whose whole argument
+        // is that background work costs battery. A backlight lit for up to half a minute
+        // after a dark wake is cheaper than the polling was.
+        let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.clamshellSaverTick() }
         }
-        t.tolerance = 2
+        t.tolerance = 5
         RunLoop.main.add(t, forMode: .common)
         clamshellSaverTimer = t
     }

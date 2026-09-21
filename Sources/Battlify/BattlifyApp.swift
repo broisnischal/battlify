@@ -20,7 +20,9 @@ struct BattlifyApp: App {
     @StateObject private var startup = StartupManager()
     @StateObject private var updater = UpdaterManager()
     @StateObject private var actions = SystemActions()
-    @StateObject private var caffeine = CaffeineManager()
+    // `sessionStore` is what lets a live keep-awake survive the app restarting to
+    // install an update — see `CaffeineManager.restoreSessionIfNeeded`.
+    @StateObject private var caffeine = CaffeineManager(sessionStore: .standard)
     @StateObject private var settings = AppSettings()
     @StateObject private var notifier = NotificationManager()
     @StateObject private var network = NetworkProfileStore()
@@ -185,6 +187,9 @@ struct MenuBarLabel: View {
         // narrowing its hold to system-only, or ending the session outright if "end on
         // battery" is set. The hold would have been switching off the very thing the user
         // asked to keep running, every time it engaged.
+        // Before `applyPolicy`, so a restored hold is reconciled to the real power
+        // source on this same pass rather than sitting at the assumed-AC default.
+        caffeine.restoreSessionIfNeeded()
         caffeine.applyPolicy(keepDisplayOnBattery: settings.caffeineKeepDisplayOnBattery,
                              endOnBattery: settings.caffeineEndOnBattery,
                              onExternalPower: snap.onExternalPower || chargeLimit.discharging)
@@ -314,19 +319,23 @@ struct MenuBarLabel: View {
     }
 
     private func helpText(_ snap: BatterySnapshot) -> String {
-        if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
+        // `isHoldingCharge`, not `!chargingEnabled`: a Mac with no charge-inhibit key
+        // always reports charging as enabled, so this whole block never ran there and the
+        // menu-bar tooltip explained none of it. Same fix as the panel's hint rows.
+        if chargeLimit.isHoldingCharge, let reason = chargeLimit.pauseReason {
             switch reason {
             case "limit":    return "Holding at \(chargeLimit.limit)% limit"
-            case "heat":     return "Charging paused — battery warm"
+            case "hold":     return "Holding the level where it is"
+            case "heat":     return "Charging paused, battery warm"
             case "settling": return "Settling after wake"
             case "paused":   return "Charging paused"
             case "sleep":    return "Charging cut for sleep"
             default: break
             }
         }
-        if snap.isCharging  { return "Charging — \(snap.percentage)%" }
-        if snap.isPluggedIn { return "Plugged in — \(snap.percentage)%" }
-        return "On battery — \(snap.percentage)%"
+        if snap.isCharging  { return "Charging · \(snap.percentage)%" }
+        if snap.isPluggedIn { return "Plugged in · \(snap.percentage)%" }
+        return "On battery · \(snap.percentage)%"
     }
 
 }

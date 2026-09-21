@@ -146,18 +146,20 @@ final class ChargeLimitStore: ObservableObject {
     /// stale response could clobber a fresh edit.
     private var pendingWrites = 0
 
-    /// Pull status from the daemon (skipped while a write is outstanding).
+    /// Pull status from the daemon (skipped while a write is outstanding, or while a
+    /// control is being dragged — see `editingControls`).
     func refresh() {
-        guard pendingWrites == 0 else { return }
+        guard pendingWrites == 0, editingControls == 0 else { return }
         Task.detached {
             let result = try? ControlClient.send(.getStatus)
             await self.ingestFromRefresh(result)
         }
     }
 
-    /// Ingest a getStatus response only if no config write started meanwhile.
+    /// Ingest a getStatus response only if no config write started meanwhile, and nothing
+    /// is being dragged — a refresh in flight when the drag began still lands here.
     private func ingestFromRefresh(_ response: ControlResponse?) {
-        guard pendingWrites == 0 else { return }
+        guard pendingWrites == 0, editingControls == 0 else { return }
         ingest(response)
     }
 
@@ -405,6 +407,38 @@ final class ChargeLimitStore: ObservableObject {
     func applyMode(_ newMode: SaveMode) {
         mode = newMode // optimistic
         command(.applyMode(newMode))
+    }
+
+    /// Whether the daemon is keeping charge off the battery right now, by whichever lever
+    /// this Mac gives it.
+    ///
+    /// Not `!chargingEnabled`. A Mac with no SMC charge-inhibit key has nothing to inhibit
+    /// charging with, so the daemon reports charging as enabled there and holds the level by
+    /// cutting the adapter instead — which made every "Holding at 80%" in the app
+    /// unreachable on exactly the hardware whose owners most need telling that the limit is
+    /// doing something. `discharging` is that adapter cut; `pauseReason == "hold"` is the
+    /// daemon naming it.
+    var isHoldingCharge: Bool {
+        !chargingEnabled || discharging || pauseReason == "hold"
+    }
+
+    // MARK: - Editing
+
+    /// Controls the user has hold of right now (a slider mid-drag).
+    ///
+    /// The periodic status poll ingests the daemon's config wholesale, and the sliders only
+    /// send their value on mouse-up — so a poll landing mid-drag wrote the daemon's number
+    /// straight over the one under the user's finger and the knob jumped back. Counted
+    /// rather than a flag, because two controls can be live at once in Settings.
+    private var editingControls = 0
+
+    func beginEditing() { editingControls += 1 }
+
+    /// Ends the hold *and* commits — the two always happened together, and splitting them
+    /// is how a slider ends up silently not saving.
+    func endEditing() {
+        editingControls = max(0, editingControls - 1)
+        apply()
     }
 
     func isPowerToggleOn(_ toggle: PowerToggle) -> Bool {

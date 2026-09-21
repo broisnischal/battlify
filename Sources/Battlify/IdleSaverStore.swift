@@ -198,21 +198,41 @@ final class IdleSaverStore: ObservableObject {
         waitingBecause = nil
         reschedule()   // switch to the fast poll that notices you coming back
 
-        if lowPowerWhileResting {
-            if let status = try? ControlClient.send(.getStatus) {
-                savedLowPowerMode = status.lowPowerModeEnabled
+        // Off the main actor. `ControlClient.send` is a blocking socket round trip with a
+        // five-second timeout, and the daemon answers it under the same lock its tick loop
+        // holds — so two of them in a row, on the main thread, is the app frozen for as
+        // long as the helper takes to get round to them. This runs from a timer while
+        // nobody is looking, which is exactly when a hang goes unnoticed until the user
+        // comes back to a beachball.
+        let wantLowPower = lowPowerWhileResting
+        let wantRadios = radiosOffWhileResting
+        Task.detached { [weak self] in
+            var lowPower: Bool?
+            if wantLowPower {
+                if let status = try? ControlClient.send(.getStatus) {
+                    lowPower = status.lowPowerModeEnabled
+                }
+                _ = try? ControlClient.send(.setLowPowerMode(true))
             }
-            _ = try? ControlClient.send(.setLowPowerMode(true))
+            var wifi: Bool?
+            var bluetooth: Bool?
+            if wantRadios {
+                wifi = RadioControl.isWiFiOn
+                if wifi == true { _ = RadioControl.setWiFi(false) }
+                bluetooth = RadioControl.isBluetoothOn
+                if bluetooth == true { RadioControl.setBluetooth(false) }
+            }
+            await MainActor.run {
+                guard let self, self.resting else { return }
+                self.savedLowPowerMode = lowPower
+                self.savedWiFi = wifi
+                self.savedBluetooth = bluetooth
+                // Display last, and still last now that the rest is asynchronous: doing it
+                // first would darken the screen while the work it's waiting on is still
+                // running, which reads as resting having stalled.
+                self.displayOff()
+            }
         }
-        if radiosOffWhileResting {
-            savedWiFi = RadioControl.isWiFiOn
-            if savedWiFi == true { _ = RadioControl.setWiFi(false) }
-            savedBluetooth = RadioControl.isBluetoothOn
-            if savedBluetooth == true { RadioControl.setBluetooth(false) }
-        }
-        // Display last: everything above takes a moment, and doing it after the screen is
-        // already dark would mean the work happens while the user thinks it's resting.
-        displayOff()
     }
 
     private func endResting() {
@@ -220,15 +240,23 @@ final class IdleSaverStore: ObservableObject {
         restingSince = nil
         reschedule()   // back to the slow idle watch (or no timer, if that's off)
 
-        if let previous = savedLowPowerMode {
-            _ = try? ControlClient.send(.setLowPowerMode(previous))
-            savedLowPowerMode = nil
-        }
-        // Radios come back only if we were the ones who switched them off.
-        if savedWiFi == true, !RadioControl.isWiFiOn { _ = RadioControl.setWiFi(true) }
-        if savedBluetooth == true, !RadioControl.isBluetoothOn { RadioControl.setBluetooth(true) }
+        // Same reasoning as `beginResting`, and it matters more here: this runs on the
+        // keystroke that says the user is back, so a blocking round trip lands squarely in
+        // the moment they're looking at the screen.
+        let previousLowPower = savedLowPowerMode
+        let previousWiFi = savedWiFi
+        let previousBluetooth = savedBluetooth
+        savedLowPowerMode = nil
         savedWiFi = nil
         savedBluetooth = nil
+        Task.detached {
+            if let previousLowPower {
+                _ = try? ControlClient.send(.setLowPowerMode(previousLowPower))
+            }
+            // Radios come back only if we were the ones who switched them off.
+            if previousWiFi == true, !RadioControl.isWiFiOn { _ = RadioControl.setWiFi(true) }
+            if previousBluetooth == true, !RadioControl.isBluetoothOn { RadioControl.setBluetooth(true) }
+        }
     }
 
     private func displayOff() { run("/usr/bin/pmset", ["displaysleepnow"]) }

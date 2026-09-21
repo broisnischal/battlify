@@ -57,8 +57,15 @@ final class AppSettings: ObservableObject {
     @Published var caffeineEndOnBattery: Bool {
         didSet { defaults.set(caffeineEndOnBattery, forKey: Keys.caffeineEndOnBattery) }
     }
-    /// Caffeine: keep the screen lit on battery too. Off by default: a lit idle screen
-    /// costs percents per hour, and keeping only the system awake finishes the same work.
+    /// Caffeine: keep the screen lit on battery too. On by default.
+    ///
+    /// It was off, on the argument that a lit idle screen costs percents per hour and a
+    /// system-only hold finishes the same work. True, and beside the point: the control is
+    /// a coffee cup labelled "Awake", and a Mac whose screen has gone dark and locked
+    /// itself is not awake by any reading a user would recognise. Turning it on and
+    /// watching the display sleep anyway reads as the feature being broken, which is a
+    /// worse outcome than the watts. The saving is still one click away, on the tile
+    /// itself — see `caffeineButton`.
     @Published var caffeineKeepDisplayOnBattery: Bool {
         didSet { defaults.set(caffeineKeepDisplayOnBattery, forKey: Keys.caffeineDisplayOnBattery) }
     }
@@ -139,6 +146,7 @@ final class AppSettings: ObservableObject {
         static let notifications = "notifications.enabled"
         static let caffeineEndOnBattery = "caffeine.endOnBattery"
         static let caffeineDisplayOnBattery = "caffeine.keepDisplayOnBattery"
+        static let caffeineDisplayMigrated = "caffeine.keepDisplayOnBattery.defaultedOn"
         static let restReminder = "rest.reminderEnabled"
         static let overlayEnabled = "overlay.enabled"
         static let overlayStyle = "overlay.style"
@@ -167,7 +175,17 @@ final class AppSettings: ObservableObject {
             .flatMap(BatteryIconStyle.init(rawValue:)) ?? .rounded
         notificationsEnabled = defaults.bool(forKey: Keys.notifications)
         caffeineEndOnBattery = defaults.bool(forKey: Keys.caffeineEndOnBattery)
-        caffeineKeepDisplayOnBattery = defaults.bool(forKey: Keys.caffeineDisplayOnBattery)
+        // Migrated once, not simply re-defaulted. Anyone who ran an earlier build has a
+        // `false` on disk — written either by the old default or by trying the switch and
+        // putting it back — and reading that straight back would leave the old behaviour
+        // in place for exactly the people this change is for. The flag makes it a
+        // one-time correction: whatever is set after this migration is the user's.
+        if defaults.object(forKey: Keys.caffeineDisplayMigrated) == nil {
+            defaults.set(true, forKey: Keys.caffeineDisplayOnBattery)
+            defaults.set(true, forKey: Keys.caffeineDisplayMigrated)
+        }
+        caffeineKeepDisplayOnBattery =
+            defaults.object(forKey: Keys.caffeineDisplayOnBattery) as? Bool ?? true
         restReminderEnabled = defaults.object(forKey: Keys.restReminder) as? Bool ?? true
         chargeOverlayEnabled = defaults.bool(forKey: Keys.overlayEnabled)
         chargeOverlayStyle = defaults.string(forKey: Keys.overlayStyle)
