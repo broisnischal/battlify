@@ -123,8 +123,10 @@ struct SealedSleepPanel: View {
                     .font(DS.Typo.rowCaption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if chargeLimit.sealedSleepFastWake && !compact { hibernateAfterRow }
-            if handoverIsOff { handoverOffNote }
+            if chargeLimit.sealedSleepFastWake && !compact {
+                hibernateAfterRow
+                if handoverIsOff { handoverOffNote }
+            }
         }
     }
 
@@ -133,8 +135,13 @@ struct SealedSleepPanel: View {
     /// The one state where this panel's verdict is wrong. The switch reads on, the
     /// checklist is clear, the receipt says 0% lost — and a long close still pays the
     /// memory trickle for every hour of it, because "Then hibernate after" is set to
-    /// Never and so nothing ever powers memory down. The only thing that said so was a
-    /// line in a root-owned log file, which is not a place anyone looks.
+    /// Never and so nothing ever powers memory down.
+    ///
+    /// Settings only, next to the picker that fixes it. In the menu it was a
+    /// two-line amber warning stacked directly on top of the one-line green
+    /// receipt — two notes in two tints arguing about the same feature, in a panel
+    /// whose whole layout is one line per fact. The place to say this is the place
+    /// where the control is.
     ///
     /// Never is a legitimate choice, so this reports rather than warns.
     private var handoverIsOff: Bool {
@@ -144,9 +151,7 @@ struct SealedSleepPanel: View {
 
     private var handoverOffNote: some View {
         DSNote(icon: "alert", tint: DS.Status.attention) {
-            Text(compact
-                 ? "Memory stays powered however long the lid is shut. Set \"Then hibernate after\" in Settings to stop that."
-                 : "Memory stays powered however long the lid is shut. Pick a time above and a long close costs nothing.")
+            Text("Memory stays powered however long the lid is shut. Pick a time above and a long close costs nothing.")
         }
     }
 
