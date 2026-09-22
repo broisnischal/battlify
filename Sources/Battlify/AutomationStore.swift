@@ -213,25 +213,40 @@ final class AutomationStore: ObservableObject {
         lastLidSession = session
     }
 
-    /// macOS is slow to ready Wi-Fi/Bluetooth right after wake, so wait briefly and retry.
+    /// Switch the radios back on after a wake. Asks the system at most twice.
+    ///
+    /// It used to re-issue the write on every one of seven retries, two seconds
+    /// apart, for as long as the radio still read as off. Turning Bluetooth on goes
+    /// through `IOBluetoothPreferenceSetControllerPowerState`, which sits behind
+    /// macOS's Bluetooth consent — so an unanswered prompt left the radio off, which
+    /// kept the loop writing, which raised the prompt again. Opening the lid asked
+    /// for Bluetooth permission up to seven times, every single time.
+    ///
+    /// The retry existed for a real reason: macOS is slow to ready the controllers
+    /// after a wake and a write issued too early is dropped. One write once things
+    /// have settled, one more if it demonstrably didn't take, and then stop. A radio
+    /// that won't come back after two asks isn't going to on the seventh, and the
+    /// user can flip it from the menu bar — which is a better outcome than a
+    /// permission dialog on every lid open.
     private func restoreRadios() {
         let wantWifi = wifiWasOn
         let wantBT = bluetoothWasOn
         guard wantWifi || wantBT else { return }
+        // Cleared up front: whatever happens below, this wake's restore is spent, and
+        // leaving them set would let a later wake re-run it.
+        wifiWasOn = false
+        bluetoothWasOn = false
 
-        func attempt(_ n: Int) {
+        func issue() {
             if wantWifi && !RadioControl.isWiFiOn { RadioControl.setWiFi(true) }
             if wantBT && !RadioControl.isBluetoothOn { RadioControl.setBluetooth(true) }
-            let wifiOK = !wantWifi || RadioControl.isWiFiOn
-            let btOK = !wantBT || RadioControl.isBluetoothOn
-            if (!wifiOK || !btOK) && n < 6 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { attempt(n + 1) }
-            } else {
-                self.wifiWasOn = false
-                self.bluetoothWasOn = false
-            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { attempt(0) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            issue()
+            // The controller can still be coming up; give it longer than the old 2s
+            // before the one and only retry.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { issue() }
+        }
     }
 
     // MARK: - Sealed Sleep's half of the job
