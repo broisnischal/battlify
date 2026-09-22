@@ -281,3 +281,47 @@ struct SealedSleepTests {
         #expect(cfg.sealedSleepFastWake)
     }
 }
+
+// MARK: - Handover verdict
+
+/// The receipt used to report the drop and nothing else, so a deferral that was booked
+/// and never delivered looked exactly like one that was switched off.
+@Suite("Handover verdict from the measured drop")
+struct HandoverVerdictTests {
+
+    private func result(hours: Double, drop: Int) -> SealedSleepResult {
+        let closedAt = Date(timeIntervalSince1970: 1_000_000)
+        return SealedSleepResult(LidSession(closedAt: closedAt,
+                                            closeCharge: 80,
+                                            openedAt: closedAt.addingTimeInterval(hours * 3600),
+                                            openCharge: 80 - drop))!
+    }
+
+    @Test("no deferral booked means the trickle is expected, not a fault")
+    func neverConfigured() {
+        #expect(result(hours: 7, drop: 1).handover(afterMinutes: 0) == .notConfigured)
+    }
+
+    @Test("a close inside the window has nothing to hand over")
+    func shorterThanTheWindow() {
+        #expect(result(hours: 0.2, drop: 0).handover(afterMinutes: 20) == .tooShortToMatter)
+    }
+
+    @Test("a close only just past the deadline is not judged")
+    func justPastTheDeadline() {
+        // 25 minutes against a 20-minute window: barely any hibernated time to show up in
+        // a whole percentage point.
+        #expect(result(hours: 25.0 / 60.0, drop: 0).handover(afterMinutes: 20) == .tooShortToMatter)
+    }
+
+    @Test("a long close with a flat line means the handover worked")
+    func longAndFlat() {
+        #expect(result(hours: 7, drop: 0).handover(afterMinutes: 20) == .worked)
+    }
+
+    @Test("a long close that still lost a point means memory stayed powered")
+    func longAndDraining() {
+        #expect(result(hours: 7, drop: 1).handover(afterMinutes: 20) == .didNotFire)
+        #expect(result(hours: 22, drop: 2).handover(afterMinutes: 5) == .didNotFire)
+    }
+}

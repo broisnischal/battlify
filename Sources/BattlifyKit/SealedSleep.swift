@@ -320,4 +320,35 @@ public struct SealedSleepResult: Sendable, Equatable {
 
     /// What a night of this costs, for the one comparison people actually make.
     public var overnightPercent: Double { perHour * 8 }
+
+    /// Whether this close drained like one that handed over to hibernation.
+    ///
+    /// The receipt could only ever report the drop, never whether the mechanism that is
+    /// supposed to stop it did anything. Those two failures look identical from the
+    /// outside: a deferral switched off and a deferral that was booked and never
+    /// delivered both show up as the memory trickle, and the only place the difference
+    /// was recorded is a root-owned log. This makes the measurement check the promise.
+    public enum Handover: Sendable, Equatable {
+        /// Instant wake with no handover booked: the trickle is the expected outcome,
+        /// not a fault.
+        case notConfigured
+        /// The close never outlasted the window, so there was nothing to hand over.
+        case tooShortToMatter
+        /// A long close with a flat line. The handover did its job.
+        case worked
+        /// A long close that drained as though memory stayed powered the whole time.
+        case didNotFire
+    }
+
+    /// - Parameter afterMinutes: the configured deferral, 0 meaning never.
+    public func handover(afterMinutes: Int) -> Handover {
+        guard afterMinutes > 0 else { return .notConfigured }
+        // Twice the window before judging: a close that ends just past the deadline has
+        // barely any hibernated time in it to show up in an integer percentage.
+        guard session.duration > Double(afterMinutes) * 60 * 2 else { return .tooShortToMatter }
+        // The gauge reports whole points, and the window's own trickle is a fraction of
+        // one - 20 minutes at 0.2%/h is 0.07%. So on a close this long, any whole point
+        // lost is memory that stayed powered past the deadline.
+        return session.dropPercent == 0 ? .worked : .didNotFire
+    }
 }

@@ -269,9 +269,26 @@ struct SealedSleepPanel: View {
     /// What the last closed-lid stretch actually cost. No projection, no estimate — the
     /// charge was read when the lid shut and again when it opened.
     private func measured(_ result: SealedSleepResult) -> some View {
-        DSNote(icon: result.isEssentiallyZero ? "check" : "chart",
-               tint: result.isEssentiallyZero ? DS.Status.good : .secondary) {
-            Text(measuredText(result))
+        let verdict = result.handover(afterMinutes: chargeLimit.sealedSleepHibernateAfter)
+        // A long close that still drained is the one case where the receipt has to argue
+        // with itself: the switch reads on, the checklist is clear, and the number says
+        // memory stayed powered anyway. Amber, and it says which.
+        let failed = verdict == .didNotFire
+        return DSNote(icon: failed ? "alert" : (result.isEssentiallyZero ? "check" : "chart"),
+                      tint: failed ? DS.Status.attention
+                                   : (result.isEssentiallyZero ? DS.Status.good : .secondary)) {
+            Text(measuredText(result) + handoverSuffix(verdict))
+        }
+    }
+
+    /// What the measurement says about the handover, in the fewest words that are true.
+    private func handoverSuffix(_ verdict: SealedSleepResult.Handover) -> String {
+        switch verdict {
+        case .worked:           return " · hibernated"
+        case .didNotFire:       return " · memory stayed powered"
+        // Nothing to add. "No handover booked" is what the row above already says, and a
+        // close shorter than the window behaving like a short close is not news.
+        case .notConfigured, .tooShortToMatter: return ""
         }
     }
 
