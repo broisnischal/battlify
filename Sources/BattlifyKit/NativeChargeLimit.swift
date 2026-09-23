@@ -13,7 +13,10 @@ import CPowerUI
 /// on wall power, which is what holding is supposed to mean.
 ///
 /// The price is that Apple picks the levels: fixed steps from 80% (80, 85, … 100 today).
-/// Nothing below the floor can be held this way.
+/// And a step is a setpoint, not a ceiling. Below it macOS charges up to it; at it macOS
+/// holds on wall power; above it macOS runs the Mac off the battery down to it, while
+/// `pmset` still says "AC attached" (measured: 85% on an 80% step, 0.1 W from the adapter,
+/// −2.3 A from the battery).
 public final class NativeChargeLimit {
     /// The limits this Mac accepts, ascending. Empty when the feature isn't there.
     public let steps: [Int]
@@ -50,6 +53,23 @@ public final class NativeChargeLimit {
 
     @discardableResult
     public func disable() -> Bool { battlify_powerui_disable() == 0 }
+
+    /// The step to enforce for Battlify's hold and limit together, or nil for none.
+    ///
+    /// The hold rounds *up*: the first step at or above the level it was thrown at. Every
+    /// step is a setpoint, so no step holds a level between two of them, and the choice is
+    /// only which way to miss. Rounding down drains the battery to the step below, which is
+    /// exactly the "battery drops while held" this feature exists to stop. Rounding up
+    /// charges a few points and then holds on wall power with nothing taken from the
+    /// battery. Above the top real step it's no limit at all, which macOS holds at full.
+    ///
+    /// The hold wins over the limit, as it does in the tick's own decision: a limit below
+    /// the held level is a setpoint too, and would drain the battery down to it.
+    public static func target(holdAnchor: Int?, limit: Int?, in steps: [Int]) -> Int? {
+        guard let anchor = holdAnchor else { return limit.flatMap { step(for: $0, in: steps) } }
+        guard let up = steps.first(where: { $0 >= anchor }), up != steps.last else { return nil }
+        return up
+    }
 
     /// The step to enforce for `target`, or nil for "no limit".
     ///

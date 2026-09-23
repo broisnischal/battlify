@@ -45,6 +45,10 @@ final class ChargeLimitStore: ObservableObject {
         NativeChargeLimit.step(for: limit, in: nativeLimitSteps) ?? limit
     }
 
+    /// The level being held right now: macOS's step when it's the one holding (the hold
+    /// rounds up to one, so it isn't the limit), otherwise the limit.
+    var holdingAt: Int { nativeLimitApplied ?? effectiveLimit }
+
     /// Mirror of the daemon's config. Edits are pushed via `apply`.
     @Published var limitEnabled = false
     @Published var limit = 80

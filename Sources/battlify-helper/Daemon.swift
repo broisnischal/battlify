@@ -95,6 +95,10 @@ final class Daemon: @unchecked Sendable {
     /// Plugged in, not taking charge, because the native limit says so. What the app is
     /// told as "held", since there's no SMC flag on this Mac to report instead.
     private var nativeHolding = false
+    /// On the cable but running off the battery, because the battery is above the step
+    /// macOS is holding and macOS brings it down. `pmset` says "AC attached; not charging"
+    /// throughout, so without this the app would show a draining battery as "held".
+    private var nativeDraining = false
 
     /// Whether this Mac exposes an SMC charge-inhibit key. Resolved once the SMC is open.
     /// False disables charge enforcement only — the daemon still serves everything else,
@@ -444,7 +448,8 @@ final class Daemon: @unchecked Sendable {
             pauseReason: lastPauseReason,
             magSafeSupported: charge.isMagSafeSupported,
             dischargeSupported: charge.isAdapterControlSupported,
-            discharging: charge.isAdapterControlSupported && !((try? charge.isAdapterEnabled()) ?? true),
+            discharging: nativeDraining
+                || (charge.isAdapterControlSupported && !((try? charge.isAdapterEnabled()) ?? true)),
             sensors: SensorReader.readAll(),
             hibernateMode: pmset.hibernateMode,
             standbyEnabled: pmset.standby,
@@ -593,6 +598,7 @@ final class Daemon: @unchecked Sendable {
         // nothing, so the answer to "why has it stopped" comes from the lever this Mac does
         // have: macOS's limit, or failing that the adapter hold.
         nativeHolding = nativeApplied != nil && snap.onExternalPower && !adapterCut && !snap.isCharging
+        nativeDraining = nativeHolding && PowerMonitor.read().dischargeWatts > 2
         if !chargeControlSupported {
             lastPauseReason = adapterHolding ? "hold"
                 : nativeHolding ? (cfg.holdCharge ? "hold" : "limit") : nil
@@ -1120,9 +1126,10 @@ final class Daemon: @unchecked Sendable {
             guard holdAnchor == nil, snap.onExternalPower else { return }
             holdAnchor = snap.percentage
             if let native = nativeLimit {
-                let step = native.step(for: snap.percentage) ?? 100
+                let step = NativeChargeLimit.target(holdAnchor: snap.percentage, limit: nil,
+                                                    in: native.steps) ?? 100
                 log(step > snap.percentage
-                    ? "hold: \(snap.percentage)% is below the \(step)% macOS can hold at; stopping at \(step)%"
+                    ? "hold: macOS can't hold \(snap.percentage)%; charging to \(step)% and holding there"
                     : "hold: parking the battery at \(snap.percentage)% (macOS charge limit \(step)%)")
             } else {
                 log("hold: parking the battery at \(snap.percentage)% (no charge-inhibit key; using the adapter)")
@@ -1142,9 +1149,10 @@ final class Daemon: @unchecked Sendable {
     /// Caller holds `lock`.
     private func nativeLimitWanted(_ cfg: BattlifyConfig, bypass: Bool) -> Int? {
         guard let native = nativeLimit else { return nil }
-        if cfg.holdCharge, let anchor = holdAnchor { return native.step(for: anchor) }
-        guard cfg.chargeLimitEnabled, !bypass else { return nil }
-        return native.step(for: cfg.chargeLimit)
+        // A bypass lifts the limit; it never lifts the hold, which wins over the limit anyway.
+        return NativeChargeLimit.target(holdAnchor: cfg.holdCharge ? holdAnchor : nil,
+                                        limit: cfg.chargeLimitEnabled && !bypass ? cfg.chargeLimit : nil,
+                                        in: native.steps)
     }
 
     /// Point macOS's limit at `want`, and only ever take back a limit Battlify set.

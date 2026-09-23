@@ -259,7 +259,7 @@ struct MenuContentView: View {
     private func limitNote(_ snap: BatterySnapshot) -> String? {
         if chargeLimit.isPaused { return "Charging paused" }
         guard chargeLimit.limitEnabled else { return nil }
-        if chargeLimit.isHoldingCharge { return "Holding at \(chargeLimit.effectiveLimit)%" }
+        if chargeLimit.isHoldingCharge { return "Holding at \(chargeLimit.holdingAt)%" }
         if snap.isCharging { return "Charging to \(chargeLimit.effectiveLimit)%" }
         return nil
     }
@@ -449,14 +449,14 @@ struct MenuContentView: View {
         }
     }
 
-    /// What the hold is doing. Under macOS's limit it can only stop on a step from 80%, so
-    /// switched on below that it charges up to the floor first, and saying "Holding the
-    /// level" while the battery climbs would be the panel contradicting the gauge above it.
+    /// What the hold is doing. Under macOS's limit it can only park on a step (80, 85, 90,
+    /// 95), so it rounds up and charges to the step first, and saying "Holding the level"
+    /// while the battery climbs would be the panel contradicting the gauge above it.
     private var holdCaption: String {
-        if let floor = chargeLimit.nativeLimitFloor, battery.snapshot.percentage < floor {
-            return "This Mac holds from \(floor)% up, so it charges to \(floor)% first"
-        }
-        return "Holding the level"
+        guard !chargeLimit.nativeLimitSteps.isEmpty else { return "Holding the level" }
+        let level = battery.snapshot.percentage
+        let at = chargeLimit.nativeLimitApplied ?? 100
+        return at > level ? "Charges to \(at)%, then holds there" : "Holding at \(at)% on wall power"
     }
 
     @ViewBuilder

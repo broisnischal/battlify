@@ -290,7 +290,7 @@ struct SettingsView: View {
                     card("Hold") {
                         toggleRow("Don't charge while plugged in",
                                   chargeLimit.nativeLimitFloor.map {
-                                      "Stops charging and runs on wall power. This Mac can only hold from \($0)%, so below that it charges to \($0)% first."
+                                      "Stops charging and runs on wall power. macOS can only hold this Mac at \(chargeLimit.nativeLimitSteps.filter { $0 < 100 }.map(String.init).joined(separator: ", "))%, so it charges up to the next of those first, from \($0)% at the lowest."
                                   } ?? (chargeLimit.magSafeSupported
                                   ? "Leaves the battery where it is, whatever the limit says."
                                   : "Runs off the adapter and leaves the battery where it is, whatever the limit says."),

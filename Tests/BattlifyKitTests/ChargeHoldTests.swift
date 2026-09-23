@@ -67,3 +67,42 @@ struct MagSafeStatusTests {
                                   adapterCut: false, charging: true) == .off)
     }
 }
+
+@Suite("Hold and limit under macOS's charge limit")
+struct NativeHoldTargetTests {
+    let steps = [80, 85, 90, 95, 100]
+
+    /// Each step is a setpoint: above it macOS drains the battery down to it. Rounding the
+    /// hold down made "don't charge" at 85% drain to 80.
+    @Test("The hold rounds up, never down")
+    func roundsUp() {
+        #expect(NativeChargeLimit.target(holdAnchor: 85, limit: nil, in: steps) == 85)
+        #expect(NativeChargeLimit.target(holdAnchor: 83, limit: nil, in: steps) == 85)
+        #expect(NativeChargeLimit.target(holdAnchor: 86, limit: nil, in: steps) == 90)
+    }
+
+    @Test("Above the top real step the hold is no limit, which macOS holds at full")
+    func aboveTop() {
+        #expect(NativeChargeLimit.target(holdAnchor: 95, limit: nil, in: steps) == 95)
+        #expect(NativeChargeLimit.target(holdAnchor: 97, limit: nil, in: steps) == nil)
+    }
+
+    /// A lower limit would drain a held battery down to it.
+    @Test("The hold wins over a lower limit")
+    func holdWins() {
+        #expect(NativeChargeLimit.target(holdAnchor: 85, limit: 80, in: steps) == 85)
+    }
+
+    @Test("Below the floor the hold stops at the floor")
+    func belowFloor() {
+        #expect(NativeChargeLimit.target(holdAnchor: 70, limit: nil, in: steps) == 80)
+        #expect(NativeChargeLimit.target(holdAnchor: 80, limit: nil, in: steps) == 80)
+    }
+
+    @Test("No hold is just the limit; neither is nothing")
+    func limitOnly() {
+        #expect(NativeChargeLimit.target(holdAnchor: nil, limit: 80, in: steps) == 80)
+        #expect(NativeChargeLimit.target(holdAnchor: nil, limit: 100, in: steps) == nil)
+        #expect(NativeChargeLimit.target(holdAnchor: nil, limit: nil, in: steps) == nil)
+    }
+}
