@@ -24,7 +24,7 @@ struct HistoryView: View {
             case .lid:
                 return "Removes the record of how much the battery drained while the lid was closed. This can't be undone."
             case .all:
-                return "Removes every stored battery history — samples, sessions, and lid records. This can't be undone."
+                return "Removes every stored battery history: samples, sessions, and lid records. This can't be undone."
             }
         }
         var confirmLabel: String {
@@ -54,6 +54,7 @@ struct HistoryView: View {
                     .frame(width: 160)
                     .onChange(of: model.range) { _, _ in model.reload() }
 
+                    exportMenu
                     clearMenu
                 }
 
@@ -82,7 +83,11 @@ struct HistoryView: View {
             .padding(18)
         }
         .scrollIndicators(.hidden)
-        .frame(width: 560, height: 540)
+        // Resizable, with a floor rather than a fixed size. Six sections of charts and
+        // tables in a 560x540 box is a scroll view with everything in it squeezed; the
+        // charts in particular only start reading properly with width to spend.
+        .frame(minWidth: 560, idealWidth: 720, maxWidth: .infinity,
+               minHeight: 520, idealHeight: 660, maxHeight: .infinity)
         .onAppear { model.refresh() }
         .confirmationDialog(
             pendingClear?.title ?? "",
@@ -95,6 +100,46 @@ struct HistoryView: View {
         } message: { target in
             Text(target.message)
         }
+    }
+
+    // MARK: - Export
+
+    /// Save what's on screen as CSV. Exports the currently selected range, so
+    /// the file matches the charts rather than dumping the whole store.
+    private var exportMenu: some View {
+        Menu {
+            Button("Export Samples (CSV)…") {
+                save("battlify-samples", HistoryExport.samplesCSV(model.samples))
+            }
+            .disabled(model.samples.isEmpty)
+            Button("Export Daily Summary (CSV)…") {
+                save("battlify-daily", HistoryExport.dailySummaryCSV(model.dailySummaries))
+            }
+            .disabled(model.dailySummaries.isEmpty)
+            Button("Export Lid Sessions (CSV)…") {
+                save("battlify-lid-sessions", HistoryExport.lidSessionsCSV(model.lidSessions))
+            }
+            .disabled(model.lidSessions.isEmpty)
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!hasAnyHistory)
+        .help("Export battery history as CSV")
+    }
+
+    private func save(_ basename: String, _ csv: String) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(basename).csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.isExtensionHidden = false
+        // The history window is a background (accessory) app window, so bring the
+        // app forward or the panel can open behind whatever has focus.
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? csv.data(using: .utf8)?.write(to: url, options: .atomic)
     }
 
     // MARK: - Clear menu
@@ -141,7 +186,7 @@ struct HistoryView: View {
             }
 
             if !r.hasData {
-                Text("Not enough history yet. Battlify records a sample every 5 minutes — check back after a day or two of use.")
+                Text("Not enough history yet. Battlify records a sample every 5 minutes. Check back after a day or two of use.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -291,7 +336,7 @@ struct HistoryView: View {
         let charging = s.kind == .charging
         return HStack(spacing: 10) {
             Image(systemName: charging ? "bolt.fill" : "battery.75")
-                .foregroundStyle(charging ? Color.green : .secondary)
+                .foregroundStyle(charging ? Color(ChargePalette.accent) : .secondary)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(timeText(s.startAt)).font(.callout)
@@ -302,7 +347,7 @@ struct HistoryView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(deltaText(s))
                     .font(.callout.weight(.semibold))
-                    .foregroundStyle(charging ? Color.green : .primary)
+                    .foregroundStyle(charging ? Color(ChargePalette.accent) : .primary)
                     .monospacedDigit()
                 if let rate = s.ratePerHour {
                     Text(String(format: "%.1f%%/h", rate))
@@ -400,7 +445,7 @@ struct HistoryView: View {
         var parts: [String] = []
         if d.chargingTime > 0 { parts.append("charged \(durationText(d.chargingTime))") }
         if d.batteryTime > 0 { parts.append("on battery \(durationText(d.batteryTime))") }
-        return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+        return parts.isEmpty ? "–" : parts.joined(separator: " · ")
     }
 
     private func tempText(avg: Double?, peak: Double) -> String {

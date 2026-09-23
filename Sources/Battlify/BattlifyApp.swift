@@ -20,13 +20,17 @@ struct BattlifyApp: App {
     @StateObject private var startup = StartupManager()
     @StateObject private var updater = UpdaterManager()
     @StateObject private var actions = SystemActions()
-    @StateObject private var caffeine = CaffeineManager()
+    // `sessionStore` is what lets a live keep-awake survive the app restarting to
+    // install an update — see `CaffeineManager.restoreSessionIfNeeded`.
+    @StateObject private var caffeine = CaffeineManager(sessionStore: .standard)
     @StateObject private var settings = AppSettings()
     @StateObject private var notifier = NotificationManager()
     @StateObject private var network = NetworkProfileStore()
-    @StateObject private var endurance = EnduranceStore()
     @StateObject private var triggers = TriggerStore()
     @StateObject private var hotkeys = HotkeyStore()
+    @StateObject private var restReminder = RestReminder()
+    @StateObject private var overlay = ChargeOverlayController()
+    @StateObject private var idleSaver = IdleSaverStore()
 
     var body: some Scene {
         MenuBarExtra {
@@ -43,13 +47,14 @@ struct BattlifyApp: App {
                 .environmentObject(settings)
                 .environmentObject(notifier)
                 .environmentObject(network)
-                .environmentObject(endurance)
                 .environmentObject(triggers)
                 .environmentObject(hotkeys)
+                .environmentObject(restReminder)
+                .environmentObject(idleSaver)
+                .environmentObject(overlay)
                 .onAppear {
                     network.chargeLimit = chargeLimit
                     automation.chargeLimit = chargeLimit
-                    endurance.start(chargeLimit: chargeLimit)
                 }
         } label: {
             // Its own observing view so it re-renders reliably — a label closure that
@@ -59,7 +64,8 @@ struct BattlifyApp: App {
             MenuBarLabel(battery: battery, chargeLimit: chargeLimit,
                          settings: settings, notifier: notifier, triggers: triggers,
                          hotkeys: hotkeys, caffeine: caffeine, actions: actions,
-                         license: license)
+                         license: license, restReminder: restReminder, overlay: overlay,
+                         idleSaver: idleSaver)
         }
         .menuBarExtraStyle(.window)
 
@@ -69,15 +75,17 @@ struct BattlifyApp: App {
                 .environmentObject(battery)
                 .environmentObject(chargeLimit)
                 .environmentObject(automation)
+                .environmentObject(caffeine)
                 .environmentObject(license)
                 .environmentObject(startup)
                 .environmentObject(updater)
                 .environmentObject(settings)
                 .environmentObject(notifier)
                 .environmentObject(network)
-                .environmentObject(endurance)
                 .environmentObject(triggers)
                 .environmentObject(hotkeys)
+                .environmentObject(overlay)
+                .environmentObject(idleSaver)
         }
         .windowResizability(.contentSize)
 
@@ -93,7 +101,7 @@ struct BattlifyApp: App {
         Window("Battery History", id: "history") {
             HistoryView()
         }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
 
         Window("Activate Battlify", id: "license") {
             LicenseView()
@@ -114,35 +122,55 @@ struct MenuBarLabel: View {
     // Not observed: the label doesn't render from these. They're here because the
     // label is the one view that exists from launch, which is where global shortcuts
     // have to start listening — waiting for the dropdown's first open would mean the
-    // shortcuts silently didn't work until you'd clicked the menu bar once.
+    // shortcuts silently didn't work until you'd clicked the menu bar once. The rest
+    // reminder and Caffeine's power policy start from here for the same reason.
     let hotkeys: HotkeyStore
     let caffeine: CaffeineManager
     let actions: SystemActions
     let license: LicenseManager
+    let restReminder: RestReminder
+    let overlay: ChargeOverlayController
+    let idleSaver: IdleSaverStore
     @Environment(\.openWindow) private var openWindow
 
     /// Animation tick for the menu-bar glyph. Only runs while an animation is visible —
     /// never while discharging (a battery saver shouldn't burn cycles on battery).
-    @State private var animFrame = 0
     @State private var celebrating = false
-    @State private var celebrateTicks = 0
     /// When charging last stopped — to tell "just finished" from arriving full via wake.
     @State private var chargeStoppedAt: Date?
+    /// A one-off connect/disconnect animation, and how far through it we are.
+    @State private var transition: IconTransition?
 
     var body: some View {
         let snap = battery.snapshot
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let celebratingNow = celebrating && !reduceMotion
-        // Success flash is green only when coloring is on; mono blinks by alpha instead.
+        // One source of truth for motion: the system's Reduce Motion, unless the user has
+        // overridden it for this app. Read here so every animation below agrees.
+        let motion = settings.motionAllowed
+        let celebratingNow = celebrating && motion
+        // Plugged in and deliberately not charging. Worth a glyph of its own: without one
+        // the menu bar looks exactly like sitting at the limit, and the whole point of the
+        // switch is that you chose it.
+        // `|| discharging` for the same reason Caffeine's policy needs it: holding the
+        // level on a Mac with no charge-inhibit key means cutting the adapter, and macOS
+        // then reports "Battery Power" — so `isPluggedIn` went false and the icon stopped
+        // showing the hold at precisely the moment the hold was doing something.
+        let holdingNow = chargeLimit.holdCharge
+            && (snap.isPluggedIn || chargeLimit.discharging)
+        // The success flash uses the ramp's own full-charge colour — which is what the
+        // flash means — rather than a stock green that matches nothing else here. Mono
+        // blinks by alpha instead.
         let tint: MenuBarTint =
-            celebratingNow && settings.colorMenuBarIcon ? .colored(.systemGreen)
+            celebratingNow && settings.colorMenuBarIcon
+            ? .colored(NSColor(ChargePalette.legible(1)))
             : settings.colorMenuBarIcon ? tint(for: snap) : .neutral
         // Each tick re-renders the status item, and that relayout measured ~10% of a
         // core sustained — the entire time the Mac was plugged in. So the charging
         // animation is opt-in. The completion flash still runs when it fires: it's
         // bounded to about three seconds, not the whole charge.
-        let animating = !reduceMotion
-            && (celebrating || (settings.animateMenuBarIcon && snap.isCharging))
+        let animating = motion
+            && (celebrating
+                || (settings.animateMenuBarIcon
+                    && (snap.isCharging || settings.batteryIconStyle.animatesOnBattery)))
         // The label renders at launch — a reliable hook to start notification detection.
         notifier.startIfNeeded(settings: settings, battery: battery, chargeLimit: chargeLimit)
         // Same reason, and it has to be here rather than in `onAppear`: a status-item
@@ -150,53 +178,92 @@ struct MenuBarLabel: View {
         // left every one of them dead until the menu had been opened. `attach` is
         // idempotent, so calling it on each body evaluation costs nothing.
         hotkeys.attach(chargeLimit: chargeLimit, caffeine: caffeine,
-                       systemActions: actions, license: license,
+                       systemActions: actions,
+                       idleSaver: idleSaver, settings: settings, license: license,
                        openWindow: { id in
                            NSApplication.shared.activate(ignoringOtherApps: true)
                            openWindow(id: id)
                        })
+        // The label re-renders on every snapshot change, which is exactly when Caffeine's
+        // power policy needs re-evaluating (unplugging must stop it holding the screen
+        // awake and draining). The call is idempotent, so re-sending costs nothing.
+        // `|| discharging`: cutting the adapter to hold a level makes macOS report "Battery
+        // Power" while the cable is still in, and Caffeine reads that as a real unplug —
+        // narrowing its hold to system-only, or ending the session outright if "end on
+        // battery" is set. The hold would have been switching off the very thing the user
+        // asked to keep running, every time it engaged.
+        // Before `applyPolicy`, so a restored hold is reconciled to the real power
+        // source on this same pass rather than sitting at the assumed-AC default.
+        caffeine.restoreSessionIfNeeded()
+        caffeine.applyPolicy(keepDisplayOnBattery: settings.caffeineKeepDisplayOnBattery,
+                             endOnBattery: settings.caffeineEndOnBattery,
+                             onExternalPower: snap.onExternalPower || chargeLimit.discharging)
+        restReminder.startIfNeeded(settings: settings, battery: battery)
+        idleSaver.startIfNeeded(caffeine: caffeine)
         return HStack(spacing: 2) {
-            // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
-            // labels, and the renderer draws the charging bolt inside the glyph.
-            Image(nsImage: BatteryIconRenderer.image(
-                style: settings.batteryIconStyle,
-                percentage: snap.percentage,
-                charging: snap.isCharging,
-                tint: tint,
-                frame: animFrame,
-                celebrating: celebratingNow))
-            if settings.showMenuBarPercentage {
-                Text("\(snap.percentage)%")
+            // Its own view, and that is the whole point: the animation ticks four times a
+            // second, and when the frame lived in this body every tick re-evaluated the
+            // label — twelve observable objects read, five stores poked, the tint and the
+            // help text recomputed — to change one small image. That measured around 13% of
+            // a core, sustained, for as long as the Mac was plugged in. Now a frame change
+            // invalidates the icon and nothing else.
+            MenuBarIcon(style: settings.batteryIconStyle,
+                        percentage: snap.percentage,
+                        charging: snap.isCharging,
+                        tint: tint,
+                        celebrating: celebratingNow,
+                        pluggedIn: snap.isPluggedIn,
+                        holding: holdingNow,
+                        animating: animating,
+                        celebrateEnded: { celebrating = false },
+                        transition: $transition)
+            if let text = labelText(snap) {
+                // Monospaced digits so the item doesn't shift width as it ticks.
+                Text(text).monospacedDigit()
             }
         }
         .help(helpText(snap))
-        // One shared ~0.5s tick; task(id:) cancels it when nothing animates.
-        .task(id: animating) {
-            guard animating else { animFrame = 0; return }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                animFrame &+= 1
-                if celebrating {
-                    celebrateTicks += 1
-                    if celebrateTicks >= 6 {   // ~3 s: three full blinks
-                        celebrating = false
-                        celebrateTicks = 0
-                    }
-                }
-            }
-        }
         // Record when charging stops, *before* the completion check below reads it.
         .onChange(of: snap.isCharging) { old, new in
             if old && !new { chargeStoppedAt = Date() }
         }
         // Flash only when it lands full/at-limit right after charging, not on wake-already-holding.
         .onChange(of: chargeComplete(snap)) { _, done in
-            guard done, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
             let justCharged = snap.isCharging
                 || (chargeStoppedAt.map { Date().timeIntervalSince($0) < 120 } ?? false)
-            guard justCharged else { return }
+            guard done, justCharged else { return }
+            if settings.hapticsEnabled { HapticFeedback.limitReached() }
+            if settings.soundAllowed {
+                ChargeSound.play(.complete, volume: settings.soundVolume,
+                                 theme: settings.soundTheme)
+            }
+            guard settings.motionAllowed else { return }
             celebrating = true
-            celebrateTicks = 0
+        }
+        // Held on or off: morph the bolt into a pause mark and back.
+        .onChange(of: holdingNow) { was, isNow in
+            guard was != isNow, settings.motionAllowed else { return }
+            transition = isNow ? .heldOn : .heldOff
+        }
+        // Plug and unplug feedback. Driven off the snapshot rather than a power-source
+        // callback of its own: this view already re-renders on every snapshot change, and
+        // `onChange` fires once per real transition rather than on every poll.
+        .onChange(of: snap.isPluggedIn) { was, isNow in
+            guard was != isNow else { return }
+            if settings.hapticsEnabled {
+                isNow ? HapticFeedback.chargeConnected() : HapticFeedback.chargeDisconnected()
+            }
+            if settings.soundAllowed {
+                ChargeSound.play(isNow ? .connect : .disconnect, volume: settings.soundVolume,
+                                 theme: settings.soundTheme)
+            }
+            guard ChargeOverlayFeature.shipped, settings.chargeOverlayEnabled,
+                  isNow || settings.chargeOverlayOnUnplug else { return }
+            overlay.show(style: settings.chargeOverlayStyle,
+                         duration: settings.chargeOverlayDuration,
+                         percentage: snap.percentage,
+                         plugging: isNow,
+                         allowMotion: settings.motionAllowed)
         }
         // The status item exists from launch, so this is where the automation
         // rules start watching — they must run whether or not the menu is opened.
@@ -204,18 +271,28 @@ struct MenuBarLabel: View {
     }
 
     /// Truly full, or held at the user's charge limit.
+    ///
+    /// Both halves of the old test failed on a Mac with no charge-inhibit key: charging is
+    /// always reported enabled there, and the reason the daemon gives for an adapter hold
+    /// is "hold", not "limit". So the icon never once showed a limit being honoured on that
+    /// hardware. `isHoldingCharge` asks the question without naming a lever.
     private func chargeComplete(_ snap: BatterySnapshot) -> Bool {
-        snap.isFullyCharged
-            || (chargeLimit.limitEnabled && !chargeLimit.chargingEnabled
-                && chargeLimit.pauseReason == "limit")
+        snap.isFullyCharged || (chargeLimit.limitEnabled && chargeLimit.isHoldingCharge)
     }
 
-    /// Red when warm or critically low, green charging, otherwise neutral.
+    /// Red when warm or critically low, the red-yellow-green ramp on power, neutral on
+    /// battery.
+    ///
+    /// Colour is reserved for the states it can say something about. On the adapter the
+    /// ramp is a reading — how far up it has got, and whether that's good news. On battery
+    /// the same green would be claiming everything is fine about a number that is only
+    /// going down, which is why an unplugged Mac at 80% draws in the menu bar's own
+    /// colour and says nothing until it drops far enough to be worth a red.
     private func tint(for snap: BatterySnapshot) -> MenuBarTint {
         if isWarm(snap) { return .colored(.systemRed) }
         if snap.percentage <= 20 && !snap.isPluggedIn { return .colored(.systemRed) }
-        if snap.isCharging { return .colored(.systemGreen) }
-        return .neutral
+        guard snap.isPluggedIn else { return .neutral }
+        return .colored(NSColor(ChargePalette.legible(Double(snap.percentage) / 100)))
     }
 
     /// Held for heat, or genuinely hot (≥40 °C) even with heat-pause off.
@@ -225,20 +302,48 @@ struct MenuBarLabel: View {
         return false
     }
 
+    /// Text beside the icon, per the display preference. Time-remaining falls back
+    /// to the percentage when macOS has no estimate (right after a plug change, or
+    /// while holding at the limit) rather than blanking out.
+    private func labelText(_ snap: BatterySnapshot) -> String? {
+        let mode = settings.menuBarDisplay
+        let pct = mode.showsPercentage ? "\(snap.percentage)%" : nil
+        let time = mode.showsTime ? remainingText(snap) : nil
+        switch (pct, time) {
+        case let (p?, t?):  return "\(p) · \(t)"
+        case let (p?, nil): return p
+        case let (nil, t?): return t
+        case (nil, nil):    return mode.showsTime ? "\(snap.percentage)%" : nil
+        }
+    }
+
+    /// "1:25" — time to full while charging, time to empty on battery. Nil when
+    /// macOS hasn't got an estimate (it reports −1 while recalculating, which
+    /// `BatteryMonitor` already drops).
+    private func remainingText(_ snap: BatterySnapshot) -> String? {
+        let minutes = snap.isCharging ? snap.timeToFull : snap.timeToEmpty
+        guard let minutes, minutes > 0 else { return nil }
+        return String(format: "%d:%02d", minutes / 60, minutes % 60)
+    }
+
     private func helpText(_ snap: BatterySnapshot) -> String {
-        if !chargeLimit.chargingEnabled, let reason = chargeLimit.pauseReason {
+        // `isHoldingCharge`, not `!chargingEnabled`: a Mac with no charge-inhibit key
+        // always reports charging as enabled, so this whole block never ran there and the
+        // menu-bar tooltip explained none of it. Same fix as the panel's hint rows.
+        if chargeLimit.isHoldingCharge, let reason = chargeLimit.pauseReason {
             switch reason {
-            case "limit":    return "Holding at \(chargeLimit.limit)% limit"
-            case "heat":     return "Charging paused — battery warm"
+            case "limit":    return "Holding at \(chargeLimit.holdingAt)% limit"
+            case "hold":     return "Holding the level where it is"
+            case "heat":     return "Charging paused, battery warm"
             case "settling": return "Settling after wake"
             case "paused":   return "Charging paused"
             case "sleep":    return "Charging cut for sleep"
             default: break
             }
         }
-        if snap.isCharging  { return "Charging — \(snap.percentage)%" }
-        if snap.isPluggedIn { return "Plugged in — \(snap.percentage)%" }
-        return "On battery — \(snap.percentage)%"
+        if snap.isCharging  { return "Charging · \(snap.percentage)%" }
+        if snap.isPluggedIn { return "Plugged in · \(snap.percentage)%" }
+        return "On battery · \(snap.percentage)%"
     }
 
 }
@@ -273,10 +378,91 @@ extension BatterySnapshot {
         }
     }
 
-    /// Green charging, red when critically low, otherwise neutral.
+    /// The ramp on power, red when critically low, neutral on battery. Mirrors
+    /// `tint(for:)` — the two must agree or the preview lies about the menu bar.
     var menuBarTint: MenuBarTint {
-        if isCharging { return .colored(.systemGreen) }
         if percentage <= 20 && !isPluggedIn { return .colored(.systemRed) }
-        return .neutral
+        guard isPluggedIn else { return .neutral }
+        return .colored(NSColor(ChargePalette.legible(Double(percentage) / 100)))
+    }
+}
+
+/// The menu-bar glyph and its clocks, kept apart from the label that surrounds it.
+///
+/// Two reasons it is its own view. The animation ticks four times a second, and a frame
+/// number living in the parent meant the entire label re-evaluated on every tick — every
+/// observable object it reads, every store call it makes — to change one 24pt image; that
+/// was around 13% of a core for as long as the Mac was plugged in. And the tick now stops
+/// when the screens are asleep: a lid shut on a charger was animating a glyph that nobody
+/// could see, four times a second, until it was opened again.
+private struct MenuBarIcon: View {
+    let style: BatteryIconStyle
+    let percentage: Int
+    let charging: Bool
+    let tint: MenuBarTint
+    let celebrating: Bool
+    let pluggedIn: Bool
+    let holding: Bool
+    let animating: Bool
+    /// Called when the completion flash has run its ~3 seconds; the parent owns that flag
+    /// because the tint depends on it.
+    let celebrateEnded: () -> Void
+    @Binding var transition: IconTransition?
+
+    @State private var animFrame = 0
+    @State private var celebrateTicks = 0
+    @State private var transitionStep = 0
+    @State private var screensAsleep = false
+
+    private var running: Bool { animating && !screensAsleep }
+
+    var body: some View {
+        // Drawn as an NSImage: SwiftUI's .foregroundStyle is overridden for status-item
+        // labels, and the renderer draws the charging bolt inside the glyph.
+        Image(nsImage: BatteryIconRenderer.image(
+            style: style,
+            percentage: percentage,
+            charging: charging,
+            tint: tint,
+            frame: animFrame,
+            celebrating: celebrating,
+            pluggedIn: pluggedIn,
+            holding: holding,
+            transition: transition,
+            transitionStep: transitionStep))
+        // One shared tick; task(id:) cancels it when nothing animates. 250ms — twice the
+        // rate of the old 500ms, because a six-step sweep at 2fps reads as a slideshow no
+        // matter how it's eased.
+        .task(id: running) {
+            guard running else { animFrame = 0; return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                animFrame &+= 1
+                if celebrating {
+                    celebrateTicks += 1
+                    if celebrateTicks >= 12 {   // ~3 s at 250ms, as before
+                        celebrateTicks = 0
+                        celebrateEnded()
+                    }
+                }
+            }
+        }
+        // The transition runs on its own clock: the shared tick is far too slow to read as
+        // a morph, and this only lasts about half a second.
+        .task(id: transition) {
+            guard transition != nil else { transitionStep = 0; return }
+            for step in 0..<BatteryIconRenderer.transitionSteps {
+                transitionStep = step
+                try? await Task.sleep(
+                    nanoseconds: UInt64(BatteryIconRenderer.transitionStepDuration * 1_000_000_000))
+                if Task.isCancelled { return }
+            }
+            transition = nil
+            transitionStep = 0
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.screensDidSleepNotification)) { _ in screensAsleep = true }
+        .onReceive(NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.screensDidWakeNotification)) { _ in screensAsleep = false }
     }
 }

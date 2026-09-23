@@ -68,19 +68,28 @@ else
     echo "==> actool unavailable — shipping loose .icns only (notification icon needs a CI build)"
 fi
 
-# Bundle the helper + daemon plist + installer so the app can self-install it.
-cp "$BIN_DIR/battlify-helper" "$CONTENTS/Resources/battlify-helper"
+# The helper lives in MacOS/, not Resources/, because SMAppService runs it straight out of
+# the bundle via the BundleProgram path below — and a bundle-relative daemon is the whole
+# reason app updates no longer need to reinstall anything. Contents/MacOS is also where a
+# nested executable belongs for signing.
+mkdir -p "$CONTENTS/Library/LaunchDaemons"
+cp "$BIN_DIR/battlify-helper" "$CONTENTS/MacOS/battlify-helper"
+cp "$REPO_DIR/scripts/com.battlify.helper.daemon.plist" \
+   "$CONTENTS/Library/LaunchDaemons/com.battlify.helper.plist"
+
+# The legacy plist and the scripts stay bundled: they're the fallback for unsigned builds
+# and for Macs that already run the /usr/local/bin daemon.
 cp "$REPO_DIR/scripts/com.battlify.helper.plist" "$CONTENTS/Resources/"
 cp "$REPO_DIR/scripts/install-helper-bundled.sh" "$CONTENTS/Resources/"
 cp "$REPO_DIR/scripts/uninstall-helper.sh" "$CONTENTS/Resources/"
-chmod 755 "$CONTENTS/Resources/battlify-helper" \
+chmod 755 "$CONTENTS/MacOS/battlify-helper" \
           "$CONTENTS/Resources/install-helper-bundled.sh" \
           "$CONTENTS/Resources/uninstall-helper.sh"
 
 # Strip local/debug symbols before signing (must precede codesign or it would
 # invalidate the signature). -x keeps external symbols, so nothing breaks.
 strip -x "$CONTENTS/MacOS/Battlify"
-strip -x "$CONTENTS/Resources/battlify-helper"
+strip -x "$CONTENTS/MacOS/battlify-helper"
 
 # Info.plist — LSUIElement makes it a menu-bar-only (agent) app.
 cat > "$CONTENTS/Info.plist" <<PLIST
@@ -121,8 +130,15 @@ else
     SIGN_FLAGS=(--force --options runtime --timestamp --sign "$IDENTITY")
 fi
 
+# `strip` rewrites each binary rather than editing it, so the result carries the shell's
+# umask and not the modes set when they were copied in — 0700 by default, which ships an
+# app only its builder can run and a daemon binary root has to be lucky to execute. Fix
+# the whole bundle here, after stripping and before signing.
+chmod 755 "$CONTENTS/MacOS/Battlify" "$CONTENTS/MacOS/battlify-helper"
+chmod -R go+rX "$APP_DIR"
+
 # Sign nested executables first, then the app bundle (no deprecated --deep).
-codesign "${SIGN_FLAGS[@]}" "$CONTENTS/Resources/battlify-helper"
+codesign "${SIGN_FLAGS[@]}" "$CONTENTS/MacOS/battlify-helper"
 codesign "${SIGN_FLAGS[@]}" "$APP_DIR"
 codesign --verify --strict --verbose=2 "$APP_DIR" || echo "warning: verify failed"
 

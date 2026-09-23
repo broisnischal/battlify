@@ -5,10 +5,20 @@ import BattlifyKit
 /// persist system-wide, so set once — no continuous enforcement.
 enum PowerSettings {
 
-    /// Current values for the exposed keys, parsed from `pmset -g custom`; each toggle
-    /// is read from the section matching its scope (battery/AC).
-    static func readToggles() -> [String: Bool] {
-        guard let out = Shell.run("/usr/bin/pmset", ["-g", "custom"]) else { return [:] }
+    /// One `pmset -g custom` read, so the several things parsed out of it cost one fork
+    /// between them rather than one each.
+    static func readCustom() -> String? {
+        Shell.run("/usr/bin/pmset", ["-g", "custom"])
+    }
+
+    /// Every key `pmset -g custom` prints, split by power source.
+    ///
+    /// Raw strings rather than parsed values: the keys here are a mix of booleans,
+    /// minutes and mode numbers, and the callers know which is which. A missing key means
+    /// this Mac doesn't expose the setting at all — `pmset -g cap` and this agree, and an
+    /// absent key is very different from one reading 0.
+    static func readValues(from custom: String? = nil) -> (battery: [String: String], ac: [String: String]) {
+        guard let out = custom ?? readCustom() else { return ([:], [:]) }
         var battery: [String: String] = [:]
         var ac: [String: String] = [:]
         var section = 0 // 0 = none, 1 = battery, 2 = AC
@@ -25,10 +35,16 @@ enum PowerSettings {
             let value = String(parts[parts.count - 1])
             if section == 1 { battery[key] = value } else { ac[key] = value }
         }
+        return (battery, ac)
+    }
 
+    /// Current values for the exposed toggles; each is read from the section matching
+    /// its scope (battery/AC).
+    static func readToggles(from custom: String? = nil) -> [String: Bool] {
+        let values = readValues(from: custom)
         var result: [String: Bool] = [:]
         for toggle in PowerToggle.allCases {
-            let source = toggle.scope == .ac ? ac : battery
+            let source = toggle.scope == .ac ? values.ac : values.battery
             if let value = source[toggle.rawValue] {
                 result[toggle.rawValue] = (value == "1")
             }
@@ -53,16 +69,14 @@ enum PowerSettings {
         return nil
     }
 
-    /// Apply a sleep depth. Hibernating only engages while `standby` is allowed, so
-    /// deep sleep asserts that too. Requires root; returns false when pmset refuses
-    /// (not every Mac accepts every hibernatemode).
+    /// Write one `pmset` key on every power source. Requires root.
+    ///
+    /// The return value says the call succeeded, which is not the same as the setting
+    /// having changed — `pmset` exits 0 for keys a Mac silently ignores. Anything that
+    /// cares reads the value back; see `SealedSleepController.apply`.
     @discardableResult
-    static func setSleepDepth(_ depth: SleepDepth) -> Bool {
-        guard Shell.run("/usr/bin/pmset",
-                        ["-a", "hibernatemode", String(depth.hibernateMode)]) != nil
-        else { return false }
-        if depth == .deep { Shell.run("/usr/bin/pmset", ["-a", "standby", "1"]) }
-        return true
+    static func setKey(_ key: String, _ value: String, scope: PowerToggle.Scope = .all) -> Bool {
+        Shell.run("/usr/bin/pmset", [scope.rawValue, key, value]) != nil
     }
 
     /// Disable *all* sleep — idle and clamshell — the only way to keep running with the

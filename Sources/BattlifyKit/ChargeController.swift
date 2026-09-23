@@ -8,6 +8,23 @@ public enum MagSafeLED: UInt8, Sendable {
     case orange = 0x04   // charging
 }
 
+extension MagSafeLED {
+    /// The colour Status mode shows, the way a Mac's own light reads: amber while the
+    /// battery takes charge, green on the cable when it doesn't, whatever the reason
+    /// (full, held at a limit, or the adapter cut to hold the level).
+    ///
+    /// Hold is green rather than amber because amber is charging; using it for
+    /// "deliberately not charging" made the two states identical. The SMC offers only
+    /// off, green and amber.
+    public static func status(settling: Bool, onExternalPower: Bool,
+                              adapterCut: Bool, charging: Bool) -> MagSafeLED {
+        if settling { return .off }                  // waiting after wake
+        if !onExternalPower { return .system }       // truly unplugged
+        if adapterCut { return .green }              // cable in, running off the battery
+        return charging ? .orange : .green
+    }
+}
+
 /// Controls whether the battery is allowed to charge, abstracting over the two
 /// SMC schemes Apple Silicon uses:
 ///   - Pre-Tahoe: 1-byte keys CH0B + CH0C (0x00 = charge, 0x02 = stop)
@@ -41,8 +58,17 @@ public final class ChargeController {
     private lazy var cachedUsesLegacyKeys: Bool = smc.keyExists(ch0b) && smc.keyExists(ch0c)
     private lazy var cachedHasChte: Bool = smc.keyExists(chte)
     private lazy var cachedMagSafeSupported: Bool = smc.keyExists(aclc)
-    private lazy var cachedChargingControlSupported: Bool =
-        smc.keyExists(ch0b) || smc.keyExists(ch0c) || cachedHasChte
+    /// The same key set `isChargingEnabled`, `enableCharging` and `disableCharging`
+    /// actually use — both legacy keys, or CHTE.
+    ///
+    /// It was `ch0b || ch0c || chte`, which is a different question. A Mac exposing only
+    /// one of the legacy pair answered yes here and then failed every read and write: the
+    /// legacy path needs both, so `usesLegacyKeys` was false and all three calls went to a
+    /// CHTE that isn't there. The daemon reported charge control as supported, the app
+    /// offered the limit, and every enforcement attempt threw into a `try?`.
+    /// `schemeDescription` already told the truth about that Mac — it says "unsupported"
+    /// for exactly this case — so the two were contradicting each other.
+    private lazy var cachedChargingControlSupported: Bool = cachedUsesLegacyKeys || cachedHasChte
     private lazy var cachedHasAcw: Bool = smc.keyExists(acw)
 
     // MARK: - AC / wall power presence

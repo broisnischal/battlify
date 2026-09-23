@@ -5,18 +5,20 @@ import Foundation
 @Suite("Config compatibility")
 struct ConfigCompatibilityTests {
 
-    @Test("A config written while fan boost existed still loads")
+    @Test("A config written while fan control existed still loads")
     func decodesConfigWithRemovedFanKeys() throws {
-        // Fan boost shipped in a build that wrote these keys. Removing the feature
-        // must not brick those configs — the rest has to decode as normal.
+        // Two generations of fan feature wrote keys here — fan boost, then fan control.
+        // Both are gone, and removing them must not brick the configs they left behind:
+        // the rest has to decode as normal.
         let json = #"""
         {"chargeLimitEnabled":true,"chargeLimit":75,"sleepDepth":"deep",
+         "fanMode":{"manual":{"percent":40}},"fanAutoAboveTempC":85,
          "fanBoostEnabled":true,"fanBoostPercent":70,
          "fanBoostMinCpu":40,"fanBoostOnlyWhenKeepAwake":true}
         """#
         let config = try JSONDecoder().decode(BattlifyConfig.self, from: Data(json.utf8))
         #expect(config.chargeLimitEnabled)
         #expect(config.chargeLimit == 75)
-        #expect(config.sleepDepth == .deep)
+        #expect(config.sealedSleep)   // migrated from the old sleepDepth key
     }
 }

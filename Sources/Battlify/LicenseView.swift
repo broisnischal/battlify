@@ -34,7 +34,7 @@ struct LicenseView: View {
 
     @ViewBuilder
     private var licensedView: some View {
-        Text("Thanks for buying Battlify — every feature is unlocked.")
+        Text("Thanks for buying Battlify. Every feature is unlocked.")
             .font(.callout).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         HStack {
@@ -48,9 +48,9 @@ struct LicenseView: View {
     private var pricingView: some View {
         VStack(alignment: .leading, spacing: 12) {
             pricePoint(icon: "gift", tint: .secondary, title: "Free for 30 days",
-                       body: "Your free days are only used up when you actually use Battlify — so you get the most out of them, stress-free.")
+                       body: "Your free days are only used up when you actually use Battlify, so you get the most out of them, stress-free.")
             pricePoint(icon: "checkmark.seal", tint: .secondary, title: "$2.99 to own",
-                       body: "One-time payment, no subscriptions. Quick checkout — pay with Apple Pay.")
+                       body: "One-time payment, no subscriptions. Quick checkout with Apple Pay.")
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -82,7 +82,7 @@ struct LicenseView: View {
         if !license.deviceCode.isEmpty {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Your device code — enter it at checkout")
+                    Text("Your device code. Enter it at checkout")
                         .font(.caption).foregroundStyle(.secondary)
                     Text(license.deviceCode)
                         .font(.system(.callout, design: .monospaced).weight(.medium))
@@ -110,7 +110,6 @@ struct LicenseView: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...3)
                 .font(.system(.callout, design: .monospaced))
-                .disabled(license.verifying)
         }
 
         if let err = license.lastError {
@@ -120,15 +119,15 @@ struct LicenseView: View {
         }
 
         HStack {
-            Link("Buy Battlify — $2.99", destination: buyURL)
+            Link("Buy Battlify · $2.99", destination: buyURL)
                 .font(.callout.weight(.medium))
             Spacer()
-            if license.verifying {
-                ProgressView().controlSize(.small)
-            }
+            // No progress spinner: `activate()` is offline Ed25519 verification and returns
+            // in well under a frame. The `verifying` flag that gated one here was never set
+            // by anything, so the spinner and the two disabled states were unreachable —
+            // a loading phase the app doesn't have.
             Button("Activate") { license.activate() }
                 .keyboardShortcut(.defaultAction)
-                .disabled(license.verifying)
         }
     }
 }

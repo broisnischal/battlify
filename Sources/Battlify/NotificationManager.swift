@@ -85,11 +85,14 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
                 guard let self else { return }
                 switch status {
                 case .authorized, .provisional:
-                    self.post("test", "Battlify", "Notifications are working.")
+                    self.post("test", "Battlify", "Notifications are working.", icon: "check")
                 case .notDetermined:
                     self.center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
                         Task { @MainActor in
-                            if granted { self.post("test", "Battlify", "Notifications are working.") }
+                            if granted {
+                                self.post("test", "Battlify", "Notifications are working.",
+                                          icon: "check")
+                            }
                             else { self.showDeniedAlert() }
                         }
                     }
@@ -139,7 +142,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// Evaluate current state and fire notifications for new transitions. Idempotent.
     func evaluate(settings: AppSettings, battery: BatteryStore, chargeLimit: ChargeLimitStore) {
         let snap = battery.snapshot
-        let reason = chargeLimit.chargingEnabled ? nil : chargeLimit.pauseReason
+        // `isHoldingCharge`, not `!chargingEnabled`. A Mac with no SMC charge-inhibit key
+        // always reports charging as enabled, so `reason` was permanently nil there and
+        // neither "Charge limit reached" nor "Charging paused, battery warm" could ever
+        // fire — on the hardware that holds the level by cutting the adapter instead.
+        let reason = chargeLimit.isHoldingCharge ? chargeLimit.pauseReason : nil
         let low = !snap.isPluggedIn && snap.percentage <= lowThreshold
         let full = snap.isFullyCharged
 
@@ -158,29 +165,38 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             switch reason {
             case "heat":
                 post("heat", "Charging paused",
-                     "Your battery is warm — charging paused to protect it.")
+                     "Your battery is warm, so charging is paused to protect it.",
+                     icon: "thermometer")
             case "limit":
                 post("limit", "Charge limit reached",
-                     "Holding at \(chargeLimit.limit)% to reduce battery wear.")
+                     "Holding at \(chargeLimit.effectiveLimit)% to reduce battery wear.",
+                     icon: "battery")
             default:
                 break   // "paused"/"settling"/"sleep" are user- or system-driven
             }
         }
 
         if low && !lastLow {
-            post("low", "Low battery", "\(snap.percentage)% remaining — plug in soon.")
+            post("low", "Low battery", "\(snap.percentage)% remaining. Plug in soon.",
+                 icon: "batteryLow")
         }
         if full && !lastFull {
-            post("full", "Battery full", "Charged to 100%.")
+            post("full", "Battery full", "Charged to 100%.", icon: "check")
         }
     }
 
     /// Deliver a notification, replacing any prior one of the same category.
-    private func post(_ id: String, _ title: String, _ body: String) {
+    private func post(_ id: String, _ title: String, _ body: String, icon: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
+        // A glyph for what happened. macOS owns the big left-hand icon — that's always the
+        // app's — so this lands as the thumbnail on the right, the only per-notification
+        // image an app is allowed. Better than four identical banners.
+        if let icon, let attachment = NotificationIcon.attachment(icon, identifier: "battlify.\(id).icon") {
+            content.attachments = [attachment]
+        }
         // Group all Battlify alerts under one thread in Notification Center.
         content.threadIdentifier = "battlify"
         let ident = "battlify.\(id)"

@@ -59,7 +59,6 @@ final class LicenseManager: ObservableObject {
     @Published private(set) var state: State = .trial(daysLeft: 30)
     @Published var enteredKey: String = ""
     @Published private(set) var lastError: String?
-    @Published private(set) var verifying = false
 
     /// Premium controls unlocked (active trial or valid license).
     var isPro: Bool {
@@ -159,7 +158,7 @@ final class LicenseManager: ObservableObject {
     var statusText: String {
         switch state {
         case .licensed(let name): return "Licensed · \(name)"
-        case .trial(let d): return "Trial — \(d) free day\(d == 1 ? "" : "s") left"
+        case .trial(let d): return "Trial · \(d) free day\(d == 1 ? "" : "s") left"
         case .expired: return "Trial ended"
         }
     }

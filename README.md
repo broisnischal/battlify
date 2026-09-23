@@ -66,13 +66,32 @@ that gap two ways, and you choose which:
   while charging settles. Or force it **off**, or hand it back to macOS — three
   modes, your call. Only shows up on Macs that have a controllable LED.
 
-**Save modes & lid automation**
+**Sealed Sleep — a closed lid that costs nothing**
+
+A closed Mac isn't off. Memory stays powered for as long as the lid is shut, and
+macOS wakes the machine on a timer to run maintenance, check the network, and answer
+Find My. Each wake is seconds; over a weekend they're the difference between the
+number you closed on and a number you didn't expect.
+
+- **One switch** powers memory down to disk (`hibernatemode 25`) and turns off every
+  wake source behind it — Power Nap, wake-for-network, TCP keep-alive, terminal
+  sessions — plus Wi-Fi and Bluetooth as the lid actually closes.
+- **A checklist, not a claim.** Nine named causes of closed-lid drain, each shown as
+  sealed or still costing you something. Two of them Battlify won't decide for you:
+  Find My can't reach a sealed Mac, and a keep-awake you deliberately turned on stays
+  turned on until you say otherwise.
+- **Measured, not estimated.** The charge is read when the lid shuts and again when it
+  opens, so the panel reports what the last close actually cost, per hour and per night.
+- **Reversible.** Every setting it displaces is snapshotted going in and written back
+  when you switch it off.
+
+The cost is honest and it's the reason this is a switch rather than a default: opening
+the lid takes fifteen to thirty seconds while memory is read back from disk.
+
+**Save modes**
 
 - **One-tap Save Modes** — *Off / Normal / Super Saver* flip a whole bundle of
   settings at once instead of hunting through toggles.
-- **Super Save when the lid closes** — closing the lid drops into maximum savings
-  (Low Power Mode, sleep wake-ups off, Wi-Fi and Bluetooth off) and opening it puts
-  everything back the way you left it.
 - **Sleep & Idle controls** — Power Nap, wake-for-network, and TCP keep-alive are
   the settings that silently wake your Mac in a bag. Turn them off from one place.
 
@@ -108,7 +127,11 @@ change is never a mystery.
 - **Battery Health** card with the numbers that matter (cycle count, capacity,
   temperature) and plain-language tips.
 - **Usage history** charts, plus a per-close readout of how much charge a closed-lid
-  session actually cost you.
+  session actually cost you — exportable as CSV (samples, daily summary, lid sessions).
+- **Power adapter card** showing what's actually feeding the Mac: negotiated wattage,
+  voltage and current, and the adapter's own maximum. If your adapter can give more
+  than the Mac negotiated, it tells you — that gap is nearly always the cable.
+- **Menu bar, your way** — icon only, percentage, time remaining, or both.
 - **Lid / clamshell sensor** that warns you when you're docked-and-closed at a high
   charge — the worst-case aging scenario.
 - **Quick Actions** — dim or brighten the display, blank it, or sleep the Mac.

@@ -1,7 +1,7 @@
 import Foundation
 
 /// A lid-closed period: charge at close, charge at open, and the drain in between.
-public struct LidSession: Codable, Sendable, Identifiable {
+public struct LidSession: Codable, Sendable, Equatable, Identifiable {
     public var closedAt: Date
     public var closeCharge: Int
     public var openedAt: Date

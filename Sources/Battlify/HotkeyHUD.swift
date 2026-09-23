@@ -8,6 +8,8 @@ import AppKit
 private final class NotificationModel: ObservableObject {
     @Published var title = ""
     @Published var detail: String?
+    /// HugeIcons key for the glyph in the icon tile (nil = fall back to the app icon).
+    @Published var icon: String?
 }
 
 /// The notification a global shortcut posts so it's obvious it fired.
@@ -39,11 +41,12 @@ final class HotkeyHUD {
 
     private init() {}
 
-    func show(_ title: String, detail: String? = nil) {
+    func show(_ title: String, detail: String? = nil, icon: String? = nil) {
         dismissal?.cancel()
 
         model.title = title
         model.detail = detail
+        model.icon = icon
 
         let panel = self.panel ?? makePanel()
         self.panel = panel
@@ -156,18 +159,7 @@ private struct NotificationView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // The app icon is what makes this read as a notification rather than a
-            // bespoke overlay. Rounded to match how the system masks app icons.
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 38, height: 38)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                // Pure white/black at low opacity — a tinted outline picks up the
-                // material behind it and reads as grime on the icon's edge.
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .strokeBorder(.primary.opacity(0.08), lineWidth: 1)
-                )
+            iconTile
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.title)
@@ -190,6 +182,35 @@ private struct NotificationView: View {
         .overlay(shape.strokeBorder(.primary.opacity(0.07), lineWidth: 1))
         // Clip so the material can't bleed past the corners over the window shadow.
         .clipShape(shape)
+    }
+
+    /// A tile the size and shape of the app icon a notification would show, holding the
+    /// glyph of whatever just happened — the icon says "force discharge" or "charge
+    /// limit" before the title is read, which the app icon (identical every time)
+    /// never could. Same geometry either way, so nothing shifts when a message has no
+    /// glyph and falls back to the app icon.
+    @ViewBuilder
+    private var iconTile: some View {
+        if let key = model.icon {
+            HugeIcon(key, size: 21, weight: 1.9)
+                .foregroundStyle(.primary.opacity(0.85))
+                .frame(width: 38, height: 38)
+                .background(.primary.opacity(0.06), in: tileShape)
+                // Pure white/black at low opacity — a tinted outline picks up the
+                // material behind it and reads as grime on the tile's edge.
+                .overlay(tileShape.strokeBorder(.primary.opacity(0.08), lineWidth: 1))
+        } else {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 38, height: 38)
+                .clipShape(tileShape)
+                .overlay(tileShape.strokeBorder(.primary.opacity(0.08), lineWidth: 1))
+        }
+    }
+
+    /// Concentric with the banner: 18 outer − 14 of padding ≈ 9 at the icon.
+    private var tileShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
     }
 
     /// Matches the radius the system uses on notification banners.

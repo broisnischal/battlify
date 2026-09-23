@@ -15,6 +15,7 @@ struct DetailsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 statsCard(snap)
                 powerFlowCard
+                adapterCard
                 systemCard
                 healthCard(snap)
                 energyCard
@@ -49,23 +50,23 @@ struct DetailsView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     GeometryReader { geo in
                         HStack(spacing: 2) {
-                            Rectangle().fill(Color.orange)
+                            Rectangle().fill(Color(ChargePalette.systemDraw))
                                 .frame(width: geo.size.width * sys / total)
-                            Rectangle().fill(Color.green)
+                            Rectangle().fill(Color(ChargePalette.accent))
                                 .frame(width: geo.size.width * chg / total)
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
                     .frame(height: 10)
                     HStack(spacing: 16) {
-                        splitTag(.orange, "System", sys, total)
-                        splitTag(.green, "Into battery", chg, total)
+                        splitTag(Color(ChargePalette.systemDraw), "System", sys, total)
+                        splitTag(Color(ChargePalette.accent), "Into battery", chg, total)
                         Spacer()
                     }
                 }
 
                 if chg > 0.5 {
-                    Text("\(watts(chg)) of the \(watts(adapter)) from the adapter is charging the battery — \(pct(chg, of: total)); the rest runs your Mac.")
+                    Text("\(watts(chg)) of the \(watts(adapter)) from the adapter is charging the battery, \(pct(chg, of: total)); the rest runs your Mac.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -85,9 +86,11 @@ struct DetailsView: View {
             .padding(.vertical, 4)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("You can't split adapter wattage in hardware, but you can hold a lower average charge power with Gentle charging in Schedule.")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if chargeLimit.chargePowerSupported {
+                Text("You can't split adapter wattage in hardware, but you can hold a lower average charge power with Gentle charging in Schedule.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -123,7 +126,7 @@ struct DetailsView: View {
         return "battery.100"
     }
     private func batteryColor(_ f: PowerFlow) -> Color {
-        if f.batteryWatts > 0.5 { return .green }
+        if f.batteryWatts > 0.5 { return Color(ChargePalette.accent) }
         if f.batteryWatts < -0.5 { return .red }
         return .secondary
     }
@@ -131,6 +134,54 @@ struct DetailsView: View {
         if f.batteryWatts > 0.5 { return "Battery charging" }
         if f.batteryWatts < -0.5 { return "Battery draining" }
         return "Battery idle"
+    }
+
+    // MARK: - Adapter
+
+    /// Who's actually supplying the power: adapter identity, the wattage the Mac
+    /// negotiated, and a warning when the adapter could give more than it's being
+    /// asked for (nearly always a cable or port limit). Hidden when nothing is
+    /// plugged in — there's nothing to say.
+    @ViewBuilder
+    private var adapterCard: some View {
+        if let a = battery.powerFlow.adapter {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Power Adapter").font(.title3.weight(.semibold))
+                    Spacer()
+                    if let w = a.watts {
+                        Text("\(w) W").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(spacing: 0) {
+                    statRow("Adapter", a.name ?? a.manufacturer ?? "Connected")
+                    // The USB-PD contract, not a measurement: the live figure is "Adapter in".
+                    if let v = supplyText(a) { Divider(); statRow("Negotiated", v) }
+                    if let m = a.maxAvailableWatts { Divider(); statRow("Adapter maximum", "\(m) W") }
+                    if a.name != nil, let mfg = a.manufacturer { Divider(); statRow("Manufacturer", mfg) }
+                    if let model = a.model { Divider(); statRow("Model", model) }
+                    if let serial = a.serial { Divider(); statRow("Serial", serial) }
+                    if a.isWireless { Divider(); statRow("Connection", "Wireless") }
+                }
+                .padding(.vertical, 4)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                if a.isUnderNegotiated, let w = a.watts, let m = a.maxAvailableWatts {
+                    Label("This adapter can supply \(m) W but the Mac negotiated \(w) W. That's usually the cable: a charge cable rated below the adapter caps the whole chain.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// "20.0 V · 3.0 A" from the negotiated supply, when the adapter reports both.
+    private func supplyText(_ a: AdapterInfo) -> String? {
+        guard let mv = a.voltageMv, let ma = a.currentMa else { return nil }
+        return String(format: "%.1f V · %.1f A", Double(mv) / 1000, Double(ma) / 1000)
     }
 
     // MARK: - System (lid sensor)
@@ -151,7 +202,7 @@ struct DetailsView: View {
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             if automation.isClamshellMode {
-                Label("In clamshell (docked) mode the battery tends to sit at 100% and run hot — the two biggest causes of wear. Keep a charge limit and heat-pause enabled.",
+                Label("In clamshell (docked) mode the battery tends to sit at 100% and run hot, the two biggest causes of wear. Keep a charge limit and heat-pause enabled.",
                       systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -217,7 +268,7 @@ struct DetailsView: View {
         var tips: [String] = []
 
         if let t = snap.temperature, t >= 35 {
-            tips.append(String(format: "Battery is warm (%.0f°C). Heat is the biggest wear factor — avoid charging in hot spots.", t))
+            tips.append(String(format: "Battery is warm (%.0f°C). Heat is the biggest wear factor, so avoid charging in hot spots.", t))
         }
         if snap.percentage >= 95 && snap.isPluggedIn {
             tips.append("Sitting at ~100% while plugged in ages the battery faster. A charge limit keeps it lower.")
@@ -231,7 +282,7 @@ struct DetailsView: View {
             }
         }
         if let h = snap.healthPercent, h < 80 {
-            tips.append("Maximum capacity is \(h)% — Apple considers under 80% as service-recommended.")
+            tips.append("Maximum capacity is \(h)%. Apple considers under 80% as service-recommended.")
         }
         if tips.isEmpty {
             tips.append("Your battery settings look healthy. Nice work keeping it cool and capped.")

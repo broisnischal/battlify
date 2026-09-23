@@ -50,6 +50,40 @@ reload_daemon() {
     return 1
 }
 
+# Battlify used to be called BattPie, and shipped its helper under a different label,
+# binary and socket. Installing on top of that left BOTH daemons loaded, each with
+# KeepAlive, each driving the same SMC charge keys on its own timer — so they fought,
+# and whichever wrote last won the tick. When the old one won while holding the charge
+# inhibit, the Mac sat on the charger and drained to empty, because the daemon that
+# knew the limit was no longer the one talking to the hardware.
+#
+# Nothing we install depends on the old app, so evict it unconditionally.
+evict_legacy_daemon() {
+    local label="$1" bin="$2" plist="$3" sock="$4"
+
+    if launchctl print "system/$label" >/dev/null 2>&1; then
+        echo "==> Removing the superseded $label daemon"
+        launchctl bootout "system/$label" 2>/dev/null || true
+        for _ in $(seq 1 50); do   # wait up to ~5s for unload
+            launchctl print "system/$label" >/dev/null 2>&1 || break
+            sleep 0.1
+        done
+    fi
+
+    # Its job is unloaded, so a survivor of the SIGTERM won't be revived by KeepAlive.
+    pkill -f "^$bin" 2>/dev/null || true
+
+    # Clear the inhibit before the binary goes. The old daemon deliberately leaves
+    # charging cut on exit so a limit survives reboot, and once its binary is deleted
+    # nothing on the system still knows how to undo that. Our daemon re-applies the
+    # real limit seconds later, so this is a handover and not a policy change.
+    if [[ -x "$bin" ]]; then
+        "$bin" enable 2>/dev/null || true
+    fi
+
+    rm -f "$bin" "$plist" "$sock"
+}
+
 echo "==> Building release binary…"
 BUILD_FLAGS="-c release -Xswiftc -Osize -Xlinker -dead_strip"
 # build as the invoking user so SwiftPM caches land in their home, not root's
@@ -60,10 +94,20 @@ else
 fi
 BIN_SRC="$REPO_DIR/.build/release/battlify-helper"
 
+evict_legacy_daemon "com.battpie.helper" \
+    "/usr/local/bin/battpie-helper" \
+    "/Library/LaunchDaemons/com.battpie.helper.plist" \
+    "/var/run/battpie.sock"
+
 echo "==> Installing binary to $BIN_DST"
 install -d /usr/local/bin
 install -m 755 "$BIN_SRC" "$BIN_DST"
 strip -x "$BIN_DST" || true   # shrink on-disk + resident size
+# strip rewrites the file rather than editing it, so the result carries root's umask
+# and not the mode above — 0700 under the default umask, which leaves the daemon fine
+# (launchd runs it as root) but makes `battlify-helper status` permission-denied for
+# the person who installed it. Restore the mode we asked for.
+chmod 755 "$BIN_DST"
 
 echo "==> Installing LaunchDaemon to $PLIST_DST"
 install -m 644 "$PLIST_SRC" "$PLIST_DST"

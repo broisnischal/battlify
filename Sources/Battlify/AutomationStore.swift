@@ -3,7 +3,15 @@ import Combine
 import AppKit
 import BattlifyKit
 
-/// Lid-close radio automation. Runs as the user, so preferences live in UserDefaults, not the root config.
+/// Lid-close radio automation, and the record of what each closed-lid stretch cost.
+///
+/// Runs as the user, so its preferences live in UserDefaults rather than the root config —
+/// switching a radio off is something only a logged-in session can do.
+///
+/// The radios are the half of Sealed Sleep that isn't `pmset`. Everything else that feature
+/// does is a system setting written once by the daemon; Wi-Fi and Bluetooth have to be
+/// switched off as the lid actually closes and put back when it opens, which is what the
+/// sleep hook below is for.
 @MainActor
 final class AutomationStore: ObservableObject {
     @Published var wifiOffOnLidClose: Bool {
@@ -14,10 +22,6 @@ final class AutomationStore: ObservableObject {
     }
     @Published var restoreOnWake: Bool {
         didSet { defaults.set(restoreOnWake, forKey: Keys.restore) }
-    }
-    /// Lid close applies maximum power saving (Low Power Mode, wake-ups off, radios off); restored on open.
-    @Published var superSaveOnLidClose: Bool {
-        didSet { defaults.set(superSaveOnLidClose, forKey: Keys.superSave) }
     }
 
     @Published private(set) var isLidClosed = false
@@ -40,26 +44,12 @@ final class AutomationStore: ObservableObject {
     private var wifiWasOn = false
     private var bluetoothWasOn = false
 
-    // Snapshot of the exact power state deep save changes (LPM + sleep/wake toggles),
-    // restored verbatim on wake so the user's charge config is never touched.
-    private var savedLowPowerMode: Bool?
-    private var savedPowerToggles: [String: Bool]?
-    private var deepSaveActive = false
-
-    /// The sleep/wake power toggles deep save turns off (and restores on wake).
-    // Everything deep save switches off, and therefore everything it snapshots and
-    // puts back on wake. `proximityWake` and `ttysKeepAwake` matter most of all: the
-    // first wakes the Mac every time a nearby iPhone stirs, and the second stops it
-    // sleeping at all while a terminal session is open — the two reasons a closed Mac
-    // comes out of a bag warm and empty.
-    private static let deepSaveToggles: [PowerToggle] =
-        [.powerNap, .wakeOnNetwork, .tcpKeepAlive, .proximityWake, .ttysKeepAwake]
-
     private enum Keys {
         static let wifi = "automation.wifiOffOnLidClose"
         static let bt = "automation.bluetoothOffOnLidClose"
         static let restore = "automation.restoreOnWake"
-        static let superSave = "automation.superSaveOnLidClose"
+        // What the radio preferences were before Sealed Sleep took them over.
+        static let sealedRadioRestore = "automation.sealedRadioRestore"
         // Pending lid session (persisted so it survives the sleep).
         static let pendingCloseAt = "lidsession.closedAt"
         static let pendingCloseCharge = "lidsession.closeCharge"
@@ -69,7 +59,6 @@ final class AutomationStore: ObservableObject {
         wifiOffOnLidClose = defaults.bool(forKey: Keys.wifi)
         bluetoothOffOnLidClose = defaults.bool(forKey: Keys.bt)
         restoreOnWake = defaults.object(forKey: Keys.restore) as? Bool ?? true
-        superSaveOnLidClose = defaults.bool(forKey: Keys.superSave)
         lastLidSession = LidSessionStore.recent(limit: 1).first
 
         lid.onWillSleep = { [weak self] clamshellClosed in
@@ -114,7 +103,10 @@ final class AutomationStore: ObservableObject {
     }
 
     private func shouldSaveClamshell() -> Bool {
-        guard let cl = chargeLimit, cl.keepAwake else { return false }
+        // keepAwakeArmed, not the raw toggle: outside a scheduled window (or past an
+        // auto-off timer) nothing is holding the Mac awake, so macOS handles the lid
+        // and we must not be forcing the display off.
+        guard let cl = chargeLimit, cl.keepAwakeArmed else { return false }
         guard SystemPower.isClamshellClosed(), !Self.hasExternalDisplay() else { return false }
         return cl.keepAwakeOnBattery || BatteryMonitor.read().onExternalPower
     }
@@ -122,10 +114,15 @@ final class AutomationStore: ObservableObject {
     private func startClamshellSaver() {
         guard clamshellSaverTimer == nil else { return }
         forceInternalDisplayOff()
-        let t = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
+        // Every 30s, not every 10. The re-issue exists because a maintenance wake can turn
+        // the panel back on inside a shut lid, and that is a once-in-a-while event — at 10s
+        // this forked `pmset` 360 times an hour, for hours, in an app whose whole argument
+        // is that background work costs battery. A backlight lit for up to half a minute
+        // after a dark wake is cheaper than the polling was.
+        let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.clamshellSaverTick() }
         }
-        t.tolerance = 2
+        t.tolerance = 5
         RunLoop.main.add(t, forMode: .common)
         clamshellSaverTimer = t
     }
@@ -159,7 +156,13 @@ final class AutomationStore: ObservableObject {
     }
 
     /// Apply only the lid-radio parts of a save mode's profile.
+    ///
+    /// Skipped entirely while Sealed Sleep is on — it owns these, and the daemon makes the
+    /// same exception for the `pmset` half. Every profile names a value for both radios, so
+    /// without this, switching to any mode but Super Saver would silently reopen two of the
+    /// leaks the switch above claims to have closed.
     func apply(_ profile: SaveProfile) {
+        guard chargeLimit?.sealedSleep != true else { return }
         wifiOffOnLidClose = profile.wifiOffOnLidClose
         bluetoothOffOnLidClose = profile.bluetoothOffOnLidClose
         restoreOnWake = profile.restoreOnWake
@@ -179,44 +182,20 @@ final class AutomationStore: ObservableObject {
         defaults.set(Date(), forKey: Keys.pendingCloseAt)
         defaults.set(BatteryMonitor.read().percentage, forKey: Keys.pendingCloseCharge)
 
-        if superSaveOnLidClose {
-            enterDeepSave()
-        } else {
-            if wifiOffOnLidClose {
-                wifiWasOn = RadioControl.isWiFiOn
-                if wifiWasOn { RadioControl.setWiFi(false) }
-            }
-            if bluetoothOffOnLidClose {
-                bluetoothWasOn = RadioControl.isBluetoothOn
-                if bluetoothWasOn { RadioControl.setBluetooth(false) }
-            }
+        if wifiOffOnLidClose {
+            wifiWasOn = RadioControl.isWiFiOn
+            if wifiWasOn { RadioControl.setWiFi(false) }
+        }
+        if bluetoothOffOnLidClose {
+            bluetoothWasOn = RadioControl.isBluetoothOn
+            if bluetoothWasOn { RadioControl.setBluetooth(false) }
         }
     }
 
     private func handleWake() {
         pollLidState()        // reflect "lid open" immediately
         completeLidSession()
-
-        if deepSaveActive {
-            // Restore only what deep save changed (LPM + toggles); re-applying a SaveMode
-            // would clobber the user's charge config. Nil snapshot = never captured, so skip.
-            if let lpm = savedLowPowerMode {
-                _ = try? ControlClient.send(.setLowPowerMode(lpm))
-            }
-            if let toggles = savedPowerToggles {
-                for toggle in Self.deepSaveToggles {
-                    if let on = toggles[toggle.rawValue] {
-                        _ = try? ControlClient.send(.setPowerToggle(toggle, on))
-                    }
-                }
-            }
-            savedLowPowerMode = nil
-            savedPowerToggles = nil
-            deepSaveActive = false
-            restoreRadios()
-        } else if restoreOnWake {
-            restoreRadios()
-        }
+        if restoreOnWake { restoreRadios() }
     }
 
     private func completeLidSession() {
@@ -234,48 +213,67 @@ final class AutomationStore: ObservableObject {
         lastLidSession = session
     }
 
-    /// macOS is slow to ready Wi-Fi/Bluetooth right after wake, so wait briefly and retry.
+    /// Switch the radios back on after a wake. Asks the system at most twice.
+    ///
+    /// It used to re-issue the write on every one of seven retries, two seconds
+    /// apart, for as long as the radio still read as off. Turning Bluetooth on goes
+    /// through `IOBluetoothPreferenceSetControllerPowerState`, which sits behind
+    /// macOS's Bluetooth consent — so an unanswered prompt left the radio off, which
+    /// kept the loop writing, which raised the prompt again. Opening the lid asked
+    /// for Bluetooth permission up to seven times, every single time.
+    ///
+    /// The retry existed for a real reason: macOS is slow to ready the controllers
+    /// after a wake and a write issued too early is dropped. One write once things
+    /// have settled, one more if it demonstrably didn't take, and then stop. A radio
+    /// that won't come back after two asks isn't going to on the seventh, and the
+    /// user can flip it from the menu bar — which is a better outcome than a
+    /// permission dialog on every lid open.
     private func restoreRadios() {
         let wantWifi = wifiWasOn
         let wantBT = bluetoothWasOn
         guard wantWifi || wantBT else { return }
+        // Cleared up front: whatever happens below, this wake's restore is spent, and
+        // leaving them set would let a later wake re-run it.
+        wifiWasOn = false
+        bluetoothWasOn = false
 
-        func attempt(_ n: Int) {
+        func issue() {
             if wantWifi && !RadioControl.isWiFiOn { RadioControl.setWiFi(true) }
             if wantBT && !RadioControl.isBluetoothOn { RadioControl.setBluetooth(true) }
-            let wifiOK = !wantWifi || RadioControl.isWiFiOn
-            let btOK = !wantBT || RadioControl.isBluetoothOn
-            if (!wifiOK || !btOK) && n < 6 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { attempt(n + 1) }
-            } else {
-                self.wifiWasOn = false
-                self.bluetoothWasOn = false
-            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { attempt(0) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            issue()
+            // The controller can still be coming up; give it longer than the old 2s
+            // before the one and only retry.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { issue() }
+        }
     }
 
-    // MARK: - Deep save (sleepwatcher-style)
+    // MARK: - Sealed Sleep's half of the job
 
-    /// Synchronous so it finishes before the system is allowed to sleep.
-    private func enterDeepSave() {
-        // Snapshot the exact state we change, to restore verbatim on wake without touching charge config.
-        if let status = try? ControlClient.send(.getStatus) {
-            savedLowPowerMode = status.lowPowerModeEnabled
-            savedPowerToggles = status.powerToggles
+    /// Sealed Sleep takes the radio preferences over while it's on, and hands them back
+    /// when it's switched off.
+    ///
+    /// Same contract the daemon keeps for the `pmset` half: capture what was there, and
+    /// put it back. Without the snapshot, turning the feature off would leave two settings
+    /// switched on that the user never chose — small, invisible, and exactly the kind of
+    /// residue that makes people stop trusting a power utility.
+    func setSealed(_ on: Bool) {
+        if on {
+            if defaults.object(forKey: Keys.sealedRadioRestore) == nil {
+                defaults.set([wifiOffOnLidClose, bluetoothOffOnLidClose],
+                             forKey: Keys.sealedRadioRestore)
+            }
+            wifiOffOnLidClose = true
+            bluetoothOffOnLidClose = true
+            restoreOnWake = true
+        } else {
+            if let saved = defaults.array(forKey: Keys.sealedRadioRestore) as? [Bool],
+               saved.count == 2 {
+                wifiOffOnLidClose = saved[0]
+                bluetoothOffOnLidClose = saved[1]
+            }
+            defaults.removeObject(forKey: Keys.sealedRadioRestore)
         }
-        // Radios off (works even without the daemon).
-        wifiWasOn = RadioControl.isWiFiOn
-        if wifiWasOn { RadioControl.setWiFi(false) }
-        bluetoothWasOn = RadioControl.isBluetoothOn
-        if bluetoothWasOn { RadioControl.setBluetooth(false) }
-
-        _ = try? ControlClient.send(.setLowPowerMode(true))
-        // Drive the same list we snapshot, so nothing can be switched off here and
-        // then forgotten on wake.
-        for toggle in Self.deepSaveToggles {
-            _ = try? ControlClient.send(.setPowerToggle(toggle, false))
-        }
-        deepSaveActive = true
     }
 }

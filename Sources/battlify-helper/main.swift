@@ -47,6 +47,14 @@ case "dump":
     if charge.isChargingControlSupported {
         print("Charging currently enabled: \((try? charge.isChargingEnabled()).map(String.init(describing:)) ?? "unknown")")
     }
+    let native = NativeChargeLimit()
+    if native.isSupported {
+        let now = native.current().map { $0.enabled ? "\($0.limit)%" : "off" } ?? "unreadable"
+        let owner = NativeChargeLimitOwnership.load().map { " (Battlify set \($0)%)" } ?? ""
+        print("macOS charge limit: \(now)\(owner), steps \(native.steps.map(String.init).joined(separator: "/"))%")
+    } else {
+        print("macOS charge limit: not offered on this Mac")
+    }
 
 case "status":
     let (smc, charge) = openSMC()
@@ -57,6 +65,15 @@ case "status":
 
 case "enable":
     requireRoot()
+    // Uninstall runs this as the last word, after the daemon is gone, so it has to take
+    // back macOS's limit as well as the SMC keys, or the Mac keeps stopping at 80% with
+    // nothing left that knows why. Only a limit Battlify set; one the user set is theirs.
+    if let owned = NativeChargeLimitOwnership.load() {
+        let native = NativeChargeLimit()
+        if native.current()?.limit == owned { native.disable() }
+        NativeChargeLimitOwnership.save(nil)
+        print("macOS charge limit released")
+    }
     let (smc, charge) = openSMC()
     defer { smc.close() }
     do { try charge.enableCharging(); print("charging enabled") }
