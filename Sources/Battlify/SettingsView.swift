@@ -289,9 +289,11 @@ struct SettingsView: View {
 
                     card("Hold") {
                         toggleRow("Don't charge while plugged in",
-                                  chargeLimit.magSafeSupported
+                                  chargeLimit.nativeLimitFloor.map {
+                                      "Stops charging and runs on wall power. This Mac can only hold from \($0)%, so below that it charges to \($0)% first."
+                                  } ?? (chargeLimit.magSafeSupported
                                   ? "Leaves the battery where it is, whatever the limit says."
-                                  : "Runs off the adapter and leaves the battery where it is, whatever the limit says.",
+                                  : "Runs off the adapter and leaves the battery where it is, whatever the limit says."),
                                   isOn: bind(\.holdCharge))
                         if chargeLimit.holdCharge {
                             divider
@@ -1543,10 +1545,16 @@ struct SettingsView: View {
                 onEditingChanged: { $0 ? chargeLimit.beginEditing() : chargeLimit.endEditing() }
             )
             .controlSize(.small)
+            // Charge Power works by switching the SMC charge key on and off. Without the
+            // key the slider moved, the caption promised "about 15%", and the battery took
+            // the full 30 W regardless.
+            .disabled(!chargeLimit.chargePowerSupported)
 
             liveSplitReadout
 
-            Text("How much of the charger goes to the battery rather than to your Mac. Lower is cooler and slower; 0% holds the battery entirely.")
+            Text(chargeLimit.chargePowerSupported
+                 ? "How much of the charger goes to the battery rather than to your Mac. Lower is cooler and slower; 0% holds the battery entirely."
+                 : "Not available on this Mac. macOS 26.7 doesn't let apps control charging speed, so the battery always charges at full power. The charge limit still works, from 80%.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1556,7 +1564,8 @@ struct SettingsView: View {
     @ViewBuilder
     private var liveSplitReadout: some View {
         let f = battery.powerFlow
-        let cycling = chargeLimit.chargePower > 0 && chargeLimit.chargePower < 100
+        let cycling = chargeLimit.chargePowerSupported
+            && chargeLimit.chargePower > 0 && chargeLimit.chargePower < 100
         if f.isPluggedIn {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 16) {
@@ -1564,7 +1573,7 @@ struct SettingsView: View {
                     wattStat(.orange, "To your Mac", max(0, f.systemWatts ?? 0))
                     Spacer()
                     if let a = f.adapterWatts {
-                        Text(String(format: "Adapter %.0f W", a))
+                        Text(String(format: f.isMeasured ? "Adapter in %.0f W" : "Adapter %.0f W", a))
                             .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                             .monospacedDigit()
                     }

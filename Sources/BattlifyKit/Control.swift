@@ -125,6 +125,15 @@ public struct ControlResponse: Codable, Sendable {
     public var highPowerModeSupported: Bool
     /// Whether High Power Mode is on right now.
     public var highPowerModeEnabled: Bool
+    /// The steps macOS's own charge limit offers, when this Mac limits through it because
+    /// its SMC charge keys are gated. Empty on a Mac with a real key, and from an older daemon.
+    public var nativeLimitSteps: [Int]
+    /// The step Battlify currently has macOS enforcing, nil when none.
+    public var nativeLimitApplied: Int?
+    /// Whether this Mac has an SMC charge-inhibit key. Charge Power duty-cycles that key,
+    /// so without one it can do nothing. An older daemon omits it and reads as true, which
+    /// is what it would have claimed anyway.
+    public var chargeControlSupported: Bool
     public var message: String?
     /// Protocol version of the responding daemon. Older daemons omit it → decode to 0 → outdated.
     public var daemonProtocolVersion: Int
@@ -144,6 +153,9 @@ public struct ControlResponse: Codable, Sendable {
                 sealedSleepRefused: [String] = [],
                 highPowerModeSupported: Bool = false,
                 highPowerModeEnabled: Bool = false,
+                nativeLimitSteps: [Int] = [],
+                nativeLimitApplied: Int? = nil,
+                chargeControlSupported: Bool = true,
                 message: String? = nil,
                 daemonProtocolVersion: Int = ControlProtocol.version,
                 daemonBuildVersion: Int = HelperBuild.version) {
@@ -164,6 +176,9 @@ public struct ControlResponse: Codable, Sendable {
         self.sealedSleepRefused = sealedSleepRefused
         self.highPowerModeSupported = highPowerModeSupported
         self.highPowerModeEnabled = highPowerModeEnabled
+        self.nativeLimitSteps = nativeLimitSteps
+        self.nativeLimitApplied = nativeLimitApplied
+        self.chargeControlSupported = chargeControlSupported
         self.message = message
         self.daemonProtocolVersion = daemonProtocolVersion
         self.daemonBuildVersion = daemonBuildVersion
@@ -189,6 +204,9 @@ public struct ControlResponse: Codable, Sendable {
         sealedSleepRefused = try c.decodeIfPresent([String].self, forKey: .sealedSleepRefused) ?? []
         highPowerModeSupported = try c.decodeIfPresent(Bool.self, forKey: .highPowerModeSupported) ?? false
         highPowerModeEnabled = try c.decodeIfPresent(Bool.self, forKey: .highPowerModeEnabled) ?? false
+        nativeLimitSteps = try c.decodeIfPresent([Int].self, forKey: .nativeLimitSteps) ?? []
+        nativeLimitApplied = try c.decodeIfPresent(Int.self, forKey: .nativeLimitApplied)
+        chargeControlSupported = try c.decodeIfPresent(Bool.self, forKey: .chargeControlSupported) ?? true
         message = try c.decodeIfPresent(String.self, forKey: .message)
         daemonProtocolVersion = try c.decodeIfPresent(Int.self, forKey: .daemonProtocolVersion) ?? 0
         daemonBuildVersion = try c.decodeIfPresent(Int.self, forKey: .daemonBuildVersion) ?? 0
@@ -342,7 +360,15 @@ public enum HelperBuild {
     ///        engaged hours ago. And every line the helper logs is stamped with the local
     ///        time: the log is the only record of what happened inside a closed lid, and
     ///        four thousand undated sentences answer no question anyone brings to it.
-    public static let version = 25
+    ///   v26: holding without draining on Macs whose SMC charge keys are gated (macOS 26.7 /
+    ///        15.8 firmware). The hold and the limit go through macOS's own charge limit,
+    ///        which stops the charge and keeps the Mac on wall power, from 80% up; the
+    ///        adapter-cut hold, which ran the Mac off its battery 2% at a time, is kept
+    ///        only for Macs with neither. The MagSafe light follows what the battery is
+    ///        doing rather than what the daemon intended, and is rewritten every tick and
+    ///        again after each power change: macOS repaints it without touching ACLC, so
+    ///        the readback said green while the connector showed amber.
+    public static let version = 26
 }
 
 public enum ControlError: Error, CustomStringConvertible {

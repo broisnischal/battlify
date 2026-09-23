@@ -8,6 +8,23 @@ public enum MagSafeLED: UInt8, Sendable {
     case orange = 0x04   // charging
 }
 
+extension MagSafeLED {
+    /// The colour Status mode shows, the way a Mac's own light reads: amber while the
+    /// battery takes charge, green on the cable when it doesn't, whatever the reason
+    /// (full, held at a limit, or the adapter cut to hold the level).
+    ///
+    /// Hold is green rather than amber because amber is charging; using it for
+    /// "deliberately not charging" made the two states identical. The SMC offers only
+    /// off, green and amber.
+    public static func status(settling: Bool, onExternalPower: Bool,
+                              adapterCut: Bool, charging: Bool) -> MagSafeLED {
+        if settling { return .off }                  // waiting after wake
+        if !onExternalPower { return .system }       // truly unplugged
+        if adapterCut { return .green }              // cable in, running off the battery
+        return charging ? .orange : .green
+    }
+}
+
 /// Controls whether the battery is allowed to charge, abstracting over the two
 /// SMC schemes Apple Silicon uses:
 ///   - Pre-Tahoe: 1-byte keys CH0B + CH0C (0x00 = charge, 0x02 = stop)

@@ -332,7 +332,7 @@ struct MenuBarLabel: View {
         // menu-bar tooltip explained none of it. Same fix as the panel's hint rows.
         if chargeLimit.isHoldingCharge, let reason = chargeLimit.pauseReason {
             switch reason {
-            case "limit":    return "Holding at \(chargeLimit.limit)% limit"
+            case "limit":    return "Holding at \(chargeLimit.effectiveLimit)% limit"
             case "hold":     return "Holding the level where it is"
             case "heat":     return "Charging paused, battery warm"
             case "settling": return "Settling after wake"

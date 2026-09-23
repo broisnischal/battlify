@@ -259,8 +259,8 @@ struct MenuContentView: View {
     private func limitNote(_ snap: BatterySnapshot) -> String? {
         if chargeLimit.isPaused { return "Charging paused" }
         guard chargeLimit.limitEnabled else { return nil }
-        if chargeLimit.isHoldingCharge { return "Holding at \(chargeLimit.limit)%" }
-        if snap.isCharging { return "Charging to \(chargeLimit.limit)%" }
+        if chargeLimit.isHoldingCharge { return "Holding at \(chargeLimit.effectiveLimit)%" }
+        if snap.isCharging { return "Charging to \(chargeLimit.effectiveLimit)%" }
         return nil
     }
 
@@ -436,18 +436,27 @@ struct MenuContentView: View {
     }
 
     /// "Don't charge" as a switch rather than a timed pause: the level stays put for as
-    /// long as it's on, and the MagSafe light goes amber so it's visible from outside
+    /// long as it's on, and the MagSafe light goes green so it's visible from outside
     /// the app.
     private var holdChargeControl: some View {
-        // No caption. "Don't charge" with a switch beside it needs no gloss, and the one
-        // it had restated the switch position in a sentence that re-wrapped to two lines
-        // every time it was thrown. The explanation lives in Settings.
-        statusRow("Don't charge", chargeLimit.holdCharge ? "Holding the level" : nil) {
+        // No caption while it's off. "Don't charge" with a switch beside it needs no
+        // gloss; the explanation lives in Settings.
+        statusRow("Don't charge", chargeLimit.holdCharge ? holdCaption : nil) {
             Toggle("Don't charge", isOn: Binding(
                 get: { chargeLimit.holdCharge },
                 set: { chargeLimit.holdCharge = $0; chargeLimit.apply() }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
+    }
+
+    /// What the hold is doing. Under macOS's limit it can only stop on a step from 80%, so
+    /// switched on below that it charges up to the floor first, and saying "Holding the
+    /// level" while the battery climbs would be the panel contradicting the gauge above it.
+    private var holdCaption: String {
+        if let floor = chargeLimit.nativeLimitFloor, battery.snapshot.percentage < floor {
+            return "This Mac holds from \(floor)% up, so it charges to \(floor)% first"
+        }
+        return "Holding the level"
     }
 
     @ViewBuilder
@@ -529,6 +538,12 @@ struct MenuContentView: View {
                                                                    max(5, chargeLimit.limit - 20))
                                 }),
                               range: 50...100)
+
+                    // Said where the number is set, not after the battery has gone past it.
+                    if let floor = chargeLimit.nativeLimitFloor, chargeLimit.limit < floor {
+                        hintLabel("This Mac can only hold from \(floor)%, so it stops at \(floor)%.",
+                                  systemImage: "info")
+                    }
 
                     switchRow("Recharge range", Binding(
                         get: { chargeLimit.rangeEnabled },

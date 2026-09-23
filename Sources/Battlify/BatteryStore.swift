@@ -38,10 +38,16 @@ final class BatteryStore: ObservableObject {
         }
     }
 
-    /// Refresh now and again shortly after, to catch a change once IOKit reflects it.
+    /// Refresh now and again over the next ten seconds, to catch a change once IOKit
+    /// reflects it.
+    ///
+    /// Two seconds wasn't enough. When the adapter comes back the charger negotiates
+    /// before current flows, and `IsCharging` turns over several seconds later with no
+    /// notification of its own, so the last read landed on "not charging" and the panel
+    /// kept it until the 30 s poll.
     func refreshSoon() {
         refresh()
-        for delay in [0.5, 2.0] {
+        for delay in [0.5, 2.0, 5.0, 10.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.refresh()
             }
@@ -111,7 +117,10 @@ final class BatteryStore: ObservableObject {
             Task { @MainActor in store.refreshSoon() }
         }, context)?.takeRetainedValue() else { return }
 
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+        // Common modes, like the poll timer: in the default mode alone the source is
+        // held off while a menu or the status item is tracking, which is exactly when
+        // someone is looking at the numbers.
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         runLoopSource = source
     }
 }

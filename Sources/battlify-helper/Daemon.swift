@@ -33,7 +33,7 @@ final class Daemon: @unchecked Sendable {
     // worked before but a read fails while heat-aware is on, we pause charging rather
     // than silently charge uncapped. Macs that never expose a temp sensor stay unblocked.
     private var sawTemperature = false
-    // Last MagSafe LED we set, so we only write the SMC on change.
+    // Last MagSafe LED we set, so handing the light back to macOS happens once.
     private var lastLed: MagSafeLED?
 
     // Post-wake settle: a tick gap ≫ interval implies we slept; hold charging + LED off briefly.
@@ -74,10 +74,27 @@ final class Daemon: @unchecked Sendable {
     /// charge-inhibit key, where the adapter is the one lever there is.
     private var holdAnchor: Int?
     private var adapterHolding = false
+    /// The mark `adapterHolding` was worked out against; see `adapterHoldWanted`.
+    private var adapterHoldMark: Int?
     /// How far the level may fall below the mark before the adapter comes back. Wide
     /// enough that the top-up isn't a permanent flutter between power sources, narrow
     /// enough that "held at 85%" means 85%.
     private let adapterHoldBand = 2
+    /// Whether the adapter is cut once this tick's `manageDischarge` has run. The LED
+    /// reads it, because the snapshot it would otherwise use was taken before the cut.
+    private var adapterCut = false
+
+    /// macOS's own charge limit, on a Mac whose SMC charge keys are gated (see
+    /// `NativeChargeLimit`). nil everywhere else, including Macs with a real key.
+    private var nativeLimit: NativeChargeLimit?
+    /// The step Battlify has macOS enforcing; nil when it owns none. Persisted, so a
+    /// restart still knows which limit is ours to take back.
+    private var nativeApplied: Int?
+    /// When PowerUIAgent was last asked what's in force. Each ask is a round trip.
+    private var nativeCheckedAt: Date?
+    /// Plugged in, not taking charge, because the native limit says so. What the app is
+    /// told as "held", since there's no SMC flag on this Mac to report instead.
+    private var nativeHolding = false
 
     /// Whether this Mac exposes an SMC charge-inhibit key. Resolved once the SMC is open.
     /// False disables charge enforcement only — the daemon still serves everything else,
@@ -145,7 +162,14 @@ final class Daemon: @unchecked Sendable {
         // the sleep/wake toggles, Low Power Mode and Always Active all work without it.
         chargeControlSupported = charge.isChargingControlSupported
         if !chargeControlSupported {
-            log("no SMC charge-inhibit key on this Mac; charge limiting is off, everything else runs")
+            let native = NativeChargeLimit()
+            if native.isSupported {
+                nativeLimit = native
+                nativeApplied = NativeChargeLimitOwnership.load()
+                log("no SMC charge-inhibit key; limiting through macOS's own charge limit (\(native.steps.map(String.init).joined(separator: "/"))%)")
+            } else {
+                log("no SMC charge-inhibit key on this Mac; charge limiting is off, everything else runs")
+            }
         }
 
         // Fan control was removed, but forced fan mode lives in the SMC and outlives the
@@ -413,8 +437,8 @@ final class Daemon: @unchecked Sendable {
             ok: ok,
             config: ConfigStore.load(),
             batteryPercent: snap.percentage,
-            chargingEnabled: chargeControlSupported ? ((try? charge.isChargingEnabled()) ?? false) : true,
-            schemeDescription: charge.schemeDescription,
+            chargingEnabled: chargeControlSupported ? ((try? charge.isChargingEnabled()) ?? false) : !nativeHolding,
+            schemeDescription: nativeLimit != nil ? "macOS charge limit" : charge.schemeDescription,
             lowPowerModeEnabled: pmset.lpm,
             powerToggles: pmset.toggles,
             pauseReason: lastPauseReason,
@@ -427,6 +451,9 @@ final class Daemon: @unchecked Sendable {
             sealedSleepRefused: sealedSleepRefused,
             highPowerModeSupported: pmset.highPowerSupported,
             highPowerModeEnabled: pmset.highPower,
+            nativeLimitSteps: nativeLimit?.steps ?? [],
+            nativeLimitApplied: nativeApplied,
+            chargeControlSupported: chargeControlSupported,
             message: message
         )
     }
@@ -551,20 +578,27 @@ final class Daemon: @unchecked Sendable {
             }
         }
 
-        // Duty-cycle to the requested power; the LED follows the steady regime, not each phase, to avoid flicker.
+        // Duty-cycle to the requested power.
         let enable = chargeDutyGate(desired: desired, power: cfg.chargePower, now: now)
-        let chargingRegime = desired && cfg.chargePower > 0
 
         // Nothing is being held when there's no key to hold it with; reporting a reason
         // would have the app explain a pause that isn't happening.
         lastPauseReason = chargeControlSupported ? (desired ? (enable ? nil : "slow") : reason) : nil
         ensure(enabled: enable, current: charging)
+        updateHoldAnchor(cfg, snap)
+        applyNativeLimit(nativeLimitWanted(cfg, bypass: cfg.calibrateToFull || topUp
+                                               || activeSchedule?.action == .charge), now: now)
         manageDischarge(cfg, snap, scheduleDischarge: activeSchedule?.action == .discharge)
-        // With no charge-inhibit key the adapter hold is the only thing standing between
-        // the battery and full, so it is also the only honest answer to "why has it
-        // stopped" — the branch above has no lever and deliberately reports nothing.
-        if !chargeControlSupported { lastPauseReason = adapterHolding ? "hold" : nil }
-        updateMagSafeLED(cfg, snap, charging: chargingRegime, settling: settling)
+        // With no charge-inhibit key the branch above has no lever and deliberately reports
+        // nothing, so the answer to "why has it stopped" comes from the lever this Mac does
+        // have: macOS's limit, or failing that the adapter hold.
+        nativeHolding = nativeApplied != nil && snap.onExternalPower && !adapterCut && !snap.isCharging
+        if !chargeControlSupported {
+            lastPauseReason = adapterHolding ? "hold"
+                : nativeHolding ? (cfg.holdCharge ? "hold" : "limit") : nil
+        }
+        updateMagSafeLED(cfg, snap, takingCharge: takingCharge(cfg, snap, desired: desired, enable: enable),
+                         settling: settling)
         completeDeferredHibernateIfDue()
         updateIdleSleepAssertion(cfg, snap)
         updateKeepAwake(cfg, snap)
@@ -579,6 +613,27 @@ final class Daemon: @unchecked Sendable {
         else { return TickPolicy.active }
         return TickPolicy.interval(cfg, onExternalPower: snap.onExternalPower,
                                    lidClosed: SystemPower.isClamshellClosed())
+    }
+
+    /// Whether the battery is taking charge, for the LED: what it is doing, not what the
+    /// daemon meant it to do.
+    ///
+    /// The LED used to follow `desired`, which is intent. On a Mac with no charge-inhibit
+    /// key intent and reality part company all the time: the limit's hysteresis said "held"
+    /// while the adapter hold had already brought the adapter back for a top-up, so the
+    /// battery charged under a green light, and a full battery with no limit set showed
+    /// amber because charging was "allowed". The snapshot predates this tick's writes, so
+    /// anything cut this tick is taken from the write, not the snapshot.
+    private func takingCharge(_ cfg: BattlifyConfig, _ snap: BatterySnapshot,
+                              desired: Bool, enable: Bool) -> Bool {
+        if adapterCut { return false }
+        if chargeControlSupported, desired, cfg.chargePower < 100 {
+            // Duty-cycling: the rest phases are part of a charge in progress, and a light
+            // that changed colour every two minutes would be reporting the mechanism.
+            return cfg.chargePower > 0 && !snap.isFullyCharged
+        }
+        if chargeControlSupported, !enable { return false }
+        return snap.isCharging
     }
 
     /// Whether to charge this tick for the requested power (0–100%): 100% passes
@@ -1002,10 +1057,13 @@ final class Daemon: @unchecked Sendable {
                                  scheduleDischarge: Bool) {
         guard charge.isAdapterControlSupported else { return }
 
+        // Down to the level this Mac actually stops at. Under macOS's limit a 70% setting
+        // stops at 80%, and draining to 70 would only have macOS charge it straight back.
+        let stopsAt = nativeLimit.flatMap { $0.step(for: cfg.chargeLimit) } ?? cfg.chargeLimit
         let limitDischarge = cfg.dischargeEnabled
             && cfg.chargeLimitEnabled
             && !cfg.calibrateToFull   // calibration is charging up, don't fight it
-            && snap.percentage > cfg.chargeLimit
+            && snap.percentage > stopsAt
 
         // The adapter hold. On a Mac that exposes no charge-inhibit key there is nothing
         // to inhibit charging with, so "don't charge" and the limit had no way to bite at
@@ -1018,7 +1076,11 @@ final class Daemon: @unchecked Sendable {
         // through the held phase, so this trades a shallow cycle every so often for not
         // sitting at 100%. That is the better of the two for the cell, and it is the only
         // trade available here.
-        let adapterHold = !chargeControlSupported && !cfg.calibrateToFull
+        //
+        // Only where macOS has no limit of its own to offer. Where it does, that limit
+        // stops the charge and keeps the Mac on wall power, and this drain-and-top-up
+        // cycle is exactly what someone switching on "don't charge" is trying to avoid.
+        let adapterHold = !chargeControlSupported && nativeLimit == nil && !cfg.calibrateToFull
             && adapterHoldWanted(cfg, snap)
         // Gate on onExternalPower, NOT isPluggedIn: cutting the adapter makes macOS report
         // "Battery Power", so isPluggedIn would flip false next tick and we'd restore the
@@ -1027,15 +1089,97 @@ final class Daemon: @unchecked Sendable {
             && (limitDischarge || scheduleDischarge || adapterHold)
 
         let adapterOn = (try? charge.isAdapterEnabled()) ?? true
+        var cut = !adapterOn
         if shouldDischarge {
             if adapterOn {
-                try? charge.disableAdapter()
+                if (try? charge.disableAdapter()) != nil { cut = true }
                 log(adapterHold && !limitDischarge && !scheduleDischarge
                     ? "hold: on the battery at \(snap.percentage)%, adapter back at \((holdAnchor ?? cfg.chargeLimit) - adapterHoldBand)%"
                     : "discharging to limit")
             }
         } else if !adapterOn {
-            try? charge.enableAdapter(); log("adapter restored")
+            if (try? charge.enableAdapter()) != nil { cut = false }
+            log("adapter restored")
+        }
+        if cut != adapterCut {
+            adapterCut = cut
+            bookLedFollowUps()
+        }
+    }
+
+    /// The level "don't charge" was thrown at, on a Mac with no charge-inhibit key.
+    ///
+    /// Anchored the first time it's seen on the charger, and kept across an unplug: the
+    /// switch means "leave it where it was when I asked", not wherever it has drifted to
+    /// since the cable was last pulled. Both levers this hardware has read it.
+    ///
+    /// Caller holds `lock`.
+    private func updateHoldAnchor(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) {
+        guard !chargeControlSupported else { return }
+        if cfg.holdCharge {
+            guard holdAnchor == nil, snap.onExternalPower else { return }
+            holdAnchor = snap.percentage
+            if let native = nativeLimit {
+                let step = native.step(for: snap.percentage) ?? 100
+                log(step > snap.percentage
+                    ? "hold: \(snap.percentage)% is below the \(step)% macOS can hold at; stopping at \(step)%"
+                    : "hold: parking the battery at \(snap.percentage)% (macOS charge limit \(step)%)")
+            } else {
+                log("hold: parking the battery at \(snap.percentage)% (no charge-inhibit key; using the adapter)")
+            }
+        } else if holdAnchor != nil {
+            holdAnchor = nil
+            log("hold: released")
+        }
+    }
+
+    /// The step macOS should hold for Battlify this tick, nil for none.
+    ///
+    /// The hold wins over everything, as it does in the tick's own decision; the limit
+    /// gives way to a top-up, a charge window or calibration, which all mean "charge past
+    /// it this once". Below the lowest step this is the lowest step, and the app says so.
+    ///
+    /// Caller holds `lock`.
+    private func nativeLimitWanted(_ cfg: BattlifyConfig, bypass: Bool) -> Int? {
+        guard let native = nativeLimit else { return nil }
+        if cfg.holdCharge, let anchor = holdAnchor { return native.step(for: anchor) }
+        guard cfg.chargeLimitEnabled, !bypass else { return nil }
+        return native.step(for: cfg.chargeLimit)
+    }
+
+    /// Point macOS's limit at `want`, and only ever take back a limit Battlify set.
+    ///
+    /// Asked again once a minute so a change made in System Settings is noticed, and
+    /// otherwise only when the target moves: each ask is a round trip to PowerUIAgent.
+    /// A limit that no longer matches the one we set is the user's, and is left alone.
+    ///
+    /// Caller holds `lock`.
+    private func applyNativeLimit(_ want: Int?, now: Date) {
+        guard let native = nativeLimit else { return }
+        let due = nativeCheckedAt.map { now.timeIntervalSince($0) >= 60 } ?? true
+        guard want != nativeApplied || (due && (want != nil || nativeApplied != nil)) else { return }
+        nativeCheckedAt = now
+        let current = native.current()
+
+        if let want {
+            if let current, current.enabled, current.limit == want {
+                if nativeApplied != want { nativeApplied = want; NativeChargeLimitOwnership.save(want) }
+                return
+            }
+            if native.set(want) {
+                nativeApplied = want
+                NativeChargeLimitOwnership.save(want)
+                log("macOS charge limit set to \(want)%")
+            } else {
+                err("macOS refused a charge limit of \(want)%")
+            }
+        } else if let owned = nativeApplied {
+            if current?.limit == owned {
+                guard native.disable() else { err("could not release the macOS charge limit"); return }
+                log("macOS charge limit released")
+            }
+            nativeApplied = nil
+            NativeChargeLimitOwnership.save(nil)
         }
     }
 
@@ -1047,23 +1191,19 @@ final class Daemon: @unchecked Sendable {
     /// `adapterHolding` rather than inferred from the level, so a Mac sitting exactly on
     /// the mark doesn't flip power source on every reading.
     ///
+    /// The hysteresis belongs to one mark. Carried over when the mark moved, it kept the
+    /// adapter cut after "don't charge" was switched off: the hold had set it at 79%, the
+    /// limit above was 80, 79 is neither at the limit nor two under it, so nothing cleared
+    /// it and the Mac sat on its battery instead of charging to the limit it was asked for.
+    ///
     /// Caller holds `lock`.
     private func adapterHoldWanted(_ cfg: BattlifyConfig, _ snap: BatterySnapshot) -> Bool {
-        let mark: Int?
-        if cfg.holdCharge {
-            // Anchored the first time we see it on the charger, and kept across an unplug:
-            // the switch means "leave it where it was when I asked", not "wherever it has
-            // drifted to since you last pulled the cable".
-            if holdAnchor == nil, snap.onExternalPower {
-                holdAnchor = snap.percentage
-                log("hold: parking the battery at \(snap.percentage)% (no charge-inhibit key; using the adapter)")
-            }
-            mark = holdAnchor
-        } else {
-            if holdAnchor != nil { holdAnchor = nil; log("hold: released") }
-            mark = cfg.chargeLimitEnabled ? cfg.chargeLimit : nil
+        let mark = cfg.holdCharge ? holdAnchor : (cfg.chargeLimitEnabled ? cfg.chargeLimit : nil)
+        guard let target = mark else { adapterHolding = false; adapterHoldMark = nil; return false }
+        if target != adapterHoldMark {
+            adapterHoldMark = target
+            adapterHolding = snap.percentage >= target
         }
-        guard let target = mark else { adapterHolding = false; return false }
 
         if snap.percentage >= target {
             adapterHolding = true
@@ -1073,9 +1213,9 @@ final class Daemon: @unchecked Sendable {
         return adapterHolding
     }
 
-    /// Drive the MagSafe LED per mode; only writes the SMC when the actual LED differs from the target.
+    /// Drive the MagSafe LED per mode.
     private func updateMagSafeLED(_ cfg: BattlifyConfig, _ snap: BatterySnapshot,
-                                  charging desired: Bool, settling: Bool) {
+                                  takingCharge: Bool, settling: Bool) {
         guard charge.isMagSafeSupported else { return }
 
         // Tracked before the mode switch, not inside the `.status` branch that uses it.
@@ -1098,38 +1238,53 @@ final class Daemon: @unchecked Sendable {
         case .off:
             target = .off
         case .status:
-            if settling { target = .off }               // waiting after wake
-            else if !snap.onExternalPower { target = .system }  // truly unplugged
-            // Hold gets green, not amber: amber is what charging looks like, so using it
-            // for "deliberately not charging" made the two states identical — the light
-            // said nothing. The SMC offers only off, green and amber, so green (already
-            // the app's "holding" colour) is the one that distinguishes it. The moment
-            // hold engages there's a short blink below, so the change is noticeable
-            // rather than something you'd have to be watching for.
-            else if cfg.holdCharge { target = .green }
-            else if desired { target = .orange }        // charging
-            else { target = .green }                    // holding / discharging to limit
+            target = MagSafeLED.status(settling: settling, onExternalPower: snap.onExternalPower,
+                                       adapterCut: adapterCut, charging: takingCharge)
         }
 
-        // Announce the moment hold engages: three quick amber/off blinks, then settle on
-        // the steady colour. One-off and only on the transition — a light that blinks
-        // forever is a fault indicator, not a status.
+        // Announce the moment hold engages: three quick green/off blinks, then settle on
+        // the steady colour. Green because that's what a hold looks like; blinking amber
+        // announced "don't charge" in the colour of charging. One-off and only on the
+        // transition — a light that blinks forever is a fault indicator, not a status.
         if cfg.magSafeLedMode == .status, holdChanged {
             if cfg.holdCharge, snap.onExternalPower {
                 for _ in 0..<3 {
                     try? charge.setMagSafeLED(.off)
                     usleep(120_000)
-                    try? charge.setMagSafeLED(.orange)
+                    try? charge.setMagSafeLED(.green)
                     usleep(120_000)
                 }
             }
         }
 
-        // Re-assert on drift (macOS re-manages the LED); a cache would miss it and leave the light wrong.
-        if charge.magSafeLED() != target {
+        // Written every tick, not only when the readback differs. macOS repaints the light
+        // on a power change without touching ACLC, so the key still reads what we wrote
+        // while the connector shows something else. It did exactly that through a hold:
+        // ACLC read green, the light was amber, and the drift check never fired. One byte
+        // every tick is the only check that can't be fooled by the readback. `.system` is
+        // the exception: it's macOS's light then, and rewriting it would only reset it.
+        if target != .system || lastLed != .system {
             try? charge.setMagSafeLED(target)
         }
         lastLed = target
+    }
+
+    /// Run the tick again a few seconds after the power source changes under it.
+    ///
+    /// Two things trail a change: macOS repaints the MagSafe light, and IOKit's charging
+    /// flag catches up with what the charger is doing. A follow-up tick rewrites the light
+    /// over the repaint and reads the flag once it's true, instead of leaving the wrong
+    /// colour up until the next ordinary tick. Caller holds `lock`.
+    private func bookLedFollowUps() {
+        guard charge.isMagSafeSupported else { return }
+        for delay in [2.0, 6.0] {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                self.tick()
+            }
+        }
     }
 
     private func recordHistoryIfDue(_ snap: BatterySnapshot, now: Date) {
@@ -1148,6 +1303,7 @@ final class Daemon: @unchecked Sendable {
         do {
             if desired { try charge.enableCharging() } else { try charge.disableCharging() }
             log("charging \(desired ? "enabled" : "disabled")")
+            bookLedFollowUps()
         } catch {
             log("error setting charging=\(desired): \(error)")
         }

@@ -267,7 +267,7 @@ final class HotkeyStore: ObservableObject {
         charge.limitEnabled.toggle()
         charge.apply()
         hud(charge.limitEnabled ? "Charge Limit On" : "Charge Limit Off",
-            detail: charge.limitEnabled ? "Holding at \(charge.limit)%" : "Charges to 100%")
+            detail: charge.limitEnabled ? "Holding at \(charge.effectiveLimit)%" : "Charges to 100%")
     }
 
     /// Steps within the same 50–100% range the sliders allow, and turns the limit on

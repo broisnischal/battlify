@@ -27,6 +27,23 @@ final class ChargeLimitStore: ObservableObject {
     @Published private(set) var mode: SaveMode = .off
     /// Why charging is paused ("limit"/"heat"/nil).
     @Published private(set) var pauseReason: String?
+    /// The levels macOS's own charge limit offers, when this Mac limits through it (its
+    /// SMC charge keys are gated). Empty on a Mac with a real key.
+    @Published private(set) var nativeLimitSteps: [Int] = []
+    /// The step the helper has macOS enforcing right now, nil when none.
+    @Published private(set) var nativeLimitApplied: Int?
+    /// Whether this Mac has an SMC charge-inhibit key, which Charge Power needs.
+    @Published private(set) var chargePowerSupported = true
+
+    /// The lowest level this Mac can hold at, or nil when it can hold anywhere.
+    var nativeLimitFloor: Int? { nativeLimitSteps.first }
+
+    /// Where the limit actually stops on this Mac. The slider's value everywhere except
+    /// under macOS's limit, which only stops on its own steps from 80%: a 70% setting
+    /// stops at 80, and every "Holding at…" in the app has to say 80 or it's wrong.
+    var effectiveLimit: Int {
+        NativeChargeLimit.step(for: limit, in: nativeLimitSteps) ?? limit
+    }
 
     /// Mirror of the daemon's config. Edits are pushed via `apply`.
     @Published var limitEnabled = false
@@ -562,11 +579,14 @@ final class ChargeLimitStore: ObservableObject {
         autoInstallHelperIfNeeded(missing: false)
         set(\.currentConfig, r.config)
         set(\.schemeDescription, r.schemeDescription)
-        let wasChargingEnabled = chargingEnabled
+        let before = (chargingEnabled, discharging, pauseReason)
         set(\.chargingEnabled, r.chargingEnabled)
         set(\.lowPowerMode, r.lowPowerModeEnabled)
         set(\.powerToggles, r.powerToggles)
         set(\.pauseReason, r.pauseReason)
+        set(\.nativeLimitSteps, r.nativeLimitSteps)
+        set(\.nativeLimitApplied, r.nativeLimitApplied)
+        set(\.chargePowerSupported, r.chargeControlSupported)
         set(\.mode, r.config.mode)
         set(\.limitEnabled, r.config.chargeLimitEnabled)
         set(\.limit, r.config.chargeLimit)
@@ -606,8 +626,14 @@ final class ChargeLimitStore: ObservableObject {
         set(\.calibrating, r.config.calibrateToFull)
         set(\.pauseUntil, r.config.pauseUntil)
 
-        // charging toggled → nudge the battery store so the menu-bar icon updates now
-        if wasChargingEnabled != chargingEnabled {
+        // The helper changed what the battery is doing → nudge the battery store so the
+        // panel and the menu-bar icon catch up now, not on the next slow poll.
+        //
+        // It watched `chargingEnabled` alone, which never changes on a Mac with no SMC
+        // charge key: the hold there is the adapter or macOS's limit. So releasing a hold
+        // brought the adapter back, the battery started charging and the MagSafe light
+        // went amber, while the panel said "Plugged in, not charging" for up to 45 s.
+        if before != (chargingEnabled, discharging, pauseReason) {
             NotificationCenter.default.post(name: .battlifyChargeStateChanged, object: nil)
         }
     }

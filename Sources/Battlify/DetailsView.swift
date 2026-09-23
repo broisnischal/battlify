@@ -86,9 +86,11 @@ struct DetailsView: View {
             .padding(.vertical, 4)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("You can't split adapter wattage in hardware, but you can hold a lower average charge power with Gentle charging in Schedule.")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if chargeLimit.chargePowerSupported {
+                Text("You can't split adapter wattage in hardware, but you can hold a lower average charge power with Gentle charging in Schedule.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -154,7 +156,8 @@ struct DetailsView: View {
 
                 VStack(spacing: 0) {
                     statRow("Adapter", a.name ?? a.manufacturer ?? "Connected")
-                    if let v = supplyText(a) { Divider(); statRow("Supplying", v) }
+                    // The USB-PD contract, not a measurement: the live figure is "Adapter in".
+                    if let v = supplyText(a) { Divider(); statRow("Negotiated", v) }
                     if let m = a.maxAvailableWatts { Divider(); statRow("Adapter maximum", "\(m) W") }
                     if a.name != nil, let mfg = a.manufacturer { Divider(); statRow("Manufacturer", mfg) }
                     if let model = a.model { Divider(); statRow("Model", model) }

@@ -43,8 +43,15 @@ public struct AdapterInfo: Equatable, Sendable {
 /// (charging), negative = flowing *out* (discharging). `systemWatts` is the
 /// estimated draw of everything else (SoC, display, peripherals).
 public struct PowerFlow: Equatable, Sendable {
-    /// Power drawn from the wall adapter (nil when unplugged / unknown).
+    /// Power the adapter is delivering right now (nil when unplugged / unknown). Measured
+    /// where the firmware publishes it; otherwise the negotiated rating, which is the most
+    /// the adapter could deliver rather than what it is.
     public var adapterWatts: Double?
+    /// What the adapter negotiated: its ceiling, not its output ("68 W" on a 70 W brick).
+    public var adapterRatedWatts: Double?
+    /// Whether the numbers are the firmware's measurements (`PowerTelemetryData`) rather
+    /// than derived from the rating.
+    public var isMeasured = false
     /// Signed battery power: + charging, − discharging.
     public var batteryWatts: Double
     /// Estimated system consumption (nil if it can't be derived).
@@ -57,7 +64,7 @@ public struct PowerFlow: Equatable, Sendable {
     public var isPluggedIn: Bool
 
     public static let unknown = PowerFlow(
-        adapterWatts: nil, batteryWatts: 0, systemWatts: nil,
+        adapterWatts: nil, adapterRatedWatts: nil, batteryWatts: 0, systemWatts: nil,
         adapterDescription: nil, adapter: nil, isPluggedIn: false)
 
     /// Battery power going *into* the pack (0 when discharging).
@@ -71,19 +78,23 @@ public struct PowerFlow: Equatable, Sendable {
 public enum PowerMonitor {
 
     public static func read() -> PowerFlow {
-        var flow = PowerFlow.unknown
-
         let service = IOServiceGetMatchingService(
             kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
-        guard service != 0 else { return flow }
+        guard service != 0 else { return .unknown }
         defer { IOObjectRelease(service) }
 
         var propsRef: Unmanaged<CFMutableDictionary>?
         guard IORegistryEntryCreateCFProperties(service, &propsRef, kCFAllocatorDefault, 0)
             == KERN_SUCCESS,
               let props = propsRef?.takeRetainedValue() as? [String: Any]
-        else { return flow }
+        else { return .unknown }
+        return flow(from: props)
+    }
 
+    /// The flow from an `AppleSmartBattery` property dictionary. Split out so it can be
+    /// tested against captured dictionaries.
+    static func flow(from props: [String: Any]) -> PowerFlow {
+        var flow = PowerFlow.unknown
         flow.isPluggedIn = (props["ExternalConnected"] as? Bool) ?? false
 
         // Battery instantaneous power: V (mV) × A (mA, signed) → W.
@@ -96,20 +107,44 @@ public enum PowerMonitor {
 
         if let adapter = props["AdapterDetails"] as? [String: Any] {
             if let w = adapter["Watts"] as? Int, w > 0 {
-                flow.adapterWatts = Double(w)
+                flow.adapterRatedWatts = Double(w)
                 flow.adapterDescription = "\(w)W"
             } else if let mv = adapter["AdapterVoltage"] as? Int,
                       let ma = adapter["Current"] as? Int, mv > 0, ma > 0 {
                 let w = Double(mv) / 1000.0 * Double(ma) / 1000.0
-                flow.adapterWatts = w
+                flow.adapterRatedWatts = w
                 flow.adapterDescription = "\(Int(w.rounded()))W"
             }
+            flow.adapterWatts = flow.adapterRatedWatts
             if flow.adapterDescription == nil,
                let name = adapter["Name"] as? String, !name.isEmpty {
                 flow.adapterDescription = name
             }
-            let info = adapterInfo(from: adapter, negotiatedWatts: flow.adapterWatts)
+            let info = adapterInfo(from: adapter, negotiatedWatts: flow.adapterRatedWatts)
             flow.adapter = info.hasDetail ? info : nil
+        }
+
+        // On the charger, the firmware's own measurements where it publishes them (Apple
+        // silicon): power in at the port and what the Mac is using, in mW. The battery is
+        // the difference, so the three always add up.
+        //
+        // The fallback below subtracts the battery from the adapter's *rating*. The rating
+        // is a ceiling, so every watt the adapter wasn't delivering was booked to the
+        // system: a Mac idling on a held battery showed "System draw 68.0 W" on a 70 W
+        // brick, and "Adapter in" read 68.0 W whatever was actually coming in. On battery
+        // the fallback is already exact (the system is what the battery gives out), so the
+        // telemetry is only used where it corrects something.
+        if flow.isPluggedIn,
+           let t = props["PowerTelemetryData"] as? [String: Any],
+           let load = t["SystemLoad"] as? Int, load > 0,
+           let powerIn = t["SystemPowerIn"] as? Int, powerIn >= 0 {
+            let system = Double(load) / 1000.0
+            let adapterIn = Double(powerIn) / 1000.0
+            flow.isMeasured = true
+            flow.systemWatts = system
+            flow.adapterWatts = adapterIn
+            flow.batteryWatts = adapterIn - system
+            return flow
         }
 
         // System draw = adapter − batteryWatts (what the adapter delivers minus what

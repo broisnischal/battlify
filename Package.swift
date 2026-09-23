@@ -17,10 +17,18 @@ let package = Package(
             name: "CSMC",
             path: "Sources/CSMC"
         ),
+        // macOS's own charge limit (System Settings › Battery › Charge Limit), reached
+        // through the private PowerUI framework at runtime. The only way to stop charging
+        // on firmware that gates the SMC charge keys.
+        .target(
+            name: "CPowerUI",
+            path: "Sources/CPowerUI",
+            linkerSettings: [.linkedFramework("Foundation")]
+        ),
         // Shared Swift library used by both the GUI and the privileged helper.
         .target(
             name: "BattlifyKit",
-            dependencies: ["CSMC"],
+            dependencies: ["CSMC", "CPowerUI"],
             path: "Sources/BattlifyKit"
         ),
         // The menu bar GUI app (runs as the user).

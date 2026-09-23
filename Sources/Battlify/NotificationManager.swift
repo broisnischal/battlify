@@ -169,7 +169,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
                      icon: "thermometer")
             case "limit":
                 post("limit", "Charge limit reached",
-                     "Holding at \(chargeLimit.limit)% to reduce battery wear.",
+                     "Holding at \(chargeLimit.effectiveLimit)% to reduce battery wear.",
                      icon: "battery")
             default:
                 break   // "paused"/"settling"/"sleep" are user- or system-driven
